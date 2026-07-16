@@ -11,3 +11,22 @@ pnpm-debug.log*
 
 auto-imports.d.ts
 components.d.ts
+
+# Secrets and local deployment state
+.env
+.env.*
+.dev.vars*
+wrangler.toml
+wrangler.json
+wrangler.jsonc
+*.sqlite
+*.sqlite3
+
+# Character-card content is intentionally not published here
+/角色卡/
+/世界书/
+/第一条消息/
+/正则/
+/云端创意工坊/
+/uploads/
+/exports/
