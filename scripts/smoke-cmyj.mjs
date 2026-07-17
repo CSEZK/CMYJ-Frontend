@@ -19,6 +19,6 @@ assert.match(workshopSource, /canming-workshop-installs/);
 assert.match(workshopSource, /data-repair-install/);
 assert.match(workshopSource, /repairInstalledWork/);
 assert.match(statusbarSource, /worldbookSignatures/);
-assert.match(statusbarSource, /STATUSBAR_VERSION = '1\.7\.0'/);
+assert.match(statusbarSource, /STATUSBAR_VERSION = '1\.6\.1'/);
 
 console.info('共享加载器、安装快照修复和六个脚本模块均已接入。');
