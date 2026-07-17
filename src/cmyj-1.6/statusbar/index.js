@@ -3211,7 +3211,7 @@ function buildCustomFengyueWorkshopPackage(rawItem, metadata = {}) {
   };
 }
 
-async function importWorkshopRegexes(regexes) {
+async function importWorkshopRegexes(regexes, options = {}) {
   const getter = getWorkshopApi('getTavernRegexes');
   const replacer = getWorkshopApi('replaceTavernRegexes');
   if (typeof getter !== 'function' || typeof replacer !== 'function') throw new Error('酒馆正则接口不可用。');
@@ -3222,14 +3222,14 @@ async function importWorkshopRegexes(regexes) {
     while (names.has(regex.script_name)) regex.script_name = `${regex.script_name}（导入）`;
     names.add(regex.script_name);
     regex.id = `cmw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    regex.enabled = false;
+    regex.enabled = options.enabled === true;
     return regex;
   });
   await replacer([...current, ...additions], { type: 'character', name: 'current' });
   return additions.length;
 }
 
-function importWorkshopScripts(scripts) {
+function importWorkshopScripts(scripts, options = {}) {
   const getter = getWorkshopApi('getScriptTrees');
   const replacer = getWorkshopApi('replaceScriptTrees');
   if (typeof getter !== 'function' || typeof replacer !== 'function') throw new Error('角色卡脚本接口不可用。');
@@ -3239,7 +3239,8 @@ function importWorkshopScripts(scripts) {
     const script = JSON.parse(JSON.stringify(raw));
     while (existing.has(script.name)) script.name = `${script.name}（导入）`;
     existing.add(script.name); script.id = `cmw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    script.enabled = false; script.button = { ...(script.button || {}), enabled: false };
+    script.enabled = options.enabled === true;
+    script.button = { ...(script.button || {}), enabled: options.enabled === true };
     return script;
   });
   replacer([...current, ...additions], { type: 'character' });
