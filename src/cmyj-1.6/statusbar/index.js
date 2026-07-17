@@ -1,5 +1,5 @@
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.6.0';
+const STATUSBAR_VERSION = '1.6.1';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
@@ -195,6 +195,31 @@ const BASE_TABS = [
   ['history', '生平史记'],
   ['map', '天下舆图'],
   ['graph', '人物谱系'],
+];
+
+const MARKET_SPREAD = 0.03;
+const MARKET_CATEGORIES = [
+  ['粮食', '五谷粮秣'],
+  ['军需', '基础军需'],
+  ['常用物资', '民生物料'],
+];
+const MARKET_ITEMS = [
+  { id: 'rice', name: '稻米', category: '粮食', unit: '石', basePrice: 0.6, monthlyStock: 200, defaultQty: 10, desc: '南方常见主粮，可直接充作军粮或赈济用粮。' },
+  { id: 'wheat', name: '小麦', category: '粮食', unit: '石', basePrice: 0.55, monthlyStock: 150, defaultQty: 10, desc: '耐储耐运，磨面后便于行军携带。' },
+  { id: 'millet', name: '粟米', category: '粮食', unit: '石', basePrice: 0.5, monthlyStock: 150, defaultQty: 10, desc: '北地常用口粮，炊煮方便，适合作为营中军粮。' },
+  { id: 'mixed_grain', name: '杂粮', category: '粮食', unit: '石', basePrice: 0.4, monthlyStock: 200, defaultQty: 10, desc: '高粱、大麦与荞麦等混装粗粮，价廉而耐放。' },
+  { id: 'soybean', name: '黄豆', category: '粮食', unit: '石', basePrice: 0.65, monthlyStock: 80, defaultQty: 10, desc: '可煮食、磨浆或制成豆食，适合补充军粮。' },
+  { id: 'fodder', name: '草料', category: '粮食', unit: '石', basePrice: 0.2, monthlyStock: 200, defaultQty: 10, desc: '供牲畜与运输畜力消耗，不计入士卒口粮。' },
+  { id: 'spear', name: '长枪', category: '军需', unit: '杆', basePrice: 0.18, monthlyStock: 200, defaultQty: 10, desc: '木杆铁首的基础长兵，适合成批装备步卒。' },
+  { id: 'sabre_shield', name: '刀盾', category: '军需', unit: '套', basePrice: 0.6, monthlyStock: 100, defaultQty: 10, desc: '腰刀与藤木盾成套出售，供近战兵卒使用。' },
+  { id: 'bow_arrow', name: '弓箭', category: '军需', unit: '套', basePrice: 0.8, monthlyStock: 100, defaultQty: 10, desc: '步弓一张配常用箭矢，适合基础弓手操练。' },
+  { id: 'cotton_armour', name: '棉甲', category: '军需', unit: '领', basePrice: 1.5, monthlyStock: 100, defaultQty: 10, desc: '多层棉布缀甲片制成，价格与防护较为均衡。' },
+  { id: 'salt', name: '食盐', category: '常用物资', unit: '斤', basePrice: 0.035, monthlyStock: 500, defaultQty: 50, desc: '炊食、腌藏与赈济皆不可缺少的民生物资。' },
+  { id: 'cotton_cloth', name: '棉布', category: '常用物资', unit: '匹', basePrice: 0.25, monthlyStock: 100, defaultQty: 10, desc: '可制衣被、军服、包扎布与各类日常用品。' },
+  { id: 'pig_iron', name: '生铁', category: '常用物资', unit: '斤', basePrice: 0.03, monthlyStock: 1000, defaultQty: 50, desc: '打造农具、修补军械和作坊生产所需原料。' },
+  { id: 'timber', name: '木料', category: '常用物资', unit: '方', basePrice: 0.08, monthlyStock: 100, defaultQty: 10, desc: '用于修缮房舍、车辆、仓场与简易工事。' },
+  { id: 'medicine', name: '药材', category: '常用物资', unit: '份', basePrice: 0.12, monthlyStock: 100, defaultQty: 10, desc: '常用内外伤药材合包，适合药铺与军营储备。' },
+  { id: 'vegetable_oil', name: '菜油', category: '常用物资', unit: '斤', basePrice: 0.02, monthlyStock: 300, defaultQty: 20, desc: '可供炊食、照明及部分作坊生产使用。' },
 ];
 
 function buildTabs() {
@@ -630,6 +655,8 @@ let theme = loadStorage('theme', 'day');
 let customBackgroundUrl = loadStorage('background_url', '');
 let customBackgroundOpacity = Math.min(1, Math.max(0.15, Number(loadStorage('background_opacity', '0.42')) || 0.42));
 let activeTab = loadStorage('tab', 'overview');
+let moneyView = loadStorage('money_view', 'ledger');
+let marketPaymentCurrency = loadStorage('market_payment_currency', '白银');
 let activeDifficulty = loadStorage('difficulty', 'normal');
 let worldbookSyncing = false;
 let shopEnabled = loadStorage('shop_enabled', '1') === '1';
@@ -659,6 +686,7 @@ const savedContentScroll = {};
 const pendingDeletedPaths = new Set();
 let settleSessionId = ''; // 会话标记：换档时清空 pendingDeletedPaths
 let mapMode = loadStorage('mapMode', 'status');
+let marketTransactionPending = false;
 
 // ============================================================
 // 东亚 GeoJSON 子集 —— 从 WORLD_1629 筛选
@@ -1536,7 +1564,8 @@ function reconcileEconomy(data) {
 // 月度结算系统 —— 由脚本接管，AI 无需执行
 // ============================================================
 
-const ARMY_GRAIN_KEYS = ['军粮', '粮食', '米', '稻米', '谷物', '麦', '粟'];
+const ARMY_GRAIN_KEYS = ['军粮', '粮食', '米', '稻米', '谷物', '麦', '粟', '杂粮', '黄豆'];
+const NON_HUMAN_GRAIN_KEYS = ['草料', '马料', '饲料', '豆饼'];
 const GRAIN_SILVER_RATE = 2; // 军粮缺口折银汇率：1石 = 2两
 
 /** 从中文日期中提取"年月"标识，用于跨月去重比较 */
@@ -1550,6 +1579,68 @@ function extractYearMonth(dateStr) {
   const m2 = s.match(/(\d{3,4})\s*[年\/\-]\s*(\d{1,2})\s*月/);
   if (m2) return m2[1] + '年' + m2[2] + '月';
   return null;
+}
+
+function roundMarketNumber(value, digits = 3) {
+  const factor = 10 ** digits;
+  return Math.round((number(value, 0) + Number.EPSILON) * factor) / factor;
+}
+
+function createMonthlyMarketStock() {
+  return Object.fromEntries(MARKET_ITEMS.map(item => [item.id, item.monthlyStock]));
+}
+
+function ensureMarketState(data, currentYM = '') {
+  const economy = ensureObject(data, '经济');
+  const market = ensureObject(economy, '市场');
+  const indices = ensureObject(market, '价格指数');
+  const rates = ensureObject(market, '汇率');
+  for (const [category] of MARKET_CATEGORIES) {
+    indices[category] = Math.round(clamp(number(indices[category], 100), 50, 500));
+  }
+  rates.一两黄金兑白银 = roundMarketNumber(clamp(number(rates.一两黄金兑白银, 6), 3, 20));
+  rates.一两白银兑铜钱 = Math.round(clamp(number(rates.一两白银兑铜钱, 1200), 500, 5000));
+  if (typeof market.市况 !== 'string' || !market.市况.trim()) market.市况 = '平稳';
+
+  const monthChanged = Boolean(currentYM && market._库存月份 !== currentYM);
+  if (monthChanged || !market._剩余库存 || typeof market._剩余库存 !== 'object') {
+    market._剩余库存 = createMonthlyMarketStock();
+    if (currentYM) market._库存月份 = currentYM;
+  } else {
+    for (const item of MARKET_ITEMS) {
+      if (market._剩余库存[item.id] == null) market._剩余库存[item.id] = item.monthlyStock;
+      market._剩余库存[item.id] = Math.round(clamp(number(market._剩余库存[item.id], item.monthlyStock), 0, item.monthlyStock));
+    }
+    if (currentYM && !market._库存月份) market._库存月份 = currentYM;
+  }
+  return market;
+}
+
+function resetMonthlyMarketStock(data, currentYM) {
+  const market = ensureMarketState(data, '');
+  market._库存月份 = currentYM || market._库存月份 || '';
+  market._剩余库存 = createMonthlyMarketStock();
+  return market;
+}
+
+function getMarketItemPriceInSilver(item, market, quantity = 1) {
+  const index = clamp(number(market?.价格指数?.[item.category], 100), 50, 500);
+  return roundMarketNumber(item.basePrice * (index / 100) * Math.max(0, quantity));
+}
+
+function getMarketPaymentQuote(silverPrice, currency, market) {
+  const goldRate = clamp(number(market?.汇率?.一两黄金兑白银, 6), 3, 20);
+  const copperRate = clamp(number(market?.汇率?.一两白银兑铜钱, 1200), 500, 5000);
+  if (currency === '黄金') {
+    const amount = Math.ceil((silverPrice / goldRate) * 1000) / 1000;
+    return { key: '黄金', amount, text: `${roundMarketNumber(amount)} 两黄金` };
+  }
+  if (currency === '铜钱') {
+    const amount = Math.ceil(silverPrice * copperRate);
+    return { key: '铜钱', amount, text: `${amount} 文铜钱` };
+  }
+  const amount = roundMarketNumber(silverPrice);
+  return { key: '白银', amount, text: `${amount} 两白银` };
 }
 
 function classifyCampType(camp) {
@@ -1608,7 +1699,9 @@ function grainStorageEntries(storage) {
     .filter(([, item]) => item && typeof item === 'object')
     .filter(([name, item]) => {
       const unit = String(item.单位 || '');
-      return unit === '石' || ARMY_GRAIN_KEYS.some(key => String(name).includes(key));
+      const itemName = String(name);
+      if (NON_HUMAN_GRAIN_KEYS.some(key => itemName.includes(key))) return false;
+      return unit === '石' || ARMY_GRAIN_KEYS.some(key => itemName.includes(key));
     })
     .sort(([a], [b]) => {
       const score = name => ARMY_GRAIN_KEYS.findIndex(key => String(name).includes(key));
@@ -2199,7 +2292,79 @@ function renderSettleSnapshot(s) {
   return `<div class="cm-settle-snapshot">${lines.map(l => `<p>${html(l)}</p>`).join('')}</div>`;
 }
 
+function renderMoneyViewSwitch() {
+  return `<div class="cm-money-switch" role="tablist" aria-label="钱粮页面">
+    <button type="button" class="${moneyView === 'ledger' ? 'active' : ''}" data-money-view="ledger">账房</button>
+    <button type="button" class="${moneyView === 'market' ? 'active' : ''}" data-money-view="market">市集</button>
+  </div>`;
+}
+
+function renderMarketItem(item, market) {
+  const remaining = Math.round(clamp(number(market?._剩余库存?.[item.id], item.monthlyStock), 0, item.monthlyStock));
+  const soldOut = remaining <= 0;
+  const defaultQty = Math.max(1, Math.min(item.defaultQty, remaining || item.defaultQty));
+  const quote = getMarketPaymentQuote(getMarketItemPriceInSilver(item, market), marketPaymentCurrency, market);
+  const stockRatio = item.monthlyStock > 0 ? clamp(remaining / item.monthlyStock, 0, 1) : 0;
+  return `<article class="cm-market-item${soldOut ? ' sold-out' : ''}" data-market-item="${html(item.id)}">
+    <div class="cm-market-item-head">
+      <div><small>${html(item.category)}</small><h4>${html(item.name)}</h4></div>
+      <span class="cm-market-price">${html(quote.text)}<small>/ ${html(item.unit)}</small></span>
+    </div>
+    <p>${html(item.desc)}</p>
+    <div class="cm-market-stock-line"><span>本月余货 ${remaining} / ${item.monthlyStock} ${html(item.unit)}</span><i style="--stock:${Math.round(stockRatio * 100)}%"></i></div>
+    <div class="cm-market-buy-row">
+      <label>数量<input type="number" min="1" max="${remaining}" step="1" value="${defaultQty}" data-market-quantity aria-label="购买${html(item.name)}数量" ${soldOut ? 'disabled' : ''}></label>
+      <span>${html(item.unit)}</span>
+      <button type="button" class="cm-market-buy" data-action="market-buy" data-item-id="${html(item.id)}" ${soldOut ? 'disabled' : ''}>${soldOut ? '本月售罄' : '买入'}</button>
+    </div>
+  </article>`;
+}
+
+function renderMarket() {
+  const currentYM = extractYearMonth(get(statData, '世界运转.当前日期', '')) || '';
+  const market = ensureMarketState(statData, currentYM);
+  const coins = get(statData, '主角.私库.金银铜', {});
+  const goldRate = number(market.汇率?.一两黄金兑白银, 6);
+  const copperRate = number(market.汇率?.一两白银兑铜钱, 1200);
+  const feePercent = Math.round(MARKET_SPREAD * 100);
+  return `${renderMoneyViewSwitch()}
+    <section class="cm-market-hero">
+      <div>
+        <p class="cm-kicker">城中市易 · ${html(market._库存月份 || currentYM || '本月')}</p>
+        <h2>平码有数，月初换新</h2>
+        <p>${html(market.市况 || '平稳')}。货物每月按定额补齐，售罄后须待下月。</p>
+      </div>
+      <div class="cm-market-wallet">
+        <span>金 <b>${roundMarketNumber(coins.黄金 ?? 0)}</b> 两</span>
+        <span>银 <b>${roundMarketNumber(coins.白银 ?? 0)}</b> 两</span>
+        <span>钱 <b>${Math.round(number(coins.铜钱, 0))}</b> 文</span>
+      </div>
+    </section>
+    <div class="cm-market-toolbar">
+      <div>${MARKET_CATEGORIES.map(([key, label]) => `<span><b>${html(label)}</b>${number(market.价格指数?.[key], 100)}%</span>`).join('')}</div>
+      <label>支付钱币<select data-market-payment>${['白银', '铜钱', '黄金'].map(currency => `<option value="${currency}"${marketPaymentCurrency === currency ? ' selected' : ''}>${currency}</option>`).join('')}</select></label>
+    </div>
+    ${MARKET_CATEGORIES.map(([category, label]) => foldGroup(label, `<div class="cm-market-grid">${MARKET_ITEMS.filter(item => item.category === category).map(item => renderMarketItem(item, market)).join('')}</div>`)).join('')}
+    <section class="cm-exchange-board">
+      <div class="cm-exchange-head"><div><p class="cm-kicker">钱庄水牌</p><h3>金银兑钱</h3></div><span>双向折价 ${feePercent}%</span></div>
+      <p class="cm-exchange-note">市价一两金兑 ${goldRate} 两银，一两银兑 ${copperRate} 文。兑入与兑出均按钱庄折价成交。</p>
+      <div class="cm-exchange-grid">
+        <div class="cm-exchange-row">
+          <label>黄金数量<input type="number" min="0.001" step="0.001" value="1" data-exchange-amount="gold"></label>
+          <button type="button" data-action="market-exchange" data-exchange-kind="sell-gold">黄金兑银</button>
+          <button type="button" data-action="market-exchange" data-exchange-kind="buy-gold">白银购金</button>
+        </div>
+        <div class="cm-exchange-row">
+          <label>白银数量<input type="number" min="0.001" step="0.001" value="1" data-exchange-amount="silver"></label>
+          <button type="button" data-action="market-exchange" data-exchange-kind="sell-silver">白银兑钱</button>
+          <button type="button" data-action="market-exchange" data-exchange-kind="buy-silver">铜钱购银</button>
+        </div>
+      </div>
+    </section>`;
+}
+
 function renderMoney() {
+  if (moneyView === 'market') return renderMarket();
   const coins = get(statData, '主角.私库.金银铜', {});
   const assets = get(statData, '经济.资产', {});
   const storage = get(statData, '经济.仓储', {});
@@ -2207,7 +2372,7 @@ function renderMoney() {
   const outcome = get(statData, '经济.流水.月出', {});
   const armySupply = estimateArmyMonthlySupply(statData);
   const lastSettle = get(statData, '经济.上次结算', null);
-  return `
+  return `${renderMoneyViewSwitch()}
     ${foldGroup('经济规则', `
       <p><b>私库</b>——你的钱袋子。日常小额开销（几文到几钱银子，如喝茶、剃头、打赏下人）AI 直接从私库扣除，不记流水。</p>
       <p><b>流水</b>——本月账本。大额收支（≥1两或具剧情重要性，如赏赐、修葺、军械采购、犒赏等）AI 写入月入/月出，<em>不动私库</em>。结算时脚本统一轧差入库，<em>结算后流水清空</em>，下月重新记账。</p>
@@ -3404,6 +3569,12 @@ function styleText() {
     .theme-ink .cm-mountain-icon{filter:drop-shadow(0 1px 0 rgba(255,255,255,.35))}
     @keyframes cm-content-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
     @keyframes cm-star-pulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.05)}}
+    .cm-money-switch{display:inline-flex;margin:0 0 14px;padding:3px;border:1px solid var(--line);border-radius:999px;background:rgba(0,0,0,.045);box-shadow:inset 0 1px 3px rgba(0,0,0,.08)}.cm-money-switch button{min-width:72px;border:0;border-radius:999px;background:transparent;color:var(--muted);padding:7px 18px;cursor:pointer;letter-spacing:.12em}.cm-money-switch button.active{background:var(--accent);color:#fff;box-shadow:0 5px 14px var(--glow)}
+    .cm-market-hero{position:relative;display:flex;justify-content:space-between;gap:20px;overflow:hidden;margin-bottom:14px;padding:20px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(125deg,color-mix(in srgb,var(--card) 92%,transparent),color-mix(in srgb,var(--accent) 12%,var(--card)));box-shadow:0 14px 30px rgba(0,0,0,.08)}.cm-market-hero:after{content:"市";position:absolute;right:26%;bottom:-35px;color:var(--accent);font-size:112px;font-weight:900;line-height:1;opacity:.055;transform:rotate(-8deg);pointer-events:none}.cm-market-hero h2{position:relative;margin:2px 0 7px;color:var(--ink);font-size:24px;letter-spacing:.12em}.cm-market-hero>div>p:last-child{position:relative;margin:0;color:var(--muted);line-height:1.7}.cm-market-wallet{position:relative;display:grid;min-width:190px;align-content:center;gap:6px;padding-left:16px;border-left:1px solid var(--line)}.cm-market-wallet span{display:flex;justify-content:space-between;gap:16px;color:var(--muted);font-size:13px}.cm-market-wallet b{color:var(--ink);font-size:15px}
+    .cm-market-toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:14px;padding:10px 12px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.cm-market-toolbar>div{display:flex;flex-wrap:wrap;gap:8px}.cm-market-toolbar>div span{display:inline-flex;gap:7px;color:var(--muted);font-size:12px}.cm-market-toolbar>div b{color:var(--ink)}.cm-market-toolbar label{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;white-space:nowrap}.cm-market-toolbar select,.cm-market-buy-row input,.cm-exchange-row input{border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);padding:7px 9px;font:inherit;outline:none}.cm-market-toolbar select:focus,.cm-market-buy-row input:focus,.cm-exchange-row input:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}
+    .cm-market-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.cm-market-item{position:relative;display:flex;min-width:0;flex-direction:column;padding:13px;border:1px solid var(--line);border-radius:13px;background:linear-gradient(145deg,var(--card),rgba(255,255,255,.025));box-shadow:0 7px 16px rgba(0,0,0,.045);transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}.cm-market-item:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--accent) 55%,var(--line));box-shadow:0 12px 24px rgba(0,0,0,.08)}.cm-market-item.sold-out{filter:saturate(.35);opacity:.66}.cm-market-item-head{display:flex;justify-content:space-between;gap:12px;align-items:start}.cm-market-item-head small{color:var(--muted);font-size:10px;letter-spacing:.16em}.cm-market-item h4{margin:3px 0 0;color:var(--ink);font-size:17px}.cm-market-price{color:var(--accent);font-weight:700;text-align:right;white-space:nowrap}.cm-market-price small{display:block;margin-top:2px;color:var(--muted);font-weight:400;letter-spacing:0}.cm-market-item>p{min-height:43px;margin:9px 0;color:var(--muted);font-size:12px;line-height:1.7}.cm-market-stock-line{display:grid;grid-template-columns:1fr;gap:5px;color:var(--muted);font-size:11px}.cm-market-stock-line i{display:block;height:3px;overflow:hidden;border-radius:999px;background:var(--bar-track)}.cm-market-stock-line i:after{content:"";display:block;width:var(--stock);height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent2),var(--accent));transition:width .25s ease}.cm-market-buy-row{display:flex;align-items:end;gap:7px;margin-top:11px}.cm-market-buy-row label{display:grid;gap:3px;color:var(--muted);font-size:10px}.cm-market-buy-row input{width:78px;padding:6px 8px}.cm-market-buy-row>span{padding-bottom:7px;color:var(--muted);font-size:12px}.cm-market-buy{margin-left:auto;border:1px solid var(--accent);border-radius:9px;background:var(--accent);color:#fff;padding:7px 14px;cursor:pointer;box-shadow:0 5px 12px var(--glow)}.cm-market-buy:hover{filter:brightness(1.08)}.cm-market-buy:disabled{cursor:not-allowed;box-shadow:none;opacity:.55}
+    .cm-exchange-board{margin-top:14px;padding:16px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(135deg,color-mix(in srgb,var(--card) 94%,transparent),color-mix(in srgb,var(--accent2) 10%,var(--card)));box-shadow:0 10px 24px rgba(0,0,0,.06)}.cm-exchange-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.cm-exchange-head h3{margin:2px 0;color:var(--ink);letter-spacing:.14em}.cm-exchange-head>span{border:1px solid var(--line);border-radius:999px;padding:4px 9px;color:var(--accent);font-size:11px}.cm-exchange-note{margin:6px 0 13px;color:var(--muted);font-size:12px;line-height:1.65}.cm-exchange-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.cm-exchange-row{display:grid;grid-template-columns:minmax(96px,1fr) auto auto;gap:6px;align-items:end;padding:10px;border:1px dashed var(--line);border-radius:11px}.cm-exchange-row label{display:grid;gap:4px;color:var(--muted);font-size:10px}.cm-exchange-row input{width:100%;min-width:0;padding:6px 8px}.cm-exchange-row button{height:32px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--accent);padding:0 9px;cursor:pointer;font-size:11px}.cm-exchange-row button:hover{border-color:var(--accent);background:var(--accent);color:#fff}
+    @media(max-width:760px){.cm-market-hero{display:block;padding:15px}.cm-market-wallet{margin-top:12px;padding:10px 0 0;border-top:1px solid var(--line);border-left:0}.cm-market-toolbar{align-items:flex-start;flex-direction:column}.cm-market-grid,.cm-exchange-grid{grid-template-columns:1fr}.cm-exchange-row{grid-template-columns:1fr 1fr}.cm-exchange-row label{grid-column:1/-1}.cm-money-switch{display:flex}.cm-money-switch button{flex:1}.cm-market-item>p{min-height:0}}
     button{font:inherit;color:inherit}
     .cm-panel{position:relative;isolation:isolate;height:100%;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:22px;background:linear-gradient(135deg,var(--paper),var(--paper2));box-shadow:0 22px 70px var(--shadow);overflow:hidden;transition:background .5s ease,box-shadow .5s ease,border-color .5s ease}.cm-custom-background{position:absolute;inset:0;z-index:0;background-position:center;background-size:cover;background-repeat:no-repeat;pointer-events:none;filter:saturate(.9) contrast(1.03)}.cm-panel:before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle at 78% 0%,var(--glow),transparent 32%),repeating-linear-gradient(90deg,rgba(80,45,20,.035),rgba(80,45,20,.035) 1px,transparent 1px,transparent 9px)}
     .cm-header{position:relative;z-index:1;display:flex;justify-content:space-between;gap:16px;align-items:center;padding:18px 22px;border-bottom:1px solid var(--line)}.cm-kicker{margin:0 0 4px;color:var(--accent);font-size:12px;letter-spacing:.28em;white-space:nowrap}.cm-statusbar-version{color:var(--muted);font-weight:700;letter-spacing:.08em}.cm-header h1,.cm-hero h2,.cm-private-head h2{margin:0;font-weight:700}.cm-actions{display:flex;align-items:center;gap:8px}.cm-actions button{border:1px solid var(--line);border-radius:999px;background:var(--card);padding:7px 12px;cursor:pointer}.cm-icon-btn{padding:7px!important;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;color:var(--muted)}.cm-icon-btn:hover{color:var(--accent);border-color:var(--accent)}.cm-tools-wrap{position:relative;display:inline-flex}.cm-tools-dropdown{display:none;position:absolute;top:100%;right:0;margin-top:6px;flex-direction:column;gap:3px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:6px;box-shadow:0 10px 28px var(--shadow);z-index:100;min-width:max-content}.cm-header{z-index:2!important}.cm-tools-dropdown.open{display:flex}.cm-tools-item{display:flex;align-items:center;gap:8px;width:100%;padding:9px 14px;border:1px solid transparent;border-radius:9px;background:transparent;color:var(--ink);cursor:pointer;font-size:13px;white-space:nowrap;transition:all .15s}.cm-tools-item:hover{background:rgba(0,0,0,.06);border-color:var(--line)}
@@ -3851,6 +4022,35 @@ function bindFrameEvents() {
       return;
     }
 
+    const moneyViewBtn = target.closest('[data-money-view]');
+    if (moneyViewBtn) {
+      moneyView = moneyViewBtn.getAttribute('data-money-view') === 'market' ? 'market' : 'ledger';
+      saveStorage('money_view', moneyView);
+      render();
+      return;
+    }
+
+    const marketBuyBtn = target.closest('[data-action="market-buy"]');
+    if (marketBuyBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      const itemCard = marketBuyBtn.closest('[data-market-item]');
+      const quantity = Number(itemCard?.querySelector('[data-market-quantity]')?.value || 0);
+      buyMarketItem(marketBuyBtn.getAttribute('data-item-id') || '', quantity, marketPaymentCurrency);
+      return;
+    }
+
+    const marketExchangeBtn = target.closest('[data-action="market-exchange"]');
+    if (marketExchangeBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      const kind = marketExchangeBtn.getAttribute('data-exchange-kind') || '';
+      const amountType = kind.includes('gold') ? 'gold' : 'silver';
+      const amount = Number(frameDocument.querySelector(`[data-exchange-amount="${amountType}"]`)?.value || 0);
+      exchangeMarketCurrency(kind, amount);
+      return;
+    }
+
     // 手动月度结算
     const manualSettleBtn = target.closest('[data-action="manual-settle"]');
     if (manualSettleBtn) {
@@ -4026,6 +4226,13 @@ function bindFrameEvents() {
   };
 
   const changeHandler = async (event) => {
+    const marketPayment = event.target.closest?.('[data-market-payment]');
+    if (marketPayment) {
+      marketPaymentCurrency = ['黄金', '白银', '铜钱'].includes(marketPayment.value) ? marketPayment.value : '白银';
+      saveStorage('market_payment_currency', marketPaymentCurrency);
+      render();
+      return;
+    }
     const characterSelect = event.target.closest?.('[data-character-select]');
     if (characterSelect) {
       openCharacterManager(characterSelect.value || '');
@@ -4248,6 +4455,7 @@ function readLatestStatData() {
     }
     applyPendingDeletedPaths(data);
     reconcileEconomy(data);
+    ensureMarketState(data, extractYearMonth(get(data, '世界运转.当前日期', '')) || '');
     return data;
   }
   throw new Error('未找到有效的变量数据，请先生成至少一轮剧情再打开状态栏。');
@@ -4325,6 +4533,144 @@ async function clearAllMoney() {
     showToast('✓ 收支明细已清空', 'ok');
   } catch (error) {
     showToast(`✗ 清空失败：${error?.message || '未知错误'}`, 'err');
+  }
+}
+
+async function buyMarketItem(itemId, requestedQuantity, currency) {
+  const item = MARKET_ITEMS.find(candidate => candidate.id === itemId);
+  if (!item) return;
+  if (marketTransactionPending) {
+    showToast('上一笔交易尚在入账，请稍候。', 'err');
+    return;
+  }
+  const quantity = Math.max(0, Math.floor(number(requestedQuantity, 0)));
+  if (!quantity) {
+    showToast('购买数量必须为正整数。', 'err');
+    return;
+  }
+  const paymentCurrency = ['黄金', '白银', '铜钱'].includes(currency) ? currency : '白银';
+  const mvu = globalThis.Mvu ?? window.parent?.Mvu;
+  if (!mvu?.getMvuData || !mvu?.replaceMvuData) {
+    showToast('MVU 尚未初始化，无法交易。', 'err');
+    return;
+  }
+
+  marketTransactionPending = true;
+  try {
+    const variables = getMergedLatestVariables(mvu);
+    const data = get(variables, 'stat_data', {});
+    const currentYM = extractYearMonth(get(data, '世界运转.当前日期', '')) || '';
+    const market = ensureMarketState(data, currentYM);
+    const remaining = Math.round(number(market._剩余库存[item.id], 0));
+    if (remaining < quantity) {
+      showToast(`本月「${item.name}」仅余 ${remaining}${item.unit}。`, 'err');
+      return;
+    }
+
+    const silverPrice = getMarketItemPriceInSilver(item, market, quantity);
+    const quote = getMarketPaymentQuote(silverPrice, paymentCurrency, market);
+    const privateStore = ensureObject(ensureObject(data, '主角'), '私库');
+    const coins = ensureObject(privateStore, '金银铜');
+    const balance = number(coins[quote.key], 0);
+    if (balance + 1e-9 < quote.amount) {
+      showToast(`${quote.key}不足：需 ${quote.text}。可先到钱庄兑换。`, 'err');
+      return;
+    }
+
+    coins[quote.key] = quote.key === '铜钱'
+      ? Math.round(balance - quote.amount)
+      : roundMarketNumber(balance - quote.amount);
+    market._剩余库存[item.id] = remaining - quantity;
+    const storage = ensureObject(ensureObject(data, '经济'), '仓储');
+    if (!storage[item.name] || typeof storage[item.name] !== 'object') {
+      storage[item.name] = { 数量: 0, 单位: item.unit };
+    }
+    if (storage[item.name].单位 && storage[item.name].单位 !== item.unit) {
+      throw new Error(`仓储中的「${item.name}」单位为${storage[item.name].单位}，无法按${item.unit}入库`);
+    }
+    storage[item.name].单位 = item.unit;
+    storage[item.name].数量 = Math.max(0, number(storage[item.name].数量, 0)) + quantity;
+
+    await mvu.replaceMvuData(variables, { type: 'message', message_id: 'latest' });
+    statData = data;
+    lastError = '';
+    lastRefreshAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    showToast(`已购入「${item.name}」${quantity}${item.unit}，支出 ${quote.text}。`, 'ok');
+  } catch (error) {
+    showToast(`交易失败：${error?.message || '未知错误'}`, 'err');
+  } finally {
+    marketTransactionPending = false;
+  }
+}
+
+async function exchangeMarketCurrency(kind, requestedAmount) {
+  if (marketTransactionPending) {
+    showToast('上一笔交易尚在入账，请稍候。', 'err');
+    return;
+  }
+  const amount = roundMarketNumber(requestedAmount);
+  if (!(amount > 0)) {
+    showToast('兑换数量必须大于零。', 'err');
+    return;
+  }
+  const mvu = globalThis.Mvu ?? window.parent?.Mvu;
+  if (!mvu?.getMvuData || !mvu?.replaceMvuData) {
+    showToast('MVU 尚未初始化，无法兑换。', 'err');
+    return;
+  }
+
+  marketTransactionPending = true;
+  try {
+    const variables = getMergedLatestVariables(mvu);
+    const data = get(variables, 'stat_data', {});
+    const currentYM = extractYearMonth(get(data, '世界运转.当前日期', '')) || '';
+    const market = ensureMarketState(data, currentYM);
+    const privateStore = ensureObject(ensureObject(data, '主角'), '私库');
+    const coins = ensureObject(privateStore, '金银铜');
+    coins.黄金 = roundMarketNumber(coins.黄金);
+    coins.白银 = roundMarketNumber(coins.白银);
+    coins.铜钱 = Math.round(number(coins.铜钱, 0));
+    const goldRate = number(market.汇率.一两黄金兑白银, 6);
+    const copperRate = number(market.汇率.一两白银兑铜钱, 1200);
+    let detail = '';
+
+    if (kind === 'sell-gold') {
+      if (coins.黄金 + 1e-9 < amount) throw new Error(`黄金不足，需 ${amount} 两`);
+      const received = roundMarketNumber(amount * goldRate * (1 - MARKET_SPREAD));
+      coins.黄金 = roundMarketNumber(coins.黄金 - amount);
+      coins.白银 = roundMarketNumber(coins.白银 + received);
+      detail = `${amount} 两黄金兑得 ${received} 两白银`;
+    } else if (kind === 'buy-gold') {
+      const cost = Math.ceil(amount * goldRate * (1 + MARKET_SPREAD) * 1000) / 1000;
+      if (coins.白银 + 1e-9 < cost) throw new Error(`白银不足，需 ${cost} 两`);
+      coins.白银 = roundMarketNumber(coins.白银 - cost);
+      coins.黄金 = roundMarketNumber(coins.黄金 + amount);
+      detail = `支出 ${cost} 两白银，购得 ${amount} 两黄金`;
+    } else if (kind === 'sell-silver') {
+      if (coins.白银 + 1e-9 < amount) throw new Error(`白银不足，需 ${amount} 两`);
+      const received = Math.floor(amount * copperRate * (1 - MARKET_SPREAD));
+      coins.白银 = roundMarketNumber(coins.白银 - amount);
+      coins.铜钱 += received;
+      detail = `${amount} 两白银兑得 ${received} 文铜钱`;
+    } else if (kind === 'buy-silver') {
+      const cost = Math.ceil(amount * copperRate * (1 + MARKET_SPREAD));
+      if (coins.铜钱 < cost) throw new Error(`铜钱不足，需 ${cost} 文`);
+      coins.铜钱 -= cost;
+      coins.白银 = roundMarketNumber(coins.白银 + amount);
+      detail = `支出 ${cost} 文铜钱，购得 ${amount} 两白银`;
+    } else {
+      throw new Error('未知的兑换方向');
+    }
+
+    await mvu.replaceMvuData(variables, { type: 'message', message_id: 'latest' });
+    statData = data;
+    lastError = '';
+    lastRefreshAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    showToast(`钱庄兑付完成：${detail}。`, 'ok');
+  } catch (error) {
+    showToast(`兑换失败：${error?.message || '未知错误'}`, 'err');
+  } finally {
+    marketTransactionPending = false;
   }
 }
 
@@ -5453,6 +5799,7 @@ async function bootstrap() {
       const newYM = extractYearMonth(newDate);
       const data = _.get(newVars, 'stat_data', null);
       if (oldYM && newYM && oldYM !== newYM) {
+        if (data) resetMonthlyMarketStock(data, newYM);
         if (loadStorage('last_closed_army_ym', '') !== oldYM) {
           const settleResult = doSettlementInPlace(newVars, { closeYM: oldYM, applyArmy: true });
           saveStorage('last_closed_army_ym', oldYM);
@@ -5467,6 +5814,7 @@ async function bootstrap() {
         }
         saveStorage('last_settled_ym', newYM);
       } else if (newYM && data) {
+        ensureMarketState(data, newYM);
         if (!loadStorage('last_settled_ym', '')) {
           // 初次进入/导入旧档时只记录当前月份，不触发结算，避免误清账
           saveStorage('last_settled_ym', newYM);
