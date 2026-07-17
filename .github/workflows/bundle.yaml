@@ -34,7 +34,7 @@ jobs:
         with:
           version: 10
 
-      - run: pnpm install && pnpm build && pnpm check:cmyj && pnpm smoke:cmyj
+      - run: pnpm install && pnpm build:pages && pnpm check:cmyj && pnpm smoke:cmyj
       - name: Only keep 角色卡示例 in dist for template upstream
         if: github.repository == 'StageDog/tavern_helper_template'
         run: |
@@ -59,5 +59,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           with-v: true
-      - if: ${{ github.repository != 'StageDog/tavern_helper_template' && steps.autotag.outputs.tag != '0.0.0' && steps.autotag.outputs.new-tag != steps.autotag.outputs.tag }}
+      - if:
+          ${{ github.repository != 'StageDog/tavern_helper_template' && steps.autotag.outputs.tag != '0.0.0' &&
+          steps.autotag.outputs.new-tag != steps.autotag.outputs.tag }}
         run: git push --delete origin ${{ steps.autotag.outputs.tag }}

@@ -1,0 +1,4 @@
+/cmyj-1.6/*
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=0, must-revalidate
+  X-Content-Type-Options: nosniff
