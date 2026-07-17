@@ -210,6 +210,23 @@ export const Schema = z.object({
         单位: z.string().prefault('石'),
       }).prefault({ 数量: 0, 单位: '石' })
     ).prefault({}),
+    市场: z.object({
+      价格指数: z.object({
+        粮食: z.coerce.number().transform(v => Math.round(_.clamp(v, 50, 500))).prefault(100),
+        军需: z.coerce.number().transform(v => Math.round(_.clamp(v, 50, 500))).prefault(100),
+        常用物资: z.coerce.number().transform(v => Math.round(_.clamp(v, 50, 500))).prefault(100),
+      }).prefault({}),
+      汇率: z.object({
+        一两黄金兑白银: z.coerce.number().transform(v => _.clamp(v, 3, 20)).prefault(6),
+        一两白银兑铜钱: z.coerce.number().transform(v => Math.round(_.clamp(v, 500, 5000))).prefault(1200),
+      }).prefault({}),
+      市况: z.string().prefault('平稳'),
+      _库存月份: z.string().prefault(''),
+      _剩余库存: z.record(
+        z.string(),
+        z.coerce.number().transform(v => Math.max(0, Math.floor(v)))
+      ).prefault({}),
+    }).prefault({}),
   }).prefault({}),
 
   科技: z.record(
