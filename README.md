@@ -1,6 +1,8 @@
 # 残明余烬 1.6 前端脚本
 
-本仓库基于 [StageDog/tavern_helper_template](https://github.com/StageDog/tavern_helper_template)，公开托管《残明余烬 1.6》随角色卡运行的前端脚本，并由 GitHub Actions 自动生成 `dist/` 产物。
+本仓库基于
+[StageDog/tavern_helper_template](https://github.com/StageDog/tavern_helper_template)，公开托管《残明余烬 1.6》随角色卡运行的前端脚本，并由 GitHub
+Actions 自动生成 `dist/` 产物。
 
 ## 发布内容
 
@@ -24,10 +26,21 @@ import { boot } from 'https://testingcf.jsdelivr.net/gh/CSEZK/CMYJ-Frontend@main
 
 ```bash
 pnpm install
-pnpm build
+pnpm build:pages
 pnpm check:cmyj
 pnpm smoke:cmyj
 ```
+
+## Cloudflare Pages
+
+生产环境使用 Cloudflare Pages 从 `main` 分支自动构建：
+
+- 构建命令：`pnpm build:pages`
+- 输出目录：`dist`
+- Node.js：24
+
+`build:pages` 会生成 `dist/_headers`，让 `/cmyj-1.6/*`
+每次加载时重新验证版本，并允许酒馆页面跨域加载脚本。作品封面、动图和作品包仍由 R2 保存，不进入本仓库。
 
 ## 内容说明
 
