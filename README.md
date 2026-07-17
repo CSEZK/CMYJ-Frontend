@@ -13,7 +13,7 @@ Actions 自动生成 `dist/` 产物。
 角色卡通过以下固定入口加载：
 
 ```js
-import { boot } from 'https://testingcf.jsdelivr.net/gh/CSEZK/CMYJ-Frontend@main/dist/cmyj-1.6/loader/index.js';
+import { boot } from 'https://cmyj-frontend.pages.dev/cmyj-1.6/loader/index.js';
 ```
 
 ## 仓库边界
