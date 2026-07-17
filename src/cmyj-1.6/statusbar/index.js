@@ -1,5 +1,5 @@
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.6.1';
+const STATUSBAR_VERSION = '1.7.0';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
@@ -3325,11 +3325,21 @@ async function snapshotWorkshopInstallState() {
   return {
     characters: getCharacterProfiles().profiles.map(item => item.id).filter(Boolean),
     worldbooks: worldbookEntries.map(item => item.name).filter(Boolean),
+    worldbookSignatures: Object.fromEntries(worldbookEntries.filter(item => item?.name).map(item => [item.name, workshopWorldbookSignature(item)])),
     regexes: listWorkshopRegexes().map(item => item.id).filter(Boolean),
     scripts: listWorkshopScripts().map(item => item.id).filter(Boolean),
     fengyue: getWorkshopFengyueItems().map(item => item.id).filter(Boolean),
     generators: generator?.listShareableGenerators?.().map(item => item.id).filter(Boolean) || [],
   };
+}
+
+function workshopWorldbookSignature(entry) {
+  const normalize = value => {
+    if (Array.isArray(value)) return value.map(normalize);
+    if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).filter(key => key !== 'uid').sort().map(key => [key, normalize(value[key])]));
+    return value;
+  };
+  return JSON.stringify(normalize(entry));
 }
 
 function renderStatusbarBehindWorkshop() {
