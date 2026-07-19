@@ -662,7 +662,9 @@ let worldbookSyncing = false;
 let shopEnabled = loadStorage('shop_enabled', '1') === '1';
 let illustrationsEnabled = loadStorage('illustrations_enabled', '1') === '1';
 let refreshTimer;
+let persistedMvuRefreshTimer;
 let lastMessageId = null;
+let lastStatDataFingerprint = '';
 let dragState = null;
 let lampDragMoved = false;
 let lampDragJustEnded = false;
@@ -3662,6 +3664,9 @@ function renderModalOnly() {
 function render() {
   if (!frameDocument) return;
   if (isOpen) {
+    // 状态栏重绘时保留变量修改器节点及其事件监听，避免保存后被 body.innerHTML 无清理地销毁。
+    const variableEditorRoot = frameDocument.getElementById('canming-variable-editor');
+    variableEditorRoot?.remove();
     // 保存当前地图视口状态（body.innerHTML 会销毁 ECharts DOM）
     if (echartsInstance) {
       try {
@@ -3688,6 +3693,7 @@ function render() {
     }
 
     frameDocument.body.innerHTML = `<div class="cm-root theme-${theme}">${renderPanel()}</div>`;
+    if (variableEditorRoot) frameDocument.body.appendChild(variableEditorRoot);
 
     // 移动端直接注入样式（不依赖媒体查询，确保在 iframe 内生效）
     let mobileStyle = frameDocument.getElementById('cm-mobile-style');
@@ -4445,44 +4451,65 @@ function readMvuMergedStatData(mvu) {
 }
 
 function readLatestStatData() {
+  return prepareStatDataForDisplay(readLatestRawStatData());
+}
+
+function readLatestRawStatData() {
   const mvu = globalThis.Mvu ?? window.parent?.Mvu;
-  let data = readMvuMergedStatData(mvu);
+  const data = readMvuMergedStatData(mvu);
 
   // 新会话没有任何 MVU 数据时，回退到空对象（不再回退 getAllVariables()，
   // 避免世界书 [initvar] 写入的初始结构在后续游玩中被永久保留、无法覆盖）。
-  if (!data || typeof data !== 'object') {
-    data = {};
-  }
+  return data && typeof data === 'object' ? data : {};
+}
 
-  if (typeof data === 'object') {
-    normalizeStatDataKeys(data);
-    // 换档检测：数据中的会话标记与本会话不匹配 → 清空删除集
-    const dataSessionId = _.get(data, '经济._结算标记');
-    if (!dataSessionId || dataSessionId !== settleSessionId) {
-      pendingDeletedPaths.clear();
-      // 同步清理 localStorage 结算标记，防止旧档月份锁影响新档首次自动结算
-      saveStorage('last_settled_ym', '');
-      saveStorage('last_closed_army_ym', '');
-    }
-    applyPendingDeletedPaths(data);
-    reconcileEconomy(data);
-    ensureMarketState(data, extractYearMonth(get(data, '世界运转.当前日期', '')) || '');
-    return data;
+function prepareStatDataForDisplay(data) {
+  const prepared = data && typeof data === 'object' ? data : {};
+  normalizeStatDataKeys(prepared);
+  // 换档检测：数据中的会话标记与本会话不匹配 → 清空删除集
+  const dataSessionId = _.get(prepared, '经济._结算标记');
+  if (!dataSessionId || dataSessionId !== settleSessionId) {
+    pendingDeletedPaths.clear();
+    // 同步清理 localStorage 结算标记，防止旧档月份锁影响新档首次自动结算
+    saveStorage('last_settled_ym', '');
+    saveStorage('last_closed_army_ym', '');
   }
-  throw new Error('未找到有效的变量数据，请先生成至少一轮剧情再打开状态栏。');
+  applyPendingDeletedPaths(prepared);
+  reconcileEconomy(prepared);
+  ensureMarketState(prepared, extractYearMonth(get(prepared, '世界运转.当前日期', '')) || '');
+  return prepared;
+}
+
+function statDataFingerprint(data) {
+  let serialized;
+  try {
+    serialized = JSON.stringify(data ?? {});
+  } catch {
+    return '';
+  }
+  let hash = 2166136261;
+  for (let index = 0; index < serialized.length; index++) {
+    hash ^= serialized.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${serialized.length}:${(hash >>> 0).toString(36)}`;
+}
+
+function updateStatusSnapshot(data, latestMessageId = getLatestMessageId(), sourceFingerprint = statDataFingerprint(data)) {
+  statData = prepareStatDataForDisplay(_.cloneDeep(data && typeof data === 'object' ? data : {}));
+  lastError = '';
+  lastMessageId = latestMessageId;
+  lastStatDataFingerprint = sourceFingerprint;
+  lastRefreshAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
 }
 
 function refreshData(force = false) {
   const latestMessageId = getLatestMessageId();
-  if (!force && latestMessageId != null && latestMessageId === lastMessageId && !lastError) {
-    return;
-  }
-
   try {
-    statData = readLatestStatData();
-    lastError = '';
-    lastMessageId = latestMessageId;
-    lastRefreshAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    const nextData = readLatestRawStatData();
+    const nextFingerprint = statDataFingerprint(nextData);
+    if (!force && latestMessageId === lastMessageId && nextFingerprint === lastStatDataFingerprint && !lastError) return;
+    updateStatusSnapshot(nextData, latestMessageId, nextFingerprint);
   } catch (error) {
     lastError = error?.message || String(error);
   }
@@ -4490,11 +4517,31 @@ function refreshData(force = false) {
 }
 
 function checkLatestMessage() {
-  const latestMessageId = getLatestMessageId();
-  if (latestMessageId == null) return;
-  if (latestMessageId !== lastMessageId) {
-    refreshData(true);
-  }
+  refreshData(false);
+}
+
+function schedulePersistedMvuRefresh(previousFingerprint, expectedFingerprint) {
+  clearTimeout(persistedMvuRefreshTimer);
+  const delays = [80, 260, 800];
+  const check = attempt => {
+    persistedMvuRefreshTimer = setTimeout(() => {
+      try {
+        const latestMessageId = getLatestMessageId();
+        const nextData = readLatestRawStatData();
+        const nextFingerprint = statDataFingerprint(nextData);
+        const stillWaitingForWrite = nextFingerprint === previousFingerprint && expectedFingerprint !== previousFingerprint;
+        if (stillWaitingForWrite) {
+          if (attempt < delays.length - 1) check(attempt + 1);
+          return;
+        }
+        if (nextFingerprint !== lastStatDataFingerprint) {
+          updateStatusSnapshot(nextData, latestMessageId, nextFingerprint);
+          if (isOpen) render();
+        }
+      } catch { /* 下一次轮询会继续尝试 */ }
+    }, delays[attempt]);
+  };
+  check(0);
 }
 
 async function removeVariable(path) {
@@ -5856,7 +5903,24 @@ async function bootstrap() {
         advanceReproductiveSystem(newVars, days, oldDay);
       }
     } catch (e) { /* 静默 */ }
-    if (isOpen) refreshData(true);
+    // VARIABLE_UPDATE_ENDED 早于 MVU 将结果写入消息楼层，不能在这里反读 latest。
+    // 直接采用事件携带的新变量即时刷新，再延迟校准 Schema 调和后的持久化结果。
+    // oldVars 可能已在上面的兼容处理中被规范化，必须以事件触发当下的真实楼层为等待基线。
+    let previousFingerprint;
+    try {
+      previousFingerprint = statDataFingerprint(readLatestRawStatData());
+    } catch {
+      previousFingerprint = statDataFingerprint(_.get(oldVars, 'stat_data', {}));
+    }
+    const nextData = _.get(newVars, 'stat_data', null);
+    if (nextData && typeof nextData === 'object') {
+      const expectedFingerprint = statDataFingerprint(nextData);
+      updateStatusSnapshot(nextData, getLatestMessageId(), expectedFingerprint);
+      if (isOpen) render();
+      schedulePersistedMvuRefresh(previousFingerprint, expectedFingerprint);
+    } else if (isOpen) {
+      schedulePersistedMvuRefresh(previousFingerprint, previousFingerprint);
+    }
   };
     window._canmingMvuHandler = onVarUpdate;
     eventOn(mvu.events.VARIABLE_UPDATE_ENDED, onVarUpdate);
@@ -5904,6 +5968,7 @@ function cleanup() {
   getCanmingWorkshop()?.destroy?.();
   getCharacterGenerator()?.close?.();
   clearInterval(refreshTimer);
+  clearTimeout(persistedMvuRefreshTimer);
   cleanupWorkshopNoticePolling();
   if (echartsInstance) { echartsInstance.dispose(); echartsInstance = null; }
   frame?.remove();
