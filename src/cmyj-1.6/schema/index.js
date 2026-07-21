@@ -179,6 +179,7 @@ export const Schema = z.object({
   }).prefault({}),
 
   经济: z.object({
+    _自动结算月份: z.string().prefault(''),
     资产: z.record(
       z.string(),
       z.object({
