@@ -1,10 +1,3 @@
-import '../schema/index.js';
-import '../legacy/index.js';
-import '../workshop/index.js';
-import '../generator/index.js';
-import '../variable-editor/index.js';
-import '../statusbar/index.js';
-
 const RUNTIME_KEY = '__CMYJRemoteScriptsV2';
 
 const ROLE_FILES = Object.freeze({
@@ -14,6 +7,17 @@ const ROLE_FILES = Object.freeze({
   statusbar: 'statusbar',
   generator: 'generator',
   'variable-editor': 'variable-editor',
+});
+
+// 包装脚本分别运行在不同 iframe 中。模块必须按角色延迟求值，否则每个包装脚本导入
+// loader 时都会先执行全部模块，重复注册状态栏与 MVU 监听器。
+const ROLE_LOADERS = Object.freeze({
+  schema: () => import('../schema/index.js'),
+  legacy: () => import('../legacy/index.js'),
+  workshop: () => import('../workshop/index.js'),
+  statusbar: () => import('../statusbar/index.js'),
+  generator: () => import('../generator/index.js'),
+  'variable-editor': () => import('../variable-editor/index.js'),
 });
 
 const ROLE_DEPENDENCIES = Object.freeze({
@@ -40,9 +44,10 @@ async function importRole(role) {
   const dependencies = ROLE_DEPENDENCIES[role] ?? [];
   for (const dependency of dependencies) await boot(dependency);
 
-  if (!ROLE_FILES[role]) throw new Error(`未知的残明余烬远程脚本：${role}`);
+  const loadRole = ROLE_LOADERS[role];
+  if (!loadRole) throw new Error(`未知的残明余烬远程脚本：${role}`);
 
-  // 模板会把六个模块静态打包到共享入口；实际注册在模块求值时已完成。
+  await loadRole();
   state.loaded[role] = true;
   return true;
 }

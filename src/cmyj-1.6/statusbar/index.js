@@ -1,5 +1,7 @@
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.6.1';
+const STATUSBAR_VERSION = '1.6.2';
+const STATUSBAR_RUNTIME_KEY = '__CMYJStatusbarRuntimeV1';
+const STATUSBAR_RUNTIME_OWNER = {};
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
@@ -687,6 +689,7 @@ let renderedTab = activeTab;
 const savedContentScroll = {};
 const pendingDeletedPaths = new Set();
 let settleSessionId = ''; // 会话标记：换档时清空 pendingDeletedPaths
+const eventSubscriptionStops = [];
 let mapMode = loadStorage('mapMode', 'status');
 let marketTransactionPending = false;
 
@@ -1821,6 +1824,9 @@ function doSettlementInPlace(variables, options = {}) {
   const closeYM = options.closeYM || extractYearMonth(_.get(variables, 'stat_data.世界运转.当前日期', ''));
   const applyArmy = options.applyArmy !== false;
 
+  // 自动结算月份写入变量本身，保证重复事件、重新解析和多个脚本实例下都只执行一次。
+  if (applyArmy && closeYM && data.经济._自动结算月份 === closeYM) return null;
+
   // 资产月入：仅自动结算收取
   const assetIncome = applyArmy ? sumAssetIncome(assets) : 0;
 
@@ -1874,6 +1880,7 @@ function doSettlementInPlace(variables, options = {}) {
   data.经济.流水.月出 = {};
   // 写入会话标记：换档后标记不匹配，pendingDeletedPaths 自动清空
   if (settleSessionId) data.经济._结算标记 = settleSessionId;
+  if (applyArmy && closeYM) data.经济._自动结算月份 = closeYM;
   reconcileEconomy(data);
 
   const result = {
@@ -5735,6 +5742,32 @@ async function removePortraitEntry(name) {
   showToast(`✓ 已删除「${name}」`, 'ok');
 }
 
+function getStatusbarRuntimeHost() {
+  try {
+    return window.parent && window.parent !== window ? window.parent : window;
+  } catch {
+    return globalThis;
+  }
+}
+
+function claimStatusbarRuntime() {
+  const host = getStatusbarRuntimeHost();
+  const current = host[STATUSBAR_RUNTIME_KEY];
+  if (current?.owner && current.owner !== STATUSBAR_RUNTIME_OWNER) return false;
+  host[STATUSBAR_RUNTIME_KEY] = { owner: STATUSBAR_RUNTIME_OWNER, ownerWindow: window };
+  return true;
+}
+
+function releaseStatusbarRuntime() {
+  const host = getStatusbarRuntimeHost();
+  if (host[STATUSBAR_RUNTIME_KEY]?.owner === STATUSBAR_RUNTIME_OWNER) delete host[STATUSBAR_RUNTIME_KEY];
+}
+
+function trackEventSubscription(subscription) {
+  if (typeof subscription?.stop === 'function') eventSubscriptionStops.push(() => subscription.stop());
+  return subscription;
+}
+
 async function bootstrap() {
   const parentDocument = window.parent?.document ?? document;
   const parentWindow = window.parent ?? window;
@@ -5858,8 +5891,8 @@ async function bootstrap() {
       const data = _.get(newVars, 'stat_data', null);
       if (oldYM && newYM && oldYM !== newYM) {
         if (data) resetMonthlyMarketStock(data, newYM);
-        if (loadStorage('last_closed_army_ym', '') !== oldYM) {
-          const settleResult = doSettlementInPlace(newVars, { closeYM: oldYM, applyArmy: true });
+        const settleResult = doSettlementInPlace(newVars, { closeYM: oldYM, applyArmy: true });
+        if (settleResult || _.get(data, '经济._自动结算月份') === oldYM) {
           saveStorage('last_closed_army_ym', oldYM);
           // 自动结算 toast：面板打开时立即可见
           if (settleResult && isOpen) {
@@ -5923,14 +5956,14 @@ async function bootstrap() {
     }
   };
     window._canmingMvuHandler = onVarUpdate;
-    eventOn(mvu.events.VARIABLE_UPDATE_ENDED, onVarUpdate);
+    trackEventSubscription(eventOn(mvu.events.VARIABLE_UPDATE_ENDED, onVarUpdate));
   }
 
   // 世界书发生外部修改时，同步设置面板显示
   try {
     if (typeof eventOn === 'function' && typeof tavern_events !== 'undefined') {
-      eventOn(tavern_events.WORLDINFO_UPDATED, () => syncWorldbookSettings());
-      eventOn(tavern_events.WORLDINFO_SETTINGS_UPDATED, () => syncWorldbookSettings());
+      trackEventSubscription(eventOn(tavern_events.WORLDINFO_UPDATED, () => syncWorldbookSettings()));
+      trackEventSubscription(eventOn(tavern_events.WORLDINFO_SETTINGS_UPDATED, () => syncWorldbookSettings()));
     }
   } catch { /* 旧版本酒馆没有这些事件时忽略 */ }
 
@@ -5969,6 +6002,9 @@ function cleanup() {
   getCharacterGenerator()?.close?.();
   clearInterval(refreshTimer);
   clearTimeout(persistedMvuRefreshTimer);
+  for (const stop of eventSubscriptionStops.splice(0)) {
+    try { stop(); } catch { /* ignore stale listener */ }
+  }
   cleanupWorkshopNoticePolling();
   if (echartsInstance) { echartsInstance.dispose(); echartsInstance = null; }
   frame?.remove();
@@ -5979,10 +6015,15 @@ function cleanup() {
   if (window._canmingOnResize && window._canmingParentWindow) {
     window._canmingParentWindow.removeEventListener('resize', window._canmingOnResize);
   }
+  releaseStatusbarRuntime();
 }
 
 $(() => {
+  if (!claimStatusbarRuntime()) return;
   registerWorkshopNoticeSync();
-  bootstrap();
+  bootstrap().catch(error => {
+    cleanup();
+    console.error('[状态栏] 初始化失败', error);
+  });
   startWorkshopNoticePolling();
 });
