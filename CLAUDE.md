@@ -8,6 +8,7 @@
 @.cursor/rules/脚本.mdc
 @.cursor/rules/mvu变量框架.mdc
 @.cursor/rules/mvu角色卡.mdc
+<<<<<<< HEAD
 
 # 残明余烬 1.6 前端开发规范
 
@@ -69,3 +70,5 @@ import { boot } from 'https://cmyj-frontend.pages.dev/cmyj-1.6/loader/index.js';
 - Cloudflare Worker、D1/R2、Discord 鉴权和管理员后台属于独立后端，不要因为前端任务擅自改动。
 - 登录、服务器成员、已验证身份组、管理员权限、脚本与正则审核必须由后端校验；前端状态不得作为权限依据。
 - 修改现有功能时保留四套状态栏主题、窄屏布局和酒馆集成环境兼容性。
+=======
+>>>>>>> f24091c9a91d583dafdb4867d858268ebc487545
