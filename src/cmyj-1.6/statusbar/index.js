@@ -3634,7 +3634,7 @@ function loadIframeScripts() {
 
   script1.onload = () => {
     const script2 = doc.createElement('script');
-    script2.src = 'https://testingcf.jsdelivr.net/gh/CSEZK/CMYJ-Frontend@main/assets/maps/world_1634.js';
+    script2.src = 'https://testingcf.jsdelivr.net/gh/CSEZK/CMYJ-Frontend@agent%2Fupdate-1634-map/assets/maps/world_1634.js';
     script2.onload = () => {
       echartsReady = true;
       // 如果已在地图标签页，初始化
