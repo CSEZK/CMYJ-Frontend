@@ -89,6 +89,21 @@ import { Schema } from '../schema/definition.js';
       .replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-')
       .replace(/^-+|-+$/g, '')
       .slice(0, 56) || 'my-origin';
+  const normalizeUserToken = value => {
+    const sentinel = '\u0000CMYJ_USER_TOKEN\u0000';
+    return String(value ?? '')
+      .replace(/<\s*user\s*>/gi, sentinel)
+      .replace(/\{\{\s*user\s*\}\}/gi, sentinel)
+      .replace(/\buser\b/gi, sentinel)
+      .replaceAll(sentinel, '<user>');
+  };
+  const normalizeGeneratedValue = value => {
+    if (typeof value === 'string') return normalizeUserToken(value);
+    if (Array.isArray(value)) return value.map(normalizeGeneratedValue);
+    if (value && typeof value === 'object')
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, normalizeGeneratedValue(item)]));
+    return value;
+  };
 
   function characterState(character) {
     return {
@@ -388,15 +403,15 @@ import { Schema } from '../schema/definition.js';
       角色心声: '',
       是否在场: Boolean(state.scene),
     };
-    if (state.category === '仇敌') return { ...base, 仇恨度: Math.max(0, Number(state.affection) || 0) };
+    if (state.category === '仇敌') return { ...base, 仇恨度: clamp(-state.affection, 0, 100) };
     if (state.category === '下属与幕僚')
-      return { ...base, 好感度: Number(state.affection) || 0, 忠心: Number(state.loyalty) || 50 };
+      return { ...base, 好感度: clamp(state.affection, -100, 100), 忠心: clamp(state.loyalty, 0, 100) };
     if (state.category === '私帷')
       return {
         ...base,
         关系: PRIVATE_RELATIONS.includes(state.privateRelation) ? state.privateRelation : '红颜',
-        好感度: Number(state.affection) || 0,
-        忠心: Number(state.loyalty) || 50,
+        好感度: clamp(state.affection, -100, 100),
+        忠心: clamp(state.loyalty, 0, 100),
         生育: {
           周期: 1,
           时期: '安全期',
@@ -407,7 +422,7 @@ import { Schema } from '../schema/definition.js';
           _产后天数: 0,
         },
       };
-    return { ...base, 好感度: Number(state.affection) || 0 };
+    return { ...base, 好感度: clamp(state.affection, -100, 100) };
   }
 
   function mergeDeep(base, patch) {
@@ -533,22 +548,32 @@ import { Schema } from '../schema/definition.js';
         return {
           character: character.name,
           overviewSummary: character.summary,
-          identity: state.identity || character.summary,
-          activityArea: state.activityArea || '随剧情中的家庭、职务或生计合理迁移',
-          faction: state.faction || '',
-          userRelation: state.relation || (state.known ? '相识之人' : '尚未相识'),
-          relationshipOrigin:
+          identity: normalizeUserToken(state.identity || character.summary),
+          activityArea: normalizeUserToken(state.activityArea || '随剧情中的家庭、职务或生计合理迁移'),
+          faction: normalizeUserToken(state.faction || ''),
+          userRelation: normalizeUserToken(state.relation || (state.known ? '相识之人' : '尚未相识')),
+          relationshipOrigin: normalizeUserToken(
             state.relationshipOrigin ||
             (state.known
-              ? '双方因本世界线中的具体经历而相识，细节应与正文保持一致。'
+              ? '双方因具体经历而相识，细节应与正文保持一致。'
               : '双方起初没有既定交情，关系必须经由具体事件建立。'),
-          relationshipPattern: state.relationshipPattern || '关系随长期互动自然发展，不因主角光环突变。',
-          characterToUser: state.characterToUser || '依据双方身份、礼法与关系阶段自然称呼',
-          userToCharacter: state.userToCharacter || `依据身份或姓名称呼${character.name}`,
-          longTermSituation: state.longTermSituation || '在新的身份与环境中延续原人物的性格、能力边界和固定关系。',
-          adaptationPrinciples: state.adaptationPrinciples?.length
+          ),
+          relationshipPattern: normalizeUserToken(
+            state.relationshipPattern || '关系随长期互动自然发展，不因主角光环突变。',
+          ),
+          characterToUser: normalizeUserToken(
+            state.characterToUser || '依据双方身份、礼法与关系阶段自然称呼',
+          ),
+          userToCharacter: normalizeUserToken(
+            state.userToCharacter || `依据身份或姓名称呼${character.name}`,
+          ),
+          longTermSituation: normalizeUserToken(
+            state.longTermSituation || '在新的身份与环境中延续原人物的性格、能力边界和人物关系。',
+          ),
+          adaptationPrinciples: (state.adaptationPrinciples?.length
             ? state.adaptationPrinciples
-            : ['身份与地域变化不得覆盖原始人设的性格核心、能力边界和固定人物关系。'],
+            : ['身份与地域变化不得覆盖原始人设的性格核心、能力边界和人物关系。']
+          ).map(normalizeUserToken),
           nonFixedRelationships: [],
         };
       });
@@ -577,22 +602,50 @@ import { Schema } from '../schema/definition.js';
     return errors;
   }
 
+  function stripInitializationBlocks(content) {
+    return String(content || '')
+      .replace(/<initvar(?:\s[^>]*)?>[\s\S]*?<\/initvar\s*>/gi, '\n')
+      .replace(
+        /<(?:initial[_\s-]*variables?|initialization|变量初始化|初始化变量)(?:\s[^>]*)?>[\s\S]*?<\/(?:initial[_\s-]*variables?|initialization|变量初始化|初始化变量)\s*>/gi,
+        '\n',
+      )
+      .replace(/```(?:initvar|initial[_-]*variables?)\s*[\s\S]*?```/gi, '\n')
+      .replace(
+        /<\/?(?:initvar|initial[_\s-]*variables?|initialization|变量初始化|初始化变量)(?:\s[^>]*)?>/gi,
+        '',
+      )
+      .trim();
+  }
+
+  function openingWithInitvar(content, yaml) {
+    const opening = normalizeUserToken(stripInitializationBlocks(content));
+    const result = `${opening}\n\n<initvar>\n${yaml}\n</initvar>`;
+    if ((result.match(/<initvar>/g) || []).length !== 1 || (result.match(/<\/initvar>/g) || []).length !== 1)
+      throw new Error('初始变量标签生成失败：最终内容必须且只能包含一组 <initvar>。');
+    if (/<\/?(?:initial[_\s-]*variables?|initialization|变量初始化|初始化变量)(?:\s[^>]*)?>/i.test(result))
+      throw new Error('初始变量标签生成失败：检测到非标准初始化标签。');
+    return result;
+  }
+
   function compilePackage() {
     const errors = validateProject();
     if (errors.length) throw new Error(errors.join('；'));
-    const initial = createInitvar();
+    const initial = normalizeGeneratedValue(createInitvar());
     const yaml = YAML.stringify(initial, { lineWidth: 0, indent: 2 }).trimEnd();
     Schema.parse(YAML.parse(yaml));
-    const cleanOpeningBody = project.opening.body.replace(/\s*<initvar>[\s\S]*?<\/initvar>\s*/gi, '\n').trim();
-    const openingContent = `${cleanOpeningBody}\n\n<initvar>\n${yaml}\n</initvar>`;
+    const openingContent = openingWithInitvar(project.opening.body, yaml);
     const people = selectedCharacters().map(character => ({
       name: character.name,
-      summary: project.characters[character.name].identity
-        ? `${project.characters[character.name].identity}；${character.summary}`
-        : character.summary,
+      summary: normalizeUserToken(
+        project.characters[character.name].identity
+          ? `${project.characters[character.name].identity}；${character.summary}`
+          : character.summary,
+      ),
     }));
     const id = project.id.trim() || `cmyj.custom.${slug(project.title)}`;
-    const identityContent = `<主角身份背景>\n时代起点：崇祯七年七月\n来历：${project.protagonist.origin}\n开局身份：${project.protagonist.identity}\n开局职业：${project.protagonist.occupation || '无固定职业'}\n开局所属区域：${project.protagonist.location}\n开局所属势力：${project.protagonist.faction || '无固定势力'}\n说明：以上记录的是这条世界线的身份出发点，不代表剧情推进后的当前地点、职务、势力或目标；后续状态以变量与正文为准。\n</主角身份背景>`;
+    const identityContent = normalizeUserToken(
+      `<主角身份背景>\n时代起点：崇祯七年七月\n来历：${project.protagonist.origin}\n开局身份：${project.protagonist.identity}\n开局职业：${project.protagonist.occupation || '无固定职业'}\n开局所属区域：${project.protagonist.location}\n开局所属势力：${project.protagonist.faction || '无固定势力'}\n说明：以上记录的是身份出发点，不代表剧情推进后的当前地点、职务、势力或目标；后续状态以变量与正文为准。\n</主角身份背景>`,
+    );
     const worldbookEntries = [
       entry('[scenario]主角身份', identityContent, 1),
       entry('人物概览', overviewEntry(people), 0, 'after_character_definition'),
@@ -600,7 +653,10 @@ import { Schema } from '../schema/definition.js';
     const adaptations = characterAdaptations();
     const known = selectedCharacters()
       .filter(character => project.characters[character.name].known)
-      .map(character => ({ character: character.name, relation: project.characters[character.name].relation }));
+      .map(character => ({
+        character: character.name,
+        relation: normalizeUserToken(project.characters[character.name].relation),
+      }));
     const selectedNames = new Set(selectedCharacters().map(character => character.name));
     const graphLinks = [
       ...known.map(item => ({ source: '主角', target: item.character, label: item.relation || '相识' })),
@@ -616,7 +672,7 @@ import { Schema } from '../schema/definition.js';
         id,
         version: project.packageVersion || '0.1.0',
         baseCard: 'cmyj.base',
-        minBaseVersion: '1.7.0-beta.7',
+        minBaseVersion: '1.7.0-beta.8',
         exclusiveGroup: 'player-origin',
         allowMidChatSwitch: false,
         newChatRequired: true,
@@ -625,7 +681,7 @@ import { Schema } from '../schema/definition.js';
         {
           id: project.opening.id,
           name: project.opening.name,
-          subtitle: `崇祯七年七月${project.date.day} · ${project.protagonist.identity}`,
+          subtitle: normalizeUserToken(`崇祯七年七月${project.date.day} · ${project.protagonist.identity}`),
           content: openingContent,
         },
       ],
@@ -638,7 +694,7 @@ import { Schema } from '../schema/definition.js';
       characterAdaptations: adaptations,
       ui: {
         relationshipGraph: {
-          categories: [{ name: '本期开局', color: '#9f302d', symbol: 'roundRect' }],
+          categories: [{ name: '人物关系', color: '#9f302d', symbol: 'roundRect' }],
           nodes: [
             {
               id: '主角',
@@ -646,14 +702,14 @@ import { Schema } from '../schema/definition.js';
               category: 0,
               symbolSize: 64,
               symbol: 'circle',
-              desc: project.protagonist.identity,
+              desc: normalizeUserToken(project.protagonist.identity),
             },
             ...selectedCharacters().map(character => ({
               id: character.name,
               name: character.name,
               category: 0,
               symbolSize: 42,
-              desc: project.characters[character.name].relation || character.summary,
+              desc: normalizeUserToken(project.characters[character.name].relation || character.summary),
             })),
           ],
           links: graphLinks,
@@ -667,7 +723,9 @@ import { Schema } from '../schema/definition.js';
       createdAt: new Date().toISOString(),
       metadata: {
         title: project.title,
-        summary: project.summary || `${project.protagonist.location}的${project.protagonist.identity}开局。`,
+        summary: normalizeUserToken(
+          project.summary || `${project.protagonist.location}的${project.protagonist.identity}开局。`,
+        ),
         tags: project.tags,
         categories: ['剧情扩展'],
         coverUrl: '',
@@ -757,7 +815,7 @@ import { Schema } from '../schema/definition.js';
                 user_input: `${system}\n\n${user}${retrySuffix}`,
                 json_schema: schema,
               });
-        return parseAi(raw);
+        return normalizeGeneratedValue(parseAi(raw));
       } catch (error) {
         lastError = error;
       }
@@ -820,7 +878,7 @@ import { Schema } from '../schema/definition.js';
         const text = parseAiText(raw);
         const minimumLength = Math.min(300, Math.max(80, Math.round(Number(targetWords) * 0.18)));
         if (text.length < minimumLength) throw new Error(`AI 只返回了 ${text.length} 字符，未形成完整开场。`);
-        return text;
+        return normalizeUserToken(text);
       } catch (error) {
         lastError = error;
       }
@@ -857,9 +915,9 @@ import { Schema } from '../schema/definition.js';
         adaptation_principles: state.adaptationPrinciples,
       };
       const system =
-        `你负责为《残明余烬》的原创人物“${character.name}”制作本世界线长期适配。` +
-        '必须保留原始人设的性格核心、能力边界和固定人物关系。用户提供的“一句话适配设想”是本世界线的创作方向，需结合主角身份与原始人设展开成完整的长期定位。不得输出当前目标、当前情报、开场所在地、即时态度、是否在场或其他只在某一时刻成立的状态。只处理这一名人物，不要输出人物姓名，也不要使用 characters 数组或 character 外层。每个字符串都要有具体内容；确实没有固定势力时写“无固定势力”，不得用空字符串代替。adaptation_principles 至少给出两条可执行原则。输出符合 Schema 的单个 JSON 对象。';
-      const user = `目标人物：${character.name}\n主角长期身份：${project.protagonist.identity}；职业：${project.protagonist.occupation || '未定'}；主要活动地：${project.protagonist.location}；势力：${project.protagonist.faction || '无固定势力'}\n固定关系：${fixedRelationsFor([character])}\nadaptation_brief 是用户的一句话设想，只用于指导补全，不需要原样复述。其他非空字段是硬约束，不得改写；请把所有空白字段补成具体、长期有效的内容：\n${JSON.stringify(current, null, 2)}\n\n<${character.name}原始人设>\n${personaContext}\n</${character.name}原始人设>`;
+        `你负责为《残明余烬》的原创人物“${character.name}”制作长期人物定位。` +
+        '必须保留原始人设的性格核心、能力边界和人物关系。用户提供的“一句话适配设想”是创作方向，需结合<user>身份与原始人设展开成长期有效的身份、经历与相处方式。不得输出当前目标、当前情报、开场所在地、即时态度、是否在场或其他只在某一时刻成立的状态。只处理这一名人物，不要输出人物姓名，也不要使用 characters 数组或 character 外层。涉及玩家时一律写作<user>，不得写user或{{user}}。每个字符串都要有具体内容；确实没有固定势力时写“无固定势力”，不得用空字符串代替。adaptation_principles 至少给出两条可执行原则。输出符合 Schema 的单个 JSON 对象。';
+      const user = `目标人物：${character.name}\n<user>长期身份：${project.protagonist.identity}；职业：${project.protagonist.occupation || '未定'}；主要活动地：${project.protagonist.location}；势力：${project.protagonist.faction || '无固定势力'}\n不可改写的人物关系：${fixedRelationsFor([character])}\nadaptation_brief 是用户的一句话设想，只用于指导补全，不需要原样复述。其他非空字段是硬约束，不得改写；请把所有空白字段补成具体、长期有效的内容：\n${JSON.stringify(current, null, 2)}\n\n<${character.name}原始人设>\n${personaContext}\n</${character.name}原始人设>`;
       const schema = {
         name: 'canming_single_character_adaptation_v3',
         value: {
@@ -895,9 +953,9 @@ import { Schema } from '../schema/definition.js';
         ['faction', 'faction', '长期所属势力'],
         ['relationshipOrigin', 'relationship_origin', '与主角的关系来源'],
         ['relationshipPattern', 'relationship_pattern', '长期相处模式'],
-        ['characterToUser', 'character_to_user', '角色称呼 user'],
-        ['userToCharacter', 'user_to_character', 'user 称呼角色'],
-        ['longTermSituation', 'long_term_situation', '本世界线长期处境'],
+        ['characterToUser', 'character_to_user', '角色称呼 <user>'],
+        ['userToCharacter', 'user_to_character', '<user> 称呼角色'],
+        ['longTermSituation', 'long_term_situation', '长期生活处境'],
       ];
       const unwrapResult = result => {
         if (result?.character && typeof result.character === 'object') return result.character;
@@ -959,8 +1017,8 @@ import { Schema } from '../schema/definition.js';
       scene.some(character => character.name === item.character),
     );
     const system =
-      '你是《残明余烬》的开局创作助手。时代严格固定在崇祯七年七月。现场角色的原始人设是硬约束，长期适配只能改变其世界线身份与关系背景，不能改变人格核心。只有“开场现场人物”可以实际出场；其他人物不得为了展示名单被塞入第一幕。开场只是故事引子，不必让所有现场人物轮流说话。直接输出可供酒馆使用的中文正文，不要输出标题、说明、JSON、Markdown代码块或<initvar>。';
-    const user = `DLC：${project.title}\n开场名称：${project.opening.name}\n主角：${project.protagonist.origin}，${project.protagonist.identity}，职业${project.protagonist.occupation || '未定'}\n地点：${project.protagonist.location}\n故事气质：${project.protagonist.tone}\n一句话开局设想：${project.opening.hook || '请根据身份设计一个具体而紧迫的引子'}\n开场白目标字数：约${project.opening.targetWords}字，允许上下浮动15%\n纳入DLC的人物：${selected.map(character => character.name).join('、') || '无'}\n开场前已经相识：${known.map(character => `${character.name}（${project.characters[character.name].relation || '相识'}）`).join('、') || '无'}\n允许在开场现场出现：${scene.map(character => character.name).join('、') || '无现有角色，开场只写{{user}}及必要的一次性路人'}\n固定人物关系：${fixedRelationsFor(selected)}\n现场人物长期适配：${JSON.stringify(sceneAdaptations, null, 2)}${personaContext ? `\n\n<现场人物原始人设>\n${personaContext}\n</现场人物原始人设>` : ''}${referenceContext ? `\n\n<参考世界书>\n${referenceContext}\n</参考世界书>` : ''}\n\n使用{{user}}指代玩家。现在直接写开场正文。`;
+      '你是《残明余烬》的开局创作助手。时代严格固定在崇祯七年七月。现场角色的原始人设是硬约束，长期人物定位只能改变其身份与关系背景，不能改变人格核心。只有“开场现场人物”可以实际出场；其他人物不得为了展示名单被塞入第一幕。开场只是故事引子，不必让所有现场人物轮流说话。涉及玩家时一律写作<user>，不得写user或{{user}}。直接输出可供酒馆使用的中文正文，不要输出标题、说明、JSON、Markdown代码块、<initvar>或任何其他初始化标签。';
+    const user = `DLC：${project.title}\n开场名称：${project.opening.name}\n<user>：${project.protagonist.origin}，${project.protagonist.identity}，职业${project.protagonist.occupation || '未定'}\n地点：${project.protagonist.location}\n故事气质：${project.protagonist.tone}\n一句话开局设想：${project.opening.hook || '请根据身份设计一个具体而紧迫的引子'}\n开场白目标字数：约${project.opening.targetWords}字，允许上下浮动15%\n纳入DLC的人物：${selected.map(character => character.name).join('、') || '无'}\n开场前已经相识：${known.map(character => `${character.name}（${project.characters[character.name].relation || '相识'}）`).join('、') || '无'}\n允许在开场现场出现：${scene.map(character => character.name).join('、') || '无现有角色，开场只写<user>及必要的一次性路人'}\n不可改写的人物关系：${fixedRelationsFor(selected)}\n现场人物长期定位：${JSON.stringify(sceneAdaptations, null, 2)}${personaContext ? `\n\n<现场人物原始人设>\n${personaContext}\n</现场人物原始人设>` : ''}${referenceContext ? `\n\n<参考世界书>\n${referenceContext}\n</参考世界书>` : ''}\n\n现在直接写开场正文。`;
     project.opening.body = await requestOpeningText(system, user, project.opening.targetWords);
     project.summary = String(
       project.opening.hook || project.summary || project.opening.body.replace(/\s+/g, ' ').slice(0, 120),
@@ -1128,26 +1186,35 @@ import { Schema } from '../schema/definition.js';
     for (const item of unique(facts.relationships, '人际关系')) {
       const configured = project.characters[item.name];
       if (configured?.included) item.category = configured.category;
-      const base = { 身份: item.identity, 角色心声: item.inner_voice, 是否在场: Boolean(item.present) };
+      const favor = configured?.included ? Number(configured.affection) || 0 : item.favor;
+      const loyalty = configured?.included ? Number(configured.loyalty) || 50 : item.loyalty;
+      const base = {
+        身份: normalizeUserToken(item.identity),
+        角色心声: normalizeUserToken(item.inner_voice),
+        是否在场: configured?.included ? Boolean(configured.scene) : Boolean(item.present),
+      };
       patch.人际网络[item.category] ||= {};
       if (item.category === '仇敌') {
-        patch.人际网络[item.category][item.name] = { ...base, 仇恨度: clamp(item.hatred, 0, 100) };
+        patch.人际网络[item.category][item.name] = {
+          ...base,
+          仇恨度: clamp(configured?.included ? -configured.affection : item.hatred, 0, 100),
+        };
       } else if (item.category === '下属与幕僚') {
         patch.人际网络[item.category][item.name] = {
           ...base,
-          好感度: clamp(item.favor, -100, 100),
-          忠心: clamp(item.loyalty, 0, 100),
+          好感度: clamp(favor, -100, 100),
+          忠心: clamp(loyalty, 0, 100),
         };
       } else if (item.category === '私帷') {
         patch.人际网络[item.category][item.name] = {
           ...base,
           关系: configured?.included ? configured.privateRelation : item.private_relation,
-          好感度: clamp(item.favor, -100, 100),
-          忠心: clamp(item.loyalty, 0, 100),
+          好感度: clamp(favor, -100, 100),
+          忠心: clamp(loyalty, 0, 100),
           生育: {},
         };
       } else {
-        patch.人际网络[item.category][item.name] = { ...base, 好感度: clamp(item.favor, -100, 100) };
+        patch.人际网络[item.category][item.name] = { ...base, 好感度: clamp(favor, -100, 100) };
       }
     }
     for (const item of unique(facts.factions, '势力'))
@@ -1186,7 +1253,7 @@ import { Schema } from '../schema/definition.js';
   async function generateInitialVariables() {
     if (!project.opening.body.trim()) throw new Error('请先生成或填写开场白。');
     const system =
-      '你负责从《残明余烬》的最终开场白中提取初始化事实。只能提取正文和玩家配置明确支持的事实，不得为了填满变量而编造军队、产业、科技、势力或物品。不得输出天下地图、日期、地点、主角五维或金银铜；这些由固定模板生成。输出合法JSON。';
+      '你负责从《残明余烬》的最终开场白中提取初始化事实。只能提取正文和玩家配置明确支持的事实，不得为了填满变量而编造军队、产业、科技、势力或物品。不得输出天下地图、日期、地点、主角五维或金银铜；这些由固定模板生成。涉及玩家时一律写作<user>。只输出合法JSON，不得输出<initvar>、其他初始化标签、Markdown或说明。最终的<initvar>标签由程序统一生成。';
     const characterSnapshot = selectedCharacters().map(character => ({
       name: character.name,
       known_before_opening: project.characters[character.name].known,
@@ -1194,8 +1261,10 @@ import { Schema } from '../schema/definition.js';
       category: project.characters[character.name].category,
       identity: project.characters[character.name].identity || character.summary,
       relation: project.characters[character.name].relation,
+      initial_favor: Number(project.characters[character.name].affection) || 0,
+      initial_loyalty: Number(project.characters[character.name].loyalty) || 50,
     }));
-    const user = `主角：${project.protagonist.identity}；职业：${project.protagonist.occupation || '未定'}；势力：${project.protagonist.faction || '无'}\n开局地点：${project.protagonist.location}\n人物快照：${JSON.stringify(characterSnapshot, null, 2)}\n\n<最终开场白>\n${project.opening.body}\n</最终开场白>\n\n空数组表示该类事实不存在。开场中实际相遇的现场人物应写入 relationships；未出场且开场前不相识的人物不得写入。`;
+    const user = `<user>：${project.protagonist.identity}；职业：${project.protagonist.occupation || '未定'}；势力：${project.protagonist.faction || '无'}\n开局地点：${project.protagonist.location}\n人物快照：${JSON.stringify(characterSnapshot, null, 2)}\n\n<最终开场白>\n${normalizeUserToken(stripInitializationBlocks(project.opening.body))}\n</最终开场白>\n\n空数组表示该类事实不存在。开场中实际相遇的现场人物应写入 relationships；未出场且开场前不相识的人物不得写入。人物快照中的初始好感度与忠心是硬约束，不得改写。`;
     const facts = await requestAi(system, user, factsSchema());
     project.initialization.patch = materializeInitialFacts(facts);
     project.initialization.summary = `人物 ${(facts.relationships || []).length} · 物品 ${(facts.important_items || []).length} · 军队 ${(facts.forces || []).length} · 资产 ${(facts.assets || []).length} · 任务 ${(facts.tasks || []).length}`;
@@ -1223,7 +1292,7 @@ import { Schema } from '../schema/definition.js';
     style.id = STYLE_ID;
     style.textContent = `#${ROOT_ID}{--paper:#eee5d2;--paper2:#dfd1b7;--card:#f8f0df;--ink:#29231c;--muted:#756958;--line:#b9a98d;--red:#8e2926;position:absolute;inset:0;z-index:68;color:var(--ink);font:14px/1.65 "Noto Serif SC","Songti SC",serif;background:radial-gradient(circle at 82% 9%,rgba(142,41,38,.13),transparent 31%),linear-gradient(145deg,var(--paper),var(--paper2));overflow:hidden}#${ROOT_ID}.theme-night,#${ROOT_ID}.theme-star{--paper:#171b20;--paper2:#20262c;--card:#252b31;--ink:#eee4d1;--muted:#b7aa95;--line:#4b4a45;--red:#bd5950}#${ROOT_ID}*{box-sizing:border-box}#${ROOT_ID} button,#${ROOT_ID} input,#${ROOT_ID} textarea,#${ROOT_ID} select{font:inherit}#${ROOT_ID} .sg-shell{height:100%;display:grid;grid-template-rows:72px 1fr 68px}#${ROOT_ID} .sg-head{display:flex;align-items:center;justify-content:space-between;padding:0 24px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--paper) 86%,transparent);backdrop-filter:blur(16px)}#${ROOT_ID} .sg-brand{display:flex;align-items:center;gap:12px}#${ROOT_ID} .sg-seal{display:grid;width:40px;height:40px;place-items:center;border:2px solid var(--red);color:var(--red);font-size:20px;font-weight:900;transform:rotate(-5deg)}#${ROOT_ID} .sg-brand b{font-size:18px;letter-spacing:.1em}#${ROOT_ID} .sg-brand small{display:block;color:var(--muted);font-size:10px;letter-spacing:.14em}#${ROOT_ID} .sg-close,#${ROOT_ID} .sg-btn{border:1px solid var(--line);border-radius:10px;color:inherit;background:var(--card);cursor:pointer;transition:.18s}#${ROOT_ID} .sg-close{width:36px;height:36px;font-size:22px}#${ROOT_ID} .sg-btn{padding:9px 14px}#${ROOT_ID} .sg-btn:hover{transform:translateY(-1px);border-color:var(--red)}#${ROOT_ID} .sg-btn.primary{color:#fff;background:var(--red);border-color:var(--red)}#${ROOT_ID} .sg-main{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:0}#${ROOT_ID} .sg-steps{padding:26px 16px;border-right:1px solid var(--line)}#${ROOT_ID} .sg-step{display:grid;grid-template-columns:32px 1fr;gap:10px;align-items:center;width:100%;padding:11px;border:0;border-radius:12px;color:var(--muted);text-align:left;background:transparent;cursor:pointer}#${ROOT_ID} .sg-step i{display:grid;width:28px;height:28px;place-items:center;border:1px solid var(--line);border-radius:50%;font-style:normal}#${ROOT_ID} .sg-step.on{color:var(--ink);background:color-mix(in srgb,var(--red) 10%,var(--card))}#${ROOT_ID} .sg-step.on i{color:#fff;background:var(--red);border-color:var(--red)}#${ROOT_ID} .sg-content{overflow:auto;padding:30px clamp(18px,4vw,52px)}#${ROOT_ID} .sg-page{width:min(960px,100%);margin:auto}#${ROOT_ID} .sg-kicker{margin:0;color:var(--red);font-size:10px;letter-spacing:.28em}#${ROOT_ID} h1{margin:5px 0 8px;font-size:clamp(28px,4vw,44px);line-height:1.2}#${ROOT_ID} .sg-lead{max-width:720px;margin:0 0 24px;color:var(--muted)}#${ROOT_ID} .sg-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}#${ROOT_ID} .sg-field{display:grid;gap:6px}#${ROOT_ID} .sg-field.full{grid-column:1/-1}#${ROOT_ID} label>span{color:var(--muted);font-size:11px}#${ROOT_ID} input,#${ROOT_ID} textarea,#${ROOT_ID} select{width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--ink);background:var(--card);outline:none}#${ROOT_ID} textarea{min-height:102px;resize:vertical}#${ROOT_ID} input:focus,#${ROOT_ID} textarea:focus,#${ROOT_ID} select:focus{border-color:var(--red);box-shadow:0 0 0 3px color-mix(in srgb,var(--red) 12%,transparent)}#${ROOT_ID} .sg-era{margin:18px 0;padding:13px 15px;border-left:4px solid var(--red);border-radius:8px;background:color-mix(in srgb,var(--red) 8%,var(--card))}#${ROOT_ID} .sg-era.bad{border-color:#c46a45}#${ROOT_ID} .sg-roster{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}#${ROOT_ID} .sg-char{position:relative;padding:13px;border:1px solid var(--line);border-radius:14px;background:var(--card);cursor:pointer}#${ROOT_ID} .sg-char.on{border-color:var(--red);box-shadow:inset 0 0 0 1px var(--red)}#${ROOT_ID} .sg-char b{display:block}#${ROOT_ID} .sg-char small{display:block;margin-top:3px;color:var(--muted)}#${ROOT_ID} .sg-char em{position:absolute;right:9px;top:8px;color:var(--red);font-size:9px;font-style:normal}#${ROOT_ID} .sg-char-flags{display:flex;gap:5px;margin-top:9px}#${ROOT_ID} .sg-flag{padding:2px 6px;border-radius:999px;background:var(--paper2);color:var(--muted);font-size:9px}#${ROOT_ID} .sg-flag.on{color:#fff;background:var(--red)}#${ROOT_ID} .sg-detail{margin:16px 0;padding:18px;border:1px solid var(--line);border-radius:16px;background:color-mix(in srgb,var(--card) 88%,transparent)}#${ROOT_ID} .sg-detail h3{margin:0 0 12px}#${ROOT_ID} .sg-checks{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}#${ROOT_ID} .sg-check{display:flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid var(--line);border-radius:999px;background:var(--paper2);cursor:pointer}#${ROOT_ID} .sg-check input{width:auto}#${ROOT_ID} .sg-scene{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 22px}#${ROOT_ID} .sg-scene button{padding:8px 11px;border:1px solid var(--line);border-radius:999px;color:var(--muted);background:var(--card);cursor:pointer}#${ROOT_ID} .sg-scene button.on{color:#fff;background:var(--red);border-color:var(--red)}#${ROOT_ID} .sg-preview{display:grid;gap:12px}#${ROOT_ID} .sg-card{padding:17px;border:1px solid var(--line);border-radius:15px;background:var(--card)}#${ROOT_ID} .sg-card h3{margin:0 0 7px}#${ROOT_ID} .sg-card p{margin:0;color:var(--muted)}#${ROOT_ID} .sg-errors{padding:12px 14px;border:1px solid #b95d4b;border-radius:10px;background:color-mix(in srgb,#b95d4b 10%,var(--card));color:#b95d4b}#${ROOT_ID} .sg-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 22px;border-top:1px solid var(--line);background:color-mix(in srgb,var(--paper) 90%,transparent)}#${ROOT_ID} .sg-status{overflow:hidden;color:var(--muted);text-overflow:ellipsis;white-space:nowrap}#${ROOT_ID} .sg-status.error{color:#c05b49}#${ROOT_ID} .sg-status.warning{color:#c48a3f}#${ROOT_ID} .sg-status.success{color:#568e63}#${ROOT_ID} .sg-actions{display:flex;gap:8px}@media(max-width:800px){#${ROOT_ID} .sg-main{grid-template-columns:1fr}#${ROOT_ID} .sg-steps{display:flex;overflow:auto;padding:8px;border-right:0;border-bottom:1px solid var(--line)}#${ROOT_ID} .sg-step{min-width:116px;padding:7px}#${ROOT_ID} .sg-content{padding:22px 14px}#${ROOT_ID} .sg-roster{grid-template-columns:repeat(2,minmax(0,1fr))}#${ROOT_ID} .sg-grid{grid-template-columns:1fr}#${ROOT_ID} .sg-field.full{grid-column:auto}#${ROOT_ID} .sg-status{display:none}#${ROOT_ID} .sg-footer{justify-content:flex-end;padding:8px 12px}#${ROOT_ID} .sg-actions{flex-wrap:wrap;justify-content:flex-end}}`;
     style.textContent += `#${ROOT_ID}{--paper:#f4e7c7;--paper2:#ead6a6;--ink:#2c2118;--muted:#75624d;--line:rgba(96,65,36,.28);--accent:#a43d2d;--accent2:#6f8a67;--shadow:rgba(55,31,12,.35);--card:rgba(255,248,226,.72);--glow:rgba(188,83,42,.32);--red:var(--accent);--radius-shell:20px;--radius-card:14px;--radius-control:10px;background:radial-gradient(circle at 82% 9%,var(--glow),transparent 31%),linear-gradient(145deg,var(--paper),var(--paper2));border-radius:var(--radius-shell)}#${ROOT_ID}.theme-night{--paper:#211913;--paper2:#352619;--ink:#f2dfba;--muted:#b99f76;--line:rgba(237,196,128,.24);--accent:#d0784b;--accent2:#89a074;--shadow:rgba(0,0,0,.65);--card:rgba(65,44,30,.82);--glow:rgba(220,94,48,.28)}#${ROOT_ID}.theme-star{--paper:#0d1820;--paper2:#111d28;--ink:#e6dcc8;--muted:#7d8fa0;--line:rgba(180,155,110,.22);--accent:#d4a040;--accent2:#5d8d9a;--shadow:rgba(0,0,0,.7);--card:rgba(18,28,38,.8);--glow:rgba(210,160,60,.2)}#${ROOT_ID}.theme-ink{--paper:#eee9dc;--paper2:#d8d0bf;--ink:#171a17;--muted:#5f6158;--line:rgba(20,25,22,.24);--accent:#a12f25;--accent2:#2f6965;--shadow:rgba(25,30,24,.30);--card:rgba(248,245,235,.62);--glow:rgba(40,70,64,.18);background:radial-gradient(ellipse at 70% 12%,rgba(23,26,23,.18),transparent 28%),radial-gradient(ellipse at 18% 74%,rgba(47,105,101,.16),transparent 38%),linear-gradient(135deg,var(--paper),var(--paper2))}#${ROOT_ID} .sg-shell{position:relative;border-radius:var(--radius-shell);overflow:hidden}#${ROOT_ID} .sg-shell:before{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(90deg,rgba(80,45,20,.025),rgba(80,45,20,.025) 1px,transparent 1px,transparent 9px);opacity:.55}#${ROOT_ID} .sg-head,#${ROOT_ID} .sg-main,#${ROOT_ID} .sg-footer{position:relative;z-index:1}#${ROOT_ID} .sg-head{background:color-mix(in srgb,var(--paper) 76%,transparent);box-shadow:0 1px 0 rgba(255,255,255,.08) inset}#${ROOT_ID} .sg-steps{background:color-mix(in srgb,var(--card) 36%,transparent)}#${ROOT_ID} .sg-step,#${ROOT_ID} .sg-btn,#${ROOT_ID} .sg-close,#${ROOT_ID} input,#${ROOT_ID} textarea,#${ROOT_ID} select{border-radius:var(--radius-control)}#${ROOT_ID} .sg-char,#${ROOT_ID} .sg-detail,#${ROOT_ID} .sg-card{border-radius:var(--radius-card);box-shadow:0 1px 0 rgba(255,255,255,.08) inset,0 10px 26px color-mix(in srgb,var(--shadow) 28%,transparent);backdrop-filter:blur(3px)}#${ROOT_ID}.theme-ink .sg-char,#${ROOT_ID}.theme-ink .sg-detail,#${ROOT_ID}.theme-ink .sg-card{border-radius:var(--radius-card);background:rgba(250,247,235,.58)}#${ROOT_ID} .sg-content{scrollbar-color:var(--line) transparent}#${ROOT_ID} .sg-kicker{color:var(--accent)}#${ROOT_ID} .sg-seal{border-color:var(--accent);border-radius:6px;color:var(--accent)}#${ROOT_ID} .sg-step.on{background:color-mix(in srgb,var(--accent) 11%,var(--card))}#${ROOT_ID} .sg-step.on i,#${ROOT_ID} .sg-btn.primary,#${ROOT_ID} .sg-flag.on,#${ROOT_ID} .sg-scene button.on{background:var(--accent);border-color:var(--accent)}#${ROOT_ID} .sg-char.on{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent),0 10px 26px color-mix(in srgb,var(--shadow) 28%,transparent)}#${ROOT_ID} .sg-btn:hover{border-color:var(--accent)}#${ROOT_ID} .sg-field input:focus,#${ROOT_ID} .sg-field textarea:focus,#${ROOT_ID} .sg-field select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}#${ROOT_ID} .sg-page{animation:sg-page-in .22s ease-out}@keyframes sg-page-in{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}`;
-    style.textContent += `#${ROOT_ID} .sg-page-wide{width:min(1180px,100%)}#${ROOT_ID} .sg-selected-bar{position:sticky;top:-30px;z-index:5;margin:0 0 16px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius-card);background:color-mix(in srgb,var(--paper) 86%,transparent);box-shadow:0 9px 28px color-mix(in srgb,var(--shadow) 22%,transparent);backdrop-filter:blur(16px)}#${ROOT_ID} .sg-selected-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:9px}#${ROOT_ID} .sg-selected-head b{font-size:13px}#${ROOT_ID} .sg-selected-head span{color:var(--muted);font-size:11px}#${ROOT_ID} .sg-selected-chips{display:flex;gap:7px;overflow:auto;padding:1px 0 3px;scrollbar-width:thin}#${ROOT_ID} .sg-selected-chip{flex:0 0 auto;padding:5px 9px;border:1px solid var(--line);border-radius:999px;color:var(--ink);background:var(--card);cursor:pointer}#${ROOT_ID} .sg-selected-chip:hover{border-color:var(--accent);color:var(--accent)}#${ROOT_ID} .sg-selected-empty{color:var(--muted);font-size:12px}#${ROOT_ID} .sg-roster-workspace{display:grid;grid-template-columns:minmax(250px,310px) minmax(0,1fr);gap:16px;align-items:start}#${ROOT_ID} .sg-roster-panel,#${ROOT_ID} .sg-config-panel{border:1px solid var(--line);border-radius:var(--radius-card);background:color-mix(in srgb,var(--card) 88%,transparent);box-shadow:0 10px 30px color-mix(in srgb,var(--shadow) 22%,transparent);overflow:hidden}#${ROOT_ID} .sg-panel-head{padding:15px;border-bottom:1px solid var(--line)}#${ROOT_ID} .sg-panel-title{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}#${ROOT_ID} .sg-panel-title h2{margin:0;font-size:17px}#${ROOT_ID} .sg-panel-title span{color:var(--muted);font-size:11px}#${ROOT_ID} .sg-search{position:relative}#${ROOT_ID} .sg-search input{padding-left:34px;background:color-mix(in srgb,var(--paper) 56%,var(--card))}#${ROOT_ID} .sg-search:before{content:'⌕';position:absolute;left:12px;top:6px;z-index:1;color:var(--muted);font-size:20px}#${ROOT_ID} .sg-filter-row{display:flex;gap:6px;margin-top:9px;overflow:auto}#${ROOT_ID} .sg-filter{flex:0 0 auto;padding:5px 9px;border:1px solid transparent;border-radius:999px;color:var(--muted);background:transparent;cursor:pointer}#${ROOT_ID} .sg-filter.on{border-color:var(--line);color:var(--ink);background:var(--paper2)}#${ROOT_ID} .sg-catalog{max-height:480px;overflow:auto;padding:7px;scrollbar-width:thin}#${ROOT_ID} .sg-catalog-row{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:9px;align-items:center;width:100%;padding:9px;border:0;border-radius:11px;color:var(--ink);text-align:left;background:transparent;cursor:pointer}#${ROOT_ID} .sg-catalog-row:hover{background:color-mix(in srgb,var(--accent) 7%,transparent)}#${ROOT_ID} .sg-catalog-row.on{background:color-mix(in srgb,var(--accent) 10%,var(--card))}#${ROOT_ID} .sg-pick-box{display:grid;width:20px;height:20px;place-items:center;border:1px solid var(--line);border-radius:6px;color:transparent;background:var(--card);font:700 12px/1 sans-serif}#${ROOT_ID} .sg-catalog-row.on .sg-pick-box{border-color:var(--accent);color:#fff;background:var(--accent)}#${ROOT_ID} .sg-catalog-copy{min-width:0}#${ROOT_ID} .sg-catalog-copy b,#${ROOT_ID} .sg-catalog-copy small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#${ROOT_ID} .sg-catalog-copy small{color:var(--muted);font-size:10px}#${ROOT_ID} .sg-kind{padding:2px 6px;border-radius:999px;color:var(--muted);background:var(--paper2);font-size:9px}#${ROOT_ID} .sg-catalog-empty{padding:24px 12px;color:var(--muted);text-align:center}#${ROOT_ID} .sg-config-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 15px;border-bottom:1px solid var(--line)}#${ROOT_ID} .sg-config-toolbar p{margin:0;color:var(--muted);font-size:11px}#${ROOT_ID} .sg-bulk{position:relative}#${ROOT_ID} .sg-bulk summary{padding:6px 10px;border:1px solid var(--line);border-radius:999px;list-style:none;cursor:pointer}#${ROOT_ID} .sg-bulk summary::-webkit-details-marker{display:none}#${ROOT_ID} .sg-bulk-menu{position:absolute;right:0;top:calc(100% + 7px);z-index:8;display:grid;min-width:190px;padding:6px;border:1px solid var(--line);border-radius:12px;background:var(--paper);box-shadow:0 14px 32px var(--shadow)}#${ROOT_ID} .sg-bulk-menu button{padding:8px 10px;border:0;border-radius:8px;color:var(--ink);text-align:left;background:transparent;cursor:pointer}#${ROOT_ID} .sg-bulk-menu button:hover{background:color-mix(in srgb,var(--accent) 9%,transparent)}#${ROOT_ID} .sg-config-list{display:grid;gap:10px;padding:12px}#${ROOT_ID} .sg-config-card{border:1px solid var(--line);border-radius:var(--radius-card);background:color-mix(in srgb,var(--paper) 32%,var(--card));overflow:hidden;transition:border-color .18s,box-shadow .18s}#${ROOT_ID} .sg-config-card.expanded{border-color:color-mix(in srgb,var(--accent) 70%,var(--line));box-shadow:0 10px 24px color-mix(in srgb,var(--shadow) 20%,transparent)}#${ROOT_ID} .sg-config-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;padding:13px}#${ROOT_ID} .sg-config-main{display:grid;grid-template-columns:28px minmax(0,1fr);gap:9px;align-items:start;padding:0;border:0;color:inherit;text-align:left;background:transparent;cursor:pointer}#${ROOT_ID} .sg-config-chevron{display:grid;width:26px;height:26px;place-items:center;border-radius:8px;color:var(--muted);background:var(--paper2);transition:transform .18s}#${ROOT_ID} .sg-config-card.expanded .sg-config-chevron{transform:rotate(90deg)}#${ROOT_ID} .sg-config-name{display:flex;align-items:center;gap:7px}#${ROOT_ID} .sg-config-name b{font-size:15px}#${ROOT_ID} .sg-config-summary{display:block;margin-top:3px;color:var(--muted);font-size:11px;white-space:normal}#${ROOT_ID} .sg-config-actions{display:flex;align-items:center;gap:6px}#${ROOT_ID} .sg-mini-btn{padding:5px 8px;border:1px solid var(--line);border-radius:8px;color:var(--muted);background:transparent;cursor:pointer}#${ROOT_ID} .sg-mini-btn:hover{border-color:var(--accent);color:var(--accent)}#${ROOT_ID} .sg-quick-area{padding:0 13px 13px 50px}#${ROOT_ID} .sg-quick-label{display:flex;align-items:baseline;gap:8px;margin-bottom:7px}#${ROOT_ID} .sg-quick-label b{font-size:11px}#${ROOT_ID} .sg-quick-label span{color:var(--muted);font-size:10px}#${ROOT_ID} .sg-quick-switches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:0}#${ROOT_ID} .sg-choice{position:relative;display:grid;grid-template-columns:22px minmax(0,1fr);gap:9px;align-items:center;padding:9px 10px;border:1px solid var(--line);border-radius:11px;color:var(--ink);background:color-mix(in srgb,var(--paper) 54%,var(--card));cursor:pointer;transition:border-color .16s,background .16s,transform .16s}#${ROOT_ID} .sg-choice:hover{border-color:var(--accent);transform:translateY(-1px)}#${ROOT_ID} .sg-choice input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}#${ROOT_ID} .sg-choice-box{display:grid;width:21px;height:21px;place-items:center;border:1px solid var(--line);border-radius:6px;color:transparent;background:var(--card);font:700 12px/1 sans-serif}#${ROOT_ID} .sg-choice-copy b,#${ROOT_ID} .sg-choice-copy small{display:block}#${ROOT_ID} .sg-choice-copy b{font-size:12px}#${ROOT_ID} .sg-choice-copy small{margin-top:1px;color:var(--muted);font-size:9px}#${ROOT_ID} .sg-choice:has(input:checked){border-color:var(--accent);background:color-mix(in srgb,var(--accent) 11%,var(--card));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 24%,transparent)}#${ROOT_ID} .sg-choice:has(input:checked) .sg-choice-box{border-color:var(--accent);color:#fff;background:var(--accent)}#${ROOT_ID} .sg-config-body{padding:15px;border-top:1px solid var(--line);background:color-mix(in srgb,var(--card) 58%,transparent)}#${ROOT_ID} .sg-config-note{margin:12px 0 0;color:var(--muted);font-size:11px}#${ROOT_ID} .sg-config-empty{padding:48px 24px;color:var(--muted);text-align:center}#${ROOT_ID} .sg-fixed-relations{margin-top:16px;border-radius:var(--radius-card)}@media(max-width:900px){#${ROOT_ID} .sg-roster-workspace{grid-template-columns:1fr}#${ROOT_ID} .sg-config-panel{grid-row:1}#${ROOT_ID} .sg-catalog{max-height:340px}#${ROOT_ID} .sg-selected-bar{top:-22px}}@media(max-width:560px){#${ROOT_ID} .sg-config-head{grid-template-columns:1fr}#${ROOT_ID} .sg-config-actions{padding-left:37px}#${ROOT_ID} .sg-quick-area{padding-left:13px}#${ROOT_ID} .sg-quick-switches{grid-template-columns:1fr}#${ROOT_ID} .sg-selected-head{align-items:flex-start;flex-direction:column}}`;
+    style.textContent += `#${ROOT_ID} .sg-page-wide{width:min(1180px,100%)}#${ROOT_ID} .sg-selected-bar{position:sticky;top:-30px;z-index:5;margin:0 0 16px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius-card);background:color-mix(in srgb,var(--paper) 86%,transparent);box-shadow:0 9px 28px color-mix(in srgb,var(--shadow) 22%,transparent);backdrop-filter:blur(16px)}#${ROOT_ID} .sg-selected-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:9px}#${ROOT_ID} .sg-selected-head b{font-size:13px}#${ROOT_ID} .sg-selected-head span{color:var(--muted);font-size:11px}#${ROOT_ID} .sg-selected-chips{display:flex;gap:7px;overflow:auto;padding:1px 0 3px;scrollbar-width:thin}#${ROOT_ID} .sg-selected-chip{flex:0 0 auto;padding:5px 9px;border:1px solid var(--line);border-radius:999px;color:var(--ink);background:var(--card);cursor:pointer}#${ROOT_ID} .sg-selected-chip:hover{border-color:var(--accent);color:var(--accent)}#${ROOT_ID} .sg-selected-empty{color:var(--muted);font-size:12px}#${ROOT_ID} .sg-roster-workspace{display:grid;grid-template-columns:minmax(250px,310px) minmax(0,1fr);gap:16px;align-items:start}#${ROOT_ID} .sg-roster-panel,#${ROOT_ID} .sg-config-panel{border:1px solid var(--line);border-radius:var(--radius-card);background:color-mix(in srgb,var(--card) 88%,transparent);box-shadow:0 10px 30px color-mix(in srgb,var(--shadow) 22%,transparent);overflow:hidden}#${ROOT_ID} .sg-panel-head{padding:15px;border-bottom:1px solid var(--line)}#${ROOT_ID} .sg-panel-title{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}#${ROOT_ID} .sg-panel-title h2{margin:0;font-size:17px}#${ROOT_ID} .sg-panel-title span{color:var(--muted);font-size:11px}#${ROOT_ID} .sg-search{position:relative}#${ROOT_ID} .sg-search input{padding-left:34px;background:color-mix(in srgb,var(--paper) 56%,var(--card))}#${ROOT_ID} .sg-search:before{content:'⌕';position:absolute;left:12px;top:6px;z-index:1;color:var(--muted);font-size:20px}#${ROOT_ID} .sg-filter-row{display:flex;gap:6px;margin-top:9px;overflow:auto}#${ROOT_ID} .sg-filter{flex:0 0 auto;padding:5px 9px;border:1px solid transparent;border-radius:999px;color:var(--muted);background:transparent;cursor:pointer}#${ROOT_ID} .sg-filter.on{border-color:var(--line);color:var(--ink);background:var(--paper2)}#${ROOT_ID} .sg-catalog{max-height:480px;overflow:auto;padding:7px;scrollbar-width:thin}#${ROOT_ID} .sg-catalog-row{display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:9px;align-items:center;width:100%;padding:9px;border:0;border-radius:11px;color:var(--ink);text-align:left;background:transparent;cursor:pointer}#${ROOT_ID} .sg-catalog-row:hover{background:color-mix(in srgb,var(--accent) 7%,transparent)}#${ROOT_ID} .sg-catalog-row.on{background:color-mix(in srgb,var(--accent) 10%,var(--card))}#${ROOT_ID} .sg-pick-box{display:grid;width:20px;height:20px;place-items:center;border:1px solid var(--line);border-radius:6px;color:transparent;background:var(--card);font:700 12px/1 sans-serif}#${ROOT_ID} .sg-catalog-row.on .sg-pick-box{border-color:var(--accent);color:#fff;background:var(--accent)}#${ROOT_ID} .sg-catalog-copy{min-width:0}#${ROOT_ID} .sg-catalog-copy b,#${ROOT_ID} .sg-catalog-copy small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#${ROOT_ID} .sg-catalog-copy small{color:var(--muted);font-size:10px}#${ROOT_ID} .sg-kind{padding:2px 6px;border-radius:999px;color:var(--muted);background:var(--paper2);font-size:9px}#${ROOT_ID} .sg-catalog-empty{padding:24px 12px;color:var(--muted);text-align:center}#${ROOT_ID} .sg-config-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 15px;border-bottom:1px solid var(--line)}#${ROOT_ID} .sg-config-toolbar p{margin:0;color:var(--muted);font-size:11px}#${ROOT_ID} .sg-bulk{position:relative}#${ROOT_ID} .sg-bulk summary{padding:6px 10px;border:1px solid var(--line);border-radius:999px;list-style:none;cursor:pointer}#${ROOT_ID} .sg-bulk summary::-webkit-details-marker{display:none}#${ROOT_ID} .sg-bulk-menu{position:absolute;right:0;top:calc(100% + 7px);z-index:8;display:grid;min-width:190px;padding:6px;border:1px solid var(--line);border-radius:12px;background:var(--paper);box-shadow:0 14px 32px var(--shadow)}#${ROOT_ID} .sg-bulk-menu button{padding:8px 10px;border:0;border-radius:8px;color:var(--ink);text-align:left;background:transparent;cursor:pointer}#${ROOT_ID} .sg-bulk-menu button:hover{background:color-mix(in srgb,var(--accent) 9%,transparent)}#${ROOT_ID} .sg-config-list{display:grid;gap:10px;padding:12px}#${ROOT_ID} .sg-config-card{border:1px solid var(--line);border-radius:var(--radius-card);background:color-mix(in srgb,var(--paper) 32%,var(--card));overflow:hidden;transition:border-color .18s,box-shadow .18s}#${ROOT_ID} .sg-config-card.expanded{border-color:color-mix(in srgb,var(--accent) 70%,var(--line));box-shadow:0 10px 24px color-mix(in srgb,var(--shadow) 20%,transparent)}#${ROOT_ID} .sg-config-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;padding:13px}#${ROOT_ID} .sg-config-main{display:grid;grid-template-columns:28px minmax(0,1fr);gap:9px;align-items:start;padding:0;border:0;color:inherit;text-align:left;background:transparent;cursor:pointer}#${ROOT_ID} .sg-config-chevron{display:grid;width:26px;height:26px;place-items:center;border-radius:8px;color:var(--muted);background:var(--paper2);transition:transform .18s}#${ROOT_ID} .sg-config-card.expanded .sg-config-chevron{transform:rotate(90deg)}#${ROOT_ID} .sg-config-name{display:flex;align-items:center;gap:7px}#${ROOT_ID} .sg-config-name b{font-size:15px}#${ROOT_ID} .sg-config-summary{display:block;margin-top:3px;color:var(--muted);font-size:11px;white-space:normal}#${ROOT_ID} .sg-config-actions{display:flex;align-items:center;gap:6px}#${ROOT_ID} .sg-mini-btn{padding:5px 8px;border:1px solid var(--line);border-radius:8px;color:var(--muted);background:transparent;cursor:pointer}#${ROOT_ID} .sg-mini-btn:hover{border-color:var(--accent);color:var(--accent)}#${ROOT_ID} .sg-quick-area{padding:0 13px 13px 50px}#${ROOT_ID} .sg-quick-label{display:flex;align-items:baseline;gap:8px;margin-bottom:7px}#${ROOT_ID} .sg-quick-label b{font-size:11px}#${ROOT_ID} .sg-quick-label span{color:var(--muted);font-size:10px}#${ROOT_ID} .sg-quick-switches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr)) minmax(112px,.55fr);gap:8px;padding:0}#${ROOT_ID} .sg-choice{position:relative;display:grid;grid-template-columns:22px minmax(0,1fr);gap:9px;align-items:center;padding:9px 10px;border:1px solid var(--line);border-radius:11px;color:var(--ink);background:color-mix(in srgb,var(--paper) 54%,var(--card));cursor:pointer;transition:border-color .16s,background .16s,transform .16s}#${ROOT_ID} .sg-choice:hover{border-color:var(--accent);transform:translateY(-1px)}#${ROOT_ID} .sg-choice input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}#${ROOT_ID} .sg-choice-box{display:grid;width:21px;height:21px;place-items:center;border:1px solid var(--line);border-radius:6px;color:transparent;background:var(--card);font:700 12px/1 sans-serif}#${ROOT_ID} .sg-choice-copy b,#${ROOT_ID} .sg-choice-copy small{display:block}#${ROOT_ID} .sg-choice-copy b{font-size:12px}#${ROOT_ID} .sg-choice-copy small{margin-top:1px;color:var(--muted);font-size:9px}#${ROOT_ID} .sg-affection-quick{display:grid;grid-template-columns:1fr auto;gap:3px 8px;align-items:center;padding:9px 10px;border:1px solid var(--line);border-radius:11px;background:color-mix(in srgb,var(--paper) 54%,var(--card))}#${ROOT_ID} .sg-affection-quick span{font-size:12px;font-weight:700}#${ROOT_ID} .sg-affection-quick input{grid-row:1/3;grid-column:2;width:64px;padding:6px;text-align:center}#${ROOT_ID} .sg-affection-quick small{color:var(--muted);font-size:9px}#${ROOT_ID} .sg-choice:has(input:checked){border-color:var(--accent);background:color-mix(in srgb,var(--accent) 11%,var(--card));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 24%,transparent)}#${ROOT_ID} .sg-choice:has(input:checked) .sg-choice-box{border-color:var(--accent);color:#fff;background:var(--accent)}#${ROOT_ID} .sg-config-body{padding:15px;border-top:1px solid var(--line);background:color-mix(in srgb,var(--card) 58%,transparent)}#${ROOT_ID} .sg-config-note{margin:12px 0 0;color:var(--muted);font-size:11px}#${ROOT_ID} .sg-config-empty{padding:48px 24px;color:var(--muted);text-align:center}#${ROOT_ID} .sg-fixed-relations{margin-top:16px;border-radius:var(--radius-card)}@media(max-width:900px){#${ROOT_ID} .sg-roster-workspace{grid-template-columns:1fr}#${ROOT_ID} .sg-config-panel{grid-row:1}#${ROOT_ID} .sg-catalog{max-height:340px}#${ROOT_ID} .sg-selected-bar{top:-22px}}@media(max-width:560px){#${ROOT_ID} .sg-config-head{grid-template-columns:1fr}#${ROOT_ID} .sg-config-actions{padding-left:37px}#${ROOT_ID} .sg-quick-area{padding-left:13px}#${ROOT_ID} .sg-quick-switches{grid-template-columns:1fr}#${ROOT_ID} .sg-selected-head{align-items:flex-start;flex-direction:column}}`;
     style.textContent += `#${ROOT_ID} .sg-opening-tools{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);gap:12px;margin:0 0 16px}#${ROOT_ID} .sg-opening-tool{padding:15px;border:1px solid var(--line);border-radius:var(--radius-card);background:color-mix(in srgb,var(--card) 86%,transparent);box-shadow:0 8px 24px color-mix(in srgb,var(--shadow) 18%,transparent)}#${ROOT_ID} .sg-tool-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}#${ROOT_ID} .sg-tool-head b{display:block;font-size:14px}#${ROOT_ID} .sg-tool-head small{display:block;margin-top:2px;color:var(--muted);font-size:10px}#${ROOT_ID} .sg-length-row{display:grid;grid-template-columns:minmax(110px,.7fr) minmax(0,1.3fr);gap:9px;align-items:center}#${ROOT_ID} .sg-length-presets{display:flex;gap:5px;flex-wrap:wrap}#${ROOT_ID} .sg-length-preset{padding:6px 8px;border:1px solid var(--line);border-radius:999px;color:var(--muted);background:var(--paper2);cursor:pointer}#${ROOT_ID} .sg-length-preset.on{border-color:var(--accent);color:#fff;background:var(--accent)}#${ROOT_ID} .sg-reference-summary{display:flex;gap:6px;flex-wrap:wrap;min-height:28px;align-items:center}#${ROOT_ID} .sg-reference-chip{display:flex;align-items:center;gap:5px;padding:4px 7px;border:1px solid var(--line);border-radius:999px;color:var(--ink);background:var(--paper2);font-size:10px}#${ROOT_ID} .sg-reference-chip button{padding:0;border:0;color:var(--accent);background:transparent;cursor:pointer;font-size:14px}#${ROOT_ID} .sg-reference-empty{color:var(--muted);font-size:11px}#${ROOT_ID} .sg-reference-overlay{position:absolute;inset:0;z-index:40;display:grid;place-items:center;padding:18px;background:rgba(12,12,10,.54);backdrop-filter:blur(7px)}#${ROOT_ID} .sg-reference-modal{display:grid;grid-template-rows:auto minmax(0,1fr);width:min(680px,96%);max-height:88%;border:1px solid var(--line);border-radius:18px;color:var(--ink);background:var(--paper);box-shadow:0 24px 70px rgba(0,0,0,.42);overflow:hidden}#${ROOT_ID} .sg-reference-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line)}#${ROOT_ID} .sg-reference-head h2{margin:0;font-size:20px}#${ROOT_ID} .sg-reference-body{overflow:auto;padding:16px 18px}#${ROOT_ID} .sg-reference-toolbar{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:12px}#${ROOT_ID} .sg-reference-list{display:grid;gap:6px;max-height:380px;overflow:auto;padding-right:4px;scrollbar-width:thin}#${ROOT_ID} .sg-reference-entry{display:grid;grid-template-columns:22px minmax(0,1fr);gap:9px;align-items:center;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card);cursor:pointer}#${ROOT_ID} .sg-reference-entry:hover{border-color:var(--accent)}#${ROOT_ID} .sg-reference-entry input{width:18px;height:18px;accent-color:var(--accent)}#${ROOT_ID} .sg-reference-entry b,#${ROOT_ID} .sg-reference-entry small{display:block}#${ROOT_ID} .sg-reference-entry small{overflow:hidden;color:var(--muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}#${ROOT_ID} .sg-reference-footer{display:flex;justify-content:space-between;gap:10px;margin-top:12px;color:var(--muted);font-size:10px}#${ROOT_ID} .sg-initvar-note{border-radius:var(--radius-card)}@media(max-width:720px){#${ROOT_ID} .sg-opening-tools{grid-template-columns:1fr}#${ROOT_ID} .sg-reference-toolbar,#${ROOT_ID} .sg-length-row{grid-template-columns:1fr}}`;
     style.textContent += `#${ROOT_ID} .sg-toolbar-actions{display:flex;align-items:center;gap:7px}#${ROOT_ID} .sg-mini-btn.accent{border-color:color-mix(in srgb,var(--accent) 55%,var(--line));color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}#${ROOT_ID} .sg-mini-btn:disabled,#${ROOT_ID} .sg-btn:disabled{cursor:wait;opacity:.58;transform:none}#${ROOT_ID} .sg-long-term{display:grid;gap:12px;margin-top:14px;padding-top:14px;border-top:1px dashed var(--line)}#${ROOT_ID} .sg-long-term-head b,#${ROOT_ID} .sg-long-term-head small{display:block}#${ROOT_ID} .sg-long-term-head small{margin-top:2px;color:var(--muted);font-size:10px}#${ROOT_ID} .sg-adaptation-seed{padding:12px;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--line));border-radius:var(--radius-card);background:color-mix(in srgb,var(--accent) 7%,var(--card))}#${ROOT_ID} .sg-adaptation-seed .sg-field>span{color:var(--accent);font-weight:700}#${ROOT_ID} .sg-persona-strip{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:12px 0;padding:10px 12px;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));border-radius:var(--radius-card);background:color-mix(in srgb,var(--accent) 7%,var(--card))}#${ROOT_ID} .sg-persona-strip small{color:var(--muted)}#${ROOT_ID} .sg-generation-flow{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:stretch;margin:16px 0}#${ROOT_ID} .sg-flow-card{padding:13px;border:1px solid var(--line);border-radius:var(--radius-card);background:var(--card)}#${ROOT_ID} .sg-flow-card b,#${ROOT_ID} .sg-flow-card small{display:block}#${ROOT_ID} .sg-flow-card small{margin-top:3px;color:var(--muted)}#${ROOT_ID} .sg-flow-arrow{display:grid;place-items:center;color:var(--accent);font-size:20px}@media(max-width:650px){#${ROOT_ID} .sg-generation-flow{grid-template-columns:1fr}#${ROOT_ID} .sg-flow-arrow{transform:rotate(90deg)}#${ROOT_ID} .sg-config-toolbar{align-items:flex-start;flex-direction:column}#${ROOT_ID} .sg-toolbar-actions{width:100%;flex-wrap:wrap}}`;
     style.textContent += `#${ROOT_ID} [hidden]{display:none!important}#${ROOT_ID} .sg-head-actions{display:flex;align-items:center;gap:8px}#${ROOT_ID} .sg-api-trigger{display:flex;align-items:center;gap:8px;max-width:230px;padding:7px 10px;border:1px solid var(--line);border-radius:var(--radius-control);color:var(--ink);background:var(--card);cursor:pointer}#${ROOT_ID} .sg-api-trigger:hover{border-color:var(--accent)}#${ROOT_ID} .sg-api-trigger span{color:var(--accent);font-weight:800}#${ROOT_ID} .sg-api-trigger small{overflow:hidden;color:var(--muted);font-size:10px;text-overflow:ellipsis;white-space:nowrap}#${ROOT_ID} .sg-api-modal{grid-template-rows:auto minmax(0,1fr);width:min(720px,96%)}#${ROOT_ID} .sg-api-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}#${ROOT_ID} .sg-api-model-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}#${ROOT_ID} [data-api-models]{margin-top:7px}#${ROOT_ID} .sg-api-note{margin-top:14px;padding:10px 12px;border-left:3px solid var(--accent);border-radius:8px;color:var(--muted);background:color-mix(in srgb,var(--accent) 7%,var(--card));font-size:11px}#${ROOT_ID} .sg-api-actions{justify-content:flex-end;margin-top:14px}@media(max-width:640px){#${ROOT_ID} .sg-api-trigger small{display:none}#${ROOT_ID} .sg-api-grid{grid-template-columns:1fr}#${ROOT_ID} .sg-api-grid .sg-field.full{grid-column:auto}}`;
@@ -1265,7 +1334,6 @@ import { Schema } from '../schema/definition.js';
   function listTextarea(label, path, values, placeholder = '') {
     return `<label class="sg-field full"><span>${esc(label)}</span><textarea data-list-bind="${esc(path)}" placeholder="${esc(placeholder)}">${esc((values || []).join('\n'))}</textarea></label>`;
   }
-
   function stepOne() {
     const p = project.protagonist;
     return `<section class="sg-page"><p class="sg-kicker">STEP ONE · YOUR PLACE IN HISTORY</p><h1>先回答：你是谁？</h1><p class="sg-lead">这里只确定长期身份与起点。具体冲突、目标和故事引子统一放在第三步，避免重复填写。</p><div class="sg-era ${eraError ? 'bad' : ''}"><b>时代锚点：崇祯七年七月</b><br><span>${eraError ? esc(eraError) : `已载入官方天下地图快照 · ${Object.keys(eraPreset?.变量?.天下地图?.地区态势 || {}).length} 个地区`}</span></div><div class="sg-grid">${field('DLC 名称', 'title', project.title, '例如：大同孤堡')}${field('来历', 'protagonist.origin', p.origin, '原生人物 / 魂穿者')}${field('身份', 'protagonist.identity', p.identity, '例如：大同镇军户')}${field('职业或官职', 'protagonist.occupation', p.occupation, '例如：边堡小旗')}${field('开局地点', 'protagonist.location', p.location, '例如：山西大同府某边堡')}${field('所属势力', 'protagonist.faction', p.faction, '没有可留空')}${field('故事气质', 'protagonist.tone', p.tone)}</div><details class="sg-detail"><summary>日期和基础数值（可选）</summary><div class="sg-grid" style="margin-top:12px">${field('七月日期', 'date.day', project.date.day, '初五日')}${field('天气', 'date.weather', project.date.weather)}${field('小时', 'date.hour', project.date.hour, '', 'number')}${field('分钟', 'date.minute', project.date.minute, '', 'number')}${field('生命', 'stats.life', project.stats.life, '', 'number')}${field('武力', 'stats.martial', project.stats.martial, '', 'number')}${field('统率', 'stats.command', project.stats.command, '', 'number')}${field('智谋', 'stats.wisdom', project.stats.wisdom, '', 'number')}${field('政治', 'stats.politics', project.stats.politics, '', 'number')}${field('初始白银', 'stats.silver', project.stats.silver, '', 'number')}</div></details></section>`;
@@ -1292,17 +1360,17 @@ import { Schema } from '../schema/definition.js';
     const location = locked
       ? '历史身份与活动轨迹锁定'
       : state.activityArea || project.protagonist.location || '尚未设置活动范围';
-    const relationFields = `<div class="sg-grid">${field('与 user 的关系', `characters.${character.name}.relation`, state.relation, '例如：故友 / 上司 / 尚未相识')}<label class="sg-field"><span>人际分类（仅已相识时使用）</span><select data-bind="characters.${esc(character.name)}.category">${CATEGORIES.map(category => `<option ${category === state.category ? 'selected' : ''}>${category}</option>`).join('')}</select></label><label class="sg-field"><span>私帷关系（仅分类为私帷时使用）</span><select data-bind="characters.${esc(character.name)}.privateRelation">${PRIVATE_RELATIONS.map(relation => `<option ${relation === state.privateRelation ? 'selected' : ''}>${relation}</option>`).join('')}</select></label></div>`;
+    const relationFields = `<div class="sg-grid">${field('与 <user> 的关系', `characters.${character.name}.relation`, state.relation, '例如：故友 / 上司 / 尚未相识')}<label class="sg-field"><span>人际分类（仅已相识时使用）</span><select data-bind="characters.${esc(character.name)}.category">${CATEGORIES.map(category => `<option ${category === state.category ? 'selected' : ''}>${category}</option>`).join('')}</select></label><label class="sg-field"><span>私帷关系（仅分类为私帷时使用）</span><select data-bind="characters.${esc(character.name)}.privateRelation">${PRIVATE_RELATIONS.map(relation => `<option ${relation === state.privateRelation ? 'selected' : ''}>${relation}</option>`).join('')}</select></label></div>`;
     const editableFields = locked
-      ? `<div class="sg-era"><b>历史人物身份锁定</b><br>可以调整其与 user 的关系，但不会改写历史身份、活动轨迹或原始人设。</div>`
-      : `<div class="sg-long-term"><div class="sg-long-term-head"><span><b>本世界线长期定位</b><small>整段剧情持续有效，不填写当前目标、即时态度或开场位置。</small></span></div><div class="sg-adaptation-seed">${field('一句话适配设想（交给 AI 展开）', `characters.${character.name}.adaptationBrief`, state.adaptationBrief, '例如：让她成为随主角往来边镇、负责经营商路的旧识')}</div><div class="sg-grid">${field('长期身份定位', `characters.${character.name}.identity`, state.identity, character.summary)}${field('通常活动区域', `characters.${character.name}.activityArea`, state.activityArea, '例如：往来南京城与长江商路')}${field('长期所属势力', `characters.${character.name}.faction`, state.faction, '例如：苏晚棠一家；没有则由 AI 填“无固定势力”')}${field('角色称呼 user', `characters.${character.name}.characterToUser`, state.characterToUser, '按身份和关系阶段称呼')}${field('user 称呼角色', `characters.${character.name}.userToCharacter`, state.userToCharacter, character.name)}${textarea('与主角的关系来源', `characters.${character.name}.relationshipOrigin`, state.relationshipOrigin, '双方因何认识或为何尚未相识')}${textarea('长期相处模式', `characters.${character.name}.relationshipPattern`, state.relationshipPattern, '信任、戒备和利益关系如何长期发展')}${textarea('在本世界线的长期处境', `characters.${character.name}.longTermSituation`, state.longTermSituation, '描述长期生活背景，不写某一刻正在做什么')}${listTextarea('人设适配原则（每行一条）', `characters.${character.name}.adaptationPrinciples`, state.adaptationPrinciples, '身份变化不得覆盖原人设的性格核心')}</div></div>`;
-    return `<article class="sg-config-card ${expanded ? 'expanded' : ''}" data-character-config="${esc(character.name)}"><div class="sg-config-head"><button type="button" class="sg-config-main" data-action="toggle-character-editor" data-character-name="${esc(character.name)}" aria-expanded="${expanded}"><span class="sg-config-chevron">›</span><span><span class="sg-config-name"><b>${esc(character.name)}</b><span class="sg-kind">${characterKindLabel(character)}</span></span><span class="sg-config-summary">${esc(identity)} · ${esc(location)} · ${esc(state.relation || '尚未相识')}</span></span></button><div class="sg-config-actions">${locked ? '' : `<button type="button" class="sg-mini-btn accent" data-action="ai-character" data-character-name="${esc(character.name)}">AI 补全</button>`}<button type="button" class="sg-mini-btn" data-action="remove-character" data-character-name="${esc(character.name)}">移出</button></div></div><div class="sg-quick-area"><div class="sg-quick-label"><b>开局快照</b><span>只写入初始变量，不会固化进长期人设</span></div><div class="sg-quick-switches"><label class="sg-choice"><input type="checkbox" data-character-toggle="known" data-character-name="${esc(character.name)}" ${state.known ? 'checked' : ''}><i class="sg-choice-box">✓</i><span class="sg-choice-copy"><b>开场前已经相识</b><small>写入初始人际关系</small></span></label><label class="sg-choice"><input type="checkbox" data-character-toggle="scene" data-character-name="${esc(character.name)}" ${state.scene ? 'checked' : ''}><i class="sg-choice-box">✓</i><span class="sg-choice-copy"><b>出现在第一幕</b><small>自动读取完整人设参与开场</small></span></label></div></div><div class="sg-config-body" ${expanded ? '' : 'hidden'}>${relationFields}${editableFields}<p class="sg-config-note">纳入 DLC 只表示 AI 知道此人存在；只有“出现在第一幕”的人物会被自动读取完整人设并允许实际登场。</p></div></article>`;
+      ? `<div class="sg-era"><b>历史人物身份锁定</b><br>可以调整其与 &lt;user&gt; 的关系，但不会改写历史身份、活动轨迹或原始人设。</div>`
+      : `<div class="sg-long-term"><div class="sg-long-term-head"><span><b>长期人物定位</b><small>整段剧情持续有效，不填写当前目标、即时态度或开场位置。</small></span></div><div class="sg-adaptation-seed">${field('一句话人物设想（交给 AI 展开）', `characters.${character.name}.adaptationBrief`, state.adaptationBrief, '例如：让她成为随<user>往来边镇、负责经营商路的旧识')}</div><div class="sg-grid">${field('身份', `characters.${character.name}.identity`, state.identity, character.summary)}${field('通常活动区域', `characters.${character.name}.activityArea`, state.activityArea, '例如：往来南京城与长江商路')}${field('所属势力', `characters.${character.name}.faction`, state.faction, '例如：苏晚棠一家；没有则由 AI 填“无固定势力”')}${field('角色称呼 <user>', `characters.${character.name}.characterToUser`, state.characterToUser, '按身份和关系阶段称呼')}${field('<user> 称呼角色', `characters.${character.name}.userToCharacter`, state.userToCharacter, character.name)}${textarea('与 <user> 的过往', `characters.${character.name}.relationshipOrigin`, state.relationshipOrigin, '双方因何认识或为何尚未相识')}${textarea('相处方式', `characters.${character.name}.relationshipPattern`, state.relationshipPattern, '信任、戒备和利益关系如何长期发展')}${textarea('长期生活处境', `characters.${character.name}.longTermSituation`, state.longTermSituation, '描述长期生活背景，不写某一刻正在做什么')}${listTextarea('演绎要点（每行一条）', `characters.${character.name}.adaptationPrinciples`, state.adaptationPrinciples, '保留原人设中不可丢失的经历、行为和关系')}</div></div>`;
+    return `<article class="sg-config-card ${expanded ? 'expanded' : ''}" data-character-config="${esc(character.name)}"><div class="sg-config-head"><button type="button" class="sg-config-main" data-action="toggle-character-editor" data-character-name="${esc(character.name)}" aria-expanded="${expanded}"><span class="sg-config-chevron">›</span><span><span class="sg-config-name"><b>${esc(character.name)}</b><span class="sg-kind">${characterKindLabel(character)}</span></span><span class="sg-config-summary">${esc(identity)} · ${esc(location)} · ${esc(state.relation || '尚未相识')}</span></span></button><div class="sg-config-actions">${locked ? '' : `<button type="button" class="sg-mini-btn accent" data-action="ai-character" data-character-name="${esc(character.name)}">AI 补全</button>`}<button type="button" class="sg-mini-btn" data-action="remove-character" data-character-name="${esc(character.name)}">移出</button></div></div><div class="sg-quick-area"><div class="sg-quick-label"><b>开局快照</b><span>只写入初始变量，不会固化进长期人设</span></div><div class="sg-quick-switches"><label class="sg-choice"><input type="checkbox" data-character-toggle="known" data-character-name="${esc(character.name)}" ${state.known ? 'checked' : ''}><i class="sg-choice-box">✓</i><span class="sg-choice-copy"><b>开场前已经相识</b><small>写入初始人际关系</small></span></label><label class="sg-choice"><input type="checkbox" data-character-toggle="scene" data-character-name="${esc(character.name)}" ${state.scene ? 'checked' : ''}><i class="sg-choice-box">✓</i><span class="sg-choice-copy"><b>出现在第一幕</b><small>自动读取完整人设参与开场</small></span></label><label class="sg-affection-quick"><span>初始好感度</span><input type="number" min="-100" max="100" step="1" data-bind="characters.${esc(character.name)}.affection" value="${esc(state.affection)}"><small>-100 ～ 100</small></label></div></div><div class="sg-config-body" ${expanded ? '' : 'hidden'}>${relationFields}${editableFields}<p class="sg-config-note">纳入 DLC 只表示 AI 知道此人存在；只有“出现在第一幕”的人物会被自动读取完整人设并允许实际登场。</p></div></article>`;
   }
 
   function updateStepTwoCount() {
     const count = selectedCharacters().length;
     const label = root?.querySelector('[data-selected-count]');
-    if (label) label.textContent = `本期人物 · ${count} 人`;
+    if (label) label.textContent = `已选人物 · ${count} 人`;
   }
   function refreshCharacterCard(name) {
     const character = CHARACTERS.find(item => item.name === name);
@@ -1344,7 +1412,7 @@ import { Schema } from '../schema/definition.js';
       chips = root?.querySelector('[data-selected-chips]'),
       container = root?.querySelector('[data-config-container]');
     if (!selected.length) {
-      if (chips) chips.innerHTML = '<span class="sg-selected-empty">还没有选择人物；开局也可以只包含 user。</span>';
+      if (chips) chips.innerHTML = '<span class="sg-selected-empty">还没有选择人物；开局也可以只包含 &lt;user&gt;。</span>';
       if (container)
         container.innerHTML =
           '<div class="sg-config-empty"><b>尚未纳入人物</b><br>从左侧名册选择后，配置会出现在这里。</div>';
@@ -1385,7 +1453,7 @@ import { Schema } from '../schema/definition.js';
   }
   function stepTwo() {
     const selected = selectedCharacters();
-    return `<section class="sg-page sg-page-wide"><p class="sg-kicker">STEP TWO · WHO EXISTS AROUND YOU</p><h1>安排这条世界线的人物</h1><p class="sg-lead">选择人物后，只需决定开场前是否相识、是否出现在第一幕。长期定位可以手填，也可以让 AI 依据原始人设补全。</p><div class="sg-selected-bar"><div class="sg-selected-head"><b data-selected-count>本期人物 · ${selected.length} 人</b><span>点击姓名可直接定位配置</span></div><div class="sg-selected-chips" data-selected-chips>${selected.length ? selected.map(selectedChip).join('') : '<span class="sg-selected-empty">还没有选择人物；开局也可以只包含 user。</span>'}</div></div><div class="sg-roster-workspace"><aside class="sg-roster-panel"><div class="sg-panel-head"><div class="sg-panel-title"><h2>人物名册</h2><span>${CHARACTERS.length} 人</span></div><label class="sg-search"><input type="search" data-roster-search value="${esc(rosterQuery)}" placeholder="搜索姓名或简介"></label><div class="sg-filter-row">${[
+    return `<section class="sg-page sg-page-wide"><p class="sg-kicker">STEP TWO · WHO EXISTS AROUND YOU</p><h1>安排这条世界线的人物</h1><p class="sg-lead">选择人物后，只需决定开场前是否相识、是否出现在第一幕。长期定位可以手填，也可以让 AI 依据原始人设补全。</p><div class="sg-selected-bar"><div class="sg-selected-head"><b data-selected-count>已选人物 · ${selected.length} 人</b><span>点击姓名可直接定位配置</span></div><div class="sg-selected-chips" data-selected-chips>${selected.length ? selected.map(selectedChip).join('') : '<span class="sg-selected-empty">还没有选择人物；开局也可以只包含 &lt;user&gt;。</span>'}</div></div><div class="sg-roster-workspace"><aside class="sg-roster-panel"><div class="sg-panel-head"><div class="sg-panel-title"><h2>人物名册</h2><span>${CHARACTERS.length} 人</span></div><label class="sg-search"><input type="search" data-roster-search value="${esc(rosterQuery)}" placeholder="搜索姓名或简介"></label><div class="sg-filter-row">${[
       ['all', '全部'],
       ['free', '原创'],
       ['family', '家族'],
@@ -1397,7 +1465,7 @@ import { Schema } from '../schema/definition.js';
       )
       .join(
         '',
-      )}</div></div><div class="sg-catalog">${CHARACTERS.map(characterCatalogRow).join('')}<div class="sg-catalog-empty" data-catalog-empty hidden>没有符合条件的人物</div></div></aside><section class="sg-config-panel"><div class="sg-config-toolbar"><p>“开局快照”和“长期定位”已分开，剧情不会被永远锁在开场。</p><div class="sg-toolbar-actions"><button type="button" class="sg-mini-btn accent" data-action="ai-characters">AI 补全已选人物</button><details class="sg-bulk"><summary>批量设置</summary><div class="sg-bulk-menu"><button type="button" data-action="bulk-location">活动区域参考主角地点</button><button type="button" data-action="bulk-known">全部设为已相识</button><button type="button" data-action="bulk-clear-scene">清空开场现场</button></div></details></div></div><div data-config-container>${selected.length ? `<div class="sg-config-list">${selected.map(characterEditor).join('')}</div>` : '<div class="sg-config-empty"><b>尚未纳入人物</b><br>从左侧名册选择后，配置会出现在这里。</div>'}</div></section></div><div class="sg-era sg-fixed-relations"><b>固定关系不会被改写</b><br>${FIXED_RELATIONS.map(([a, b, relation]) => `${a}—${b}（${relation}）`).join(' · ')}</div></section>`;
+      )}</div></div><div class="sg-catalog">${CHARACTERS.map(characterCatalogRow).join('')}<div class="sg-catalog-empty" data-catalog-empty hidden>没有符合条件的人物</div></div></aside><section class="sg-config-panel"><div class="sg-config-toolbar"><p>“开局快照”和“长期定位”已分开，剧情不会被永远锁在开场。</p><div class="sg-toolbar-actions"><button type="button" class="sg-mini-btn accent" data-action="ai-characters">AI 补全已选人物</button><details class="sg-bulk"><summary>批量设置</summary><div class="sg-bulk-menu"><button type="button" data-action="bulk-location">活动区域参考主角地点</button><button type="button" data-action="bulk-known">全部设为已相识</button><button type="button" data-action="bulk-clear-scene">清空开场现场</button></div></details></div></div><div data-config-container>${selected.length ? `<div class="sg-config-list">${selected.map(characterEditor).join('')}</div>` : '<div class="sg-config-empty"><b>尚未纳入人物</b><br>从左侧名册选择后，配置会出现在这里。</div>'}</div></section></div><div class="sg-era sg-fixed-relations"><b>人物之间已有的亲属关系</b><br>${FIXED_RELATIONS.map(([a, b, relation]) => `${a}—${b}（${relation}）`).join(' · ')}</div></section>`;
   }
 
   function referenceIsSelected(worldbook, name) {
@@ -1562,7 +1630,7 @@ import { Schema } from '../schema/definition.js';
     const initStatus = project.initialization?.stale
       ? '尚未根据当前开场补全'
       : project.initialization?.summary || '已通过固定 Schema 校验';
-    return `<section class="sg-page"><p class="sg-kicker">STEP THREE · THE FIRST SPARK</p><h1>故事从哪里开始？</h1><p class="sg-lead">第一幕只是引子，不负责让所有人物轮流亮相。下面只有红色人物能在开场现场出现。</p><div class="sg-scene">${included.length ? included.map(character => `<button type="button" class="${project.characters[character.name].scene ? 'on' : ''}" data-scene-character="${esc(character.name)}" aria-pressed="${project.characters[character.name].scene}">${esc(character.name)}</button>`).join('') : '<span class="sg-lead">尚未纳入角色；也可以只写 user 和一次性路人的开场。</span>'}</div><div class="sg-persona-strip"><span><b>自动参考人物人设</b><br><small data-persona-summary>${scene.length ? `${scene.map(character => character.name).join('、')} · 将读取对应 SFW/人物条目` : '没有现场人物；不会额外读取角色人设'}</small></span><span class="sg-kind">硬约束</span></div><div class="sg-opening-tools"><section class="sg-opening-tool"><div class="sg-tool-head"><span><b>开场白字数</b><small>AI 会以目标字数为中心，上下浮动约 10%</small></span></div><div class="sg-length-row"><input type="number" min="300" max="5000" step="100" data-bind="opening.targetWords" value="${esc(project.opening.targetWords)}"><div class="sg-length-presets">${lengths.map(length => `<button type="button" class="sg-length-preset ${Number(project.opening.targetWords) === length ? 'on' : ''}" data-action="opening-length" data-opening-length="${length}">${length}字</button>`).join('')}</div></div></section><section class="sg-opening-tool"><div class="sg-tool-head"><span><b>额外参考世界书</b><small>用于地方事实、历史背景、氛围或文风；人物人设无需手选</small></span><button type="button" class="sg-btn" data-action="open-reference-selector">选择条目</button></div><div class="sg-reference-summary" data-reference-summary>${referenceSummaryHtml()}</div><div style="margin-top:8px;color:var(--muted);font-size:10px" data-reference-count>已选 ${(project.opening.referenceEntries || []).length} 条</div></section></div><div class="sg-grid">${field('开场名称', 'opening.name', project.opening.name, '第一幕')}${textarea('一句话开局设想', 'opening.hook', project.opening.hook, '例如：欠饷军士正在堡门外哗变，主角必须在天黑前筹到一批粮食。')}${textarea('开场白正文', 'opening.body', project.opening.body, '可以手写，也可以点击下方按钮让 AI 生成。')}</div><div class="sg-generation-flow"><div class="sg-flow-card"><b>一、生成第一幕</b><small>读取现场人物完整人设与长期定位</small></div><span class="sg-flow-arrow">→</span><div class="sg-flow-card"><b>二、补全初始变量</b><small>从最终正文提取事实，只写入固定 Schema 字段</small></div></div><div class="sg-actions" style="margin-top:16px"><button class="sg-btn primary" data-action="generate" ${busy ? 'disabled' : ''}>${busy && aiTask === 'opening' ? '正在生成开场…' : busy && aiTask === 'initialization' ? '正在校验初始变量…' : 'AI 生成开场并补全变量'}</button><button class="sg-btn" data-action="generate-initvar" ${busy || !project.opening.body.trim() ? 'disabled' : ''}>仅重新补全初始变量</button></div><div class="sg-era"><b>现场人物：</b><span data-scene-summary>${scene.map(character => character.name).join('、') || '无现有角色'}</span><br><span>其他已选人物仍会进入人物概览，但不会自动出现在第一幕。</span></div><div class="sg-era sg-initvar-note"><b>初始变量：</b><span data-initvar-status>${esc(initStatus)}</span><br><small>官方天下地图、日期地点、主角属性与字段结构由代码锁定；AI 只能补充正文明确支持的人物、物品、军队、资产、科技、势力、任务和大事记。</small></div></section>`;
+    return `<section class="sg-page"><p class="sg-kicker">STEP THREE · THE FIRST SPARK</p><h1>故事从哪里开始？</h1><p class="sg-lead">第一幕只是引子，不负责让所有人物轮流亮相。下面只有红色人物能在开场现场出现。</p><div class="sg-scene">${included.length ? included.map(character => `<button type="button" class="${project.characters[character.name].scene ? 'on' : ''}" data-scene-character="${esc(character.name)}" aria-pressed="${project.characters[character.name].scene}">${esc(character.name)}</button>`).join('') : '<span class="sg-lead">尚未纳入角色；也可以只写 &lt;user&gt; 和一次性路人的开场。</span>'}</div><div class="sg-persona-strip"><span><b>自动参考人物人设</b><br><small data-persona-summary>${scene.length ? `${scene.map(character => character.name).join('、')} · 将读取对应 SFW/人物条目` : '没有现场人物；不会额外读取角色人设'}</small></span><span class="sg-kind">硬约束</span></div><div class="sg-opening-tools"><section class="sg-opening-tool"><div class="sg-tool-head"><span><b>开场白字数</b><small>AI 会以目标字数为中心，上下浮动约 10%</small></span></div><div class="sg-length-row"><input type="number" min="300" max="5000" step="100" data-bind="opening.targetWords" value="${esc(project.opening.targetWords)}"><div class="sg-length-presets">${lengths.map(length => `<button type="button" class="sg-length-preset ${Number(project.opening.targetWords) === length ? 'on' : ''}" data-action="opening-length" data-opening-length="${length}">${length}字</button>`).join('')}</div></div></section><section class="sg-opening-tool"><div class="sg-tool-head"><span><b>额外参考世界书</b><small>用于地方事实、历史背景、氛围或文风；人物人设无需手选</small></span><button type="button" class="sg-btn" data-action="open-reference-selector">选择条目</button></div><div class="sg-reference-summary" data-reference-summary>${referenceSummaryHtml()}</div><div style="margin-top:8px;color:var(--muted);font-size:10px" data-reference-count>已选 ${(project.opening.referenceEntries || []).length} 条</div></section></div><div class="sg-grid">${field('开场名称', 'opening.name', project.opening.name, '第一幕')}${textarea('一句话开局设想', 'opening.hook', project.opening.hook, '例如：欠饷军士正在堡门外哗变，主角必须在天黑前筹到一批粮食。')}${textarea('开场白正文', 'opening.body', project.opening.body, '可以手写，也可以点击下方按钮让 AI 生成。')}</div><div class="sg-generation-flow"><div class="sg-flow-card"><b>一、生成第一幕</b><small>读取现场人物完整人设与长期定位</small></div><span class="sg-flow-arrow">→</span><div class="sg-flow-card"><b>二、补全初始变量</b><small>从最终正文提取事实，只写入固定 Schema 字段</small></div></div><div class="sg-actions" style="margin-top:16px"><button class="sg-btn primary" data-action="generate" ${busy ? 'disabled' : ''}>${busy && aiTask === 'opening' ? '正在生成开场…' : busy && aiTask === 'initialization' ? '正在校验初始变量…' : 'AI 生成开场并补全变量'}</button><button class="sg-btn" data-action="generate-initvar" ${busy || !project.opening.body.trim() ? 'disabled' : ''}>仅重新补全初始变量</button></div><div class="sg-era"><b>现场人物：</b><span data-scene-summary>${scene.map(character => character.name).join('、') || '无现有角色'}</span><br><span>其他已选人物仍会进入人物概览，但不会自动出现在第一幕。</span></div><div class="sg-era sg-initvar-note"><b>初始变量：</b><span data-initvar-status>${esc(initStatus)}</span><br><small>官方天下地图、日期地点、主角属性与字段结构由代码锁定；AI 只能补充正文明确支持的人物、物品、军队、资产、科技、势力、任务和大事记。</small></div></section>`;
   }
 
   function stepFour() {
@@ -1797,7 +1865,7 @@ import { Schema } from '../schema/definition.js';
       }
       markInitializationStale();
       saveProject();
-      notify('已将本期人物设为开场前与 user 相识。', 'success');
+      notify('已将已选人物设为开场前与 <user> 相识。', 'success');
       return;
     }
     if (action === 'bulk-clear-scene') {
