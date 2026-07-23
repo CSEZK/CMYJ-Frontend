@@ -4,16 +4,12 @@ import process from 'node:process';
 import { parseDocument } from 'yaml';
 
 const projectRoot = path.resolve(import.meta.dirname, '..');
-const cardPath = path.resolve(
-  projectRoot,
-  '..',
-  '角色卡',
-  '残明余烬-1.7正式候选版',
-  '残明余烬-1.7正式候选版.yaml',
-);
+const cardPath = process.env.CMYJ_RELEASE_CARD_PATH
+  ? path.resolve(process.env.CMYJ_RELEASE_CARD_PATH)
+  : path.resolve(projectRoot, '..', '角色卡', '残明余烬1.7', '残明余烬1.7.yaml');
 const checkOnly = process.argv.includes('--check');
 const remoteMode = process.argv.includes('--remote');
-const remoteLoaderUrl = 'https://cmyj-frontend.pages.dev/cmyj-1.7/loader/index.js?v=1.7.4';
+const remoteLoaderUrl = 'https://cmyj-frontend.pages.dev/cmyj-1.7/loader/index.js?v=1.7.5';
 const scriptBundles = [
   ['变量结构', 'schema'],
   ['旧档兼容', 'legacy'],
@@ -71,7 +67,7 @@ function replaceScriptContent(source, scriptName, code, newline) {
   };
 }
 
-if (!fs.existsSync(cardPath)) throw new Error(`找不到正式候选角色卡：${cardPath}`);
+if (!fs.existsSync(cardPath)) throw new Error(`找不到正式角色卡：${cardPath}`);
 
 let yaml = fs.readFileSync(cardPath, 'utf8');
 const newline = yaml.includes('\r\n') ? '\r\n' : '\n';
@@ -93,11 +89,11 @@ if (document.errors.length)
 
 if (checkOnly) {
   if (changed) throw new Error(`正式候选角色卡脚本与当前${remoteMode ? '远程映射' : '正式构建'}不一致。`);
-  console.info(`正式候选角色卡${remoteMode ? '远程映射' : '内嵌脚本'}校验通过：${sizes.join('，')}`);
+  console.info(`正式角色卡${remoteMode ? '远程映射' : '内嵌脚本'}校验通过：${sizes.join('，')}`);
 } else {
   fs.writeFileSync(cardPath, yaml, 'utf8');
   console.info(
-    `已将 ${scriptBundles.length} 个${remoteMode ? '正式远程映射写入' : '正式脚本嵌入'}候选卡；角色卡 YAML ${(Buffer.byteLength(yaml) / 1024).toFixed(1)} KiB。`,
+    `已将 ${scriptBundles.length} 个${remoteMode ? '正式远程映射写入' : '正式脚本嵌入'}角色卡；角色卡 YAML ${(Buffer.byteLength(yaml) / 1024).toFixed(1)} KiB。`,
   );
   console.info(sizes.join('，'));
 }
