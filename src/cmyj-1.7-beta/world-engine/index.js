@@ -6,7 +6,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 (() => {
   'use strict';
 
-  const VERSION = '1.0.0-beta.2';
+  const VERSION = '1.0.0-beta.3';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -64,6 +64,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     scheduledTimer: null,
     pendingMessageId: null,
     pendingForce: false,
+    selfWrittenMessageHashes: new Map(),
     mvuReady: false,
     themeTimer: null,
     isOpen: false,
@@ -406,6 +407,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       .replace(/<行动选项>[\s\S]*?<\/行动选项>/gi, '')
       .replace(/<UpdateVariable>[\s\S]*?<\/UpdateVariable>/gi, '')
       .replace(/<initvar>[\s\S]*?<\/initvar>/gi, '')
+      .replace(/<平行世界(?:\s[^>]*)?>[\s\S]*?<\/平行世界>\s*$/gi, '')
       .replace(/<StatusPlaceHolderImpl\s*\/>/gi, '')
       .trim();
   }
@@ -556,7 +558,7 @@ import integratedStyles from './styles-integrated.raw?raw';
   }
 
   function systemPrompt() {
-    return `你是《残明余烬》的“天下演化史官”。你不续写玩家正文，不替主模型写小说；你读取主模型已经完成的回复，将其中真正发生的事情结构化，并让不在玩家视野内的明末世界沿因果继续运转。
+    return `你是《残明余烬》的“天下演化史官”。你读取主模型已经完成的正文，将其中真正发生的事情结构化，并让不在玩家视野内的明末世界沿因果继续运转。你还要亲自撰写本轮的“平行世界”镜头；脚本会把它直接追加到刚完成的主模型消息末尾，主模型不会代写这一部分。
 
 铁律：
 1. 玩家输入只是意图，绝不能直接视为成功事实。以主模型正文实际描写的结果为准。
@@ -570,9 +572,11 @@ import integratedStyles from './styles-integrated.raw?raw';
 9. 主角认知变量不等于客观真相。传闻写入认知账本时，客观世界仍可保持“待确认”。
 10. 输出严格符合 JSON Schema。内容使用简体中文，简洁但保留因果。
 11. 顶层字段名必须原样使用 snake_case：
-world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、upsert_intel、remove_intel_ids、upsert_hooks、resolve_hook_ids、camera_history、next_turn_packet。
+world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、upsert_intel、remove_intel_ids、upsert_hooks、resolve_hook_ids、camera_history、next_turn_packet、parallel_world。
+12. parallel_world 必须是可以直接展示给玩家的成品正文：写 2 个玩家当前视角之外的电影式场景，每段以【地名·地点·时辰】单独起行，场景之间空一行。优先推进已有事件、人物行动和情报传播；若素材不足，只写低风险日常切片，不得凭空决定城池陷落、重要人物死亡或军队胜败。
+13. parallel_world 内不要再包裹 <平行世界> 标签；脚本会统一添加标签。禁止“与此同时”“玩家不知道的是”“镜头转向”等转场句，也不要使用星号或破折号分隔线。
 
-你的输出同时完成：事实提取、世界状态增量、下一轮主模型联动包。不要输出 JSON 之外的解释。`;
+你的输出同时完成：事实提取、世界状态增量、后续主模型联动包，以及本轮平行世界正文。不要输出 JSON 之外的解释。`;
   }
 
   function outputSchema() {
@@ -596,6 +600,7 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
           'resolve_hook_ids',
           'camera_history',
           'next_turn_packet',
+          'parallel_world',
         ],
         properties: {
           world_summary: { type: 'string' },
@@ -751,6 +756,7 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
           },
           resolve_hook_ids: stringArray,
           camera_history: stringArray,
+          parallel_world: { type: 'string' },
           next_turn_packet: {
             type: 'object',
             additionalProperties: false,
@@ -840,6 +846,13 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
     }
   }
 
+  function requireParallelWorld(result) {
+    if (!asText(result?.parallel_world)) {
+      throw new Error('副模型结构缺少 parallel_world 平行世界正文。');
+    }
+    return result;
+  }
+
   function normalizeModelResult(result) {
     if (!result || typeof result !== 'object' || Array.isArray(result)) {
       throw new Error('副模型输出缺少可用的结构化对象。');
@@ -850,7 +863,12 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
       'upsert_events' in result ||
       'next_turn_packet' in result
     ) {
-      return result;
+      return requireParallelWorld({
+        ...result,
+        parallel_world: asText(
+          result.parallel_world || result.parallelWorld || result.parallelWorldText || result.parallel_world_text,
+        ),
+      });
     }
 
     // 部分兼容 OpenAI 的服务会忽略 json_schema，但仍返回语义完整的常见 camelCase 结构。
@@ -885,7 +903,7 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
       .filter(Boolean);
     const camera = asText(increment.cameraActivity);
 
-    return {
+    return requireParallelWorld({
       world_summary: asText(increment.worldSummary),
       new_facts: facts.map((item, index) => ({
         id: asText(item?.id || item?.factId || `F-${index + 1}`),
@@ -937,6 +955,14 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
       upsert_hooks: asArray(increment.newOrUpdatedHooks),
       resolve_hook_ids: asArray(increment.resolveHookIds),
       camera_history: camera ? [camera] : [],
+      parallel_world: asText(
+        result.parallelWorld ||
+          result.parallelWorldText ||
+          increment.parallelWorld ||
+          increment.parallelWorldText ||
+          increment.parallel_world ||
+          camera,
+      ),
       next_turn_packet: {
         hardFacts: facts.map(item => asText(item?.content || item?.fact)).filter(Boolean),
         arrivedIntel: intel.map(item => asText(item?.content)).filter(Boolean),
@@ -955,7 +981,7 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
         cameraCandidates: camera ? [camera] : [],
         constraints: prompts,
       },
-    };
+    });
   }
 
   async function callWorldModel(payload, generationId) {
@@ -1205,18 +1231,15 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
       formatBulletSection('当前地点可观察后果', packet.localConsequences),
       knowledge ? `相关人物知识边界:\n${knowledge}` : '',
       formatBulletSection('正在施压的世界事件', packet.activePressures),
-      formatBulletSection('平行世界候选镜头', packet.cameraCandidates),
       formatBulletSection('本轮约束', packet.constraints),
-      `主模型联动与输出协议：
-- 正文只允许人物使用其有合理渠道知道的内容；模型知道不等于人物知道。
-- 每次回复完成正文、变量更新、状态栏和行动选项后，必须把一个 <平行世界>...</平行世界> 标签块放在整条回复最末尾。
-- 标签块内写 2 个玩家视角外的电影式场景；每段以【地名·地点·时辰】单独起行，场景之间空一行，不写转场旁白。
-- 优先采用“平行世界候选镜头”；若当前尚无候选，只能依据已知世界书与正文写低风险日常切片，不得凭空制造重大结果。
-- <平行世界>可以描写客观世界真相，并延续既有远方事件；允许创造日常动作、对话和无名小人物。
-- 不得让远方人物知晓尚未通过合理渠道传播的玩家秘密；世界不是围着玩家运转。
-- 未经上下文许可，不得突然确定城池陷落、人物死亡、军队胜败等重大结果。
-- 玩家本轮输入仍须由正文判定成败，本上下文不能替代行动判定。
-- 禁止破折号、星号分隔线，以及“与此同时”“玩家不知道的是”“镜头转向”等转场句。`,
+      `主模型联动协议：
+ - 正文只允许人物使用其有合理渠道知道的内容；模型知道不等于人物知道。
+ - 只负责玩家当前视角内的正文、变量更新、状态栏与行动选项，不要生成、续写或仿写 <平行世界> 标签块。
+ - 平行世界由天下演化副模型在本轮正文与 MVU 更新完成后独立生成，并由脚本追加到当前消息末尾。
+ - 不得让远方人物知晓尚未通过合理渠道传播的玩家秘密；世界不是围着玩家运转。
+ - 未经上下文许可，不得突然确定城池陷落、人物死亡、军队胜败等重大结果。
+ - 玩家本轮输入仍须由正文判定成败，本上下文不能替代行动判定。
+ - 上一轮消息中的 <平行世界> 是已经发生的客观旁线，可作为世界因果参考，但不可视为当前人物自动知情。`,
       '</天下演化上下文>',
     ].filter(Boolean);
     return sections.join('\n\n');
@@ -1269,6 +1292,47 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
     return {};
   }
 
+  function normalizeParallelWorldText(value) {
+    return asText(value)
+      .replace(/^\s*<平行世界(?:\s[^>]*)?>/i, '')
+      .replace(/<\/平行世界>\s*$/i, '')
+      .replace(/^\s*(?:与此同时|玩家不知道的是|镜头转向)[：:，,\s]*/gm, '')
+      .trim()
+      .slice(0, 12000);
+  }
+
+  function messageWithParallelWorld(message, parallelWorld) {
+    const mainOutput = String(message || '')
+      .replace(/<平行世界(?:\s[^>]*)?>[\s\S]*?<\/平行世界>\s*$/i, '')
+      .trimEnd();
+    return `${mainOutput}\n\n<平行世界>\n${parallelWorld}\n</平行世界>`;
+  }
+
+  async function writeParallelWorldToMessage(messageKey, result) {
+    const parallelWorld = normalizeParallelWorldText(result?.parallel_world);
+    if (!parallelWorld) throw new Error('副模型没有生成可回写的平行世界正文。');
+    const setMessages = api('setChatMessages');
+    if (typeof setMessages !== 'function') throw new Error('未找到聊天消息回写接口，无法追加平行世界。');
+
+    const current = currentMessageKey(messageKey.messageId);
+    if (!sameMessageKey(current, messageKey)) throw new Error('正文版本已经改变，本次平行世界不会写入。');
+    const message = messageWithParallelWorld(current.message, parallelWorld);
+    const expectedHash = hashText(message);
+    runtime.selfWrittenMessageHashes.set(messageKey.messageId, expectedHash);
+    try {
+      await setMessages([{ message_id: messageKey.messageId, message }], { refresh: 'affected' });
+    } catch (error) {
+      runtime.selfWrittenMessageHashes.delete(messageKey.messageId);
+      throw error;
+    }
+
+    const updatedKey = currentMessageKey(messageKey.messageId);
+    if (!updatedKey || updatedKey.swipeId !== messageKey.swipeId || updatedKey.message !== message) {
+      throw new Error('平行世界回写后未能确认消息内容，请检查酒馆助手版本。');
+    }
+    return updatedKey;
+  }
+
   async function processMessage(messageId, { force = false, source = 'auto' } = {}) {
     if (runtime.busy) throw new Error('已有天下推演正在进行。');
     const chatId = getCurrentChatId();
@@ -1299,11 +1363,12 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
       const payload = buildRequestPayload(baseState, messageKey, currentStat || {});
       const result = await callWorldModel(payload, generationId);
       if (!jobStillValid(job)) throw new Error('聊天或回复版本已经改变，本次推演结果已作废。');
-      const nextState = applyTransition(baseState, result, messageKey, currentStat || {});
+      const updatedMessageKey = await writeParallelWorldToMessage(messageKey, result);
+      const nextState = applyTransition(baseState, result, updatedMessageKey, currentStat || {});
       const saved = saveChatState(nextState);
       refreshInjection(saved);
       runtime.pendingMessageId = null;
-      runtime.lastNotice = `第 ${messageId} 楼结算完成，新增 ${saved.lastRun?.newFactCount ?? 0} 条事实。`;
+      runtime.lastNotice = `第 ${messageId} 楼推演完成，平行世界已追加，新增 ${saved.lastRun?.newFactCount ?? 0} 条事实。`;
       console.info('[天下演化] 结算完成', { chatId, messageId, revision: saved.revision });
       return saved;
     } catch (error) {
@@ -1731,7 +1796,7 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
         </section>
         <section class="cwe-settings-section">
           <header><div><small>运行方式</small><h3>自动结算</h3></div><label class="cwe-switch"><input type="checkbox" data-setting="enabled" ${settings.enabled ? 'checked' : ''}><i></i></label></header>
-          <label class="cwe-check"><input type="checkbox" data-setting="autoRun" ${settings.autoRun ? 'checked' : ''}><span>主模型正文与 MVU 变量更新完成后自动推演</span></label>
+          <label class="cwe-check"><input type="checkbox" data-setting="autoRun" ${settings.autoRun ? 'checked' : ''}><span>正文与 MVU 更新完成后，由副模型推演并把平行世界追加到本楼末尾</span></label>
           <div class="cwe-field-row"><label><span>回看最近几轮</span><input type="number" min="1" max="8" data-setting="lookbackRounds" value="${settings.lookbackRounds}"></label><label><span>等待 MVU 完成（毫秒）</span><input type="number" min="400" max="5000" step="100" data-setting="settleDelayMs" value="${settings.settleDelayMs}"></label></div>
           <p class="cwe-help">最新一轮可产生新事实，回看的旧轮次只负责理解“他”“那封信”等承接关系。</p>
         </section>
@@ -1768,7 +1833,7 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
         </div>
       </header>
       <div class="cwe-shell">
-        <section class="cwe-content">${panelBody(state)}</section>
+        <section class="cwe-content cwe-content-${runtime.activeTab}">${panelBody(state)}</section>
         <footer class="cwe-command-bar">
           <div class="cwe-command-main">
             <nav class="cwe-tabs" aria-label="天下演化栏目">${tabs.map(([id, label]) => `<button type="button" data-tab="${id}" class="${runtime.activeTab === id ? 'active' : ''}">${label}</button>`).join('')}</nav>
@@ -1776,7 +1841,7 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
             <button type="button" class="cwe-run-button primary" data-action="rerun-current" ${runtime.busy ? 'disabled' : ''}>${runtime.busy ? '推演中…' : '重新推演'}</button>
           </div>
           <div class="cwe-command-meta">
-            <p><span>本轮重演：${runtime.busy ? '执行中' : '待命'}</span><span>联动简报：${state.nextTurnPacket.hardFacts.length + state.nextTurnPacket.activePressures.length} 条</span><span>注入状态：${settings.enabled ? '已启用' : '未启用'}</span></p>
+            <p><span>本轮重演：${runtime.busy ? '执行中' : '待命'}</span><span>联动简报：${state.nextTurnPacket.hardFacts.length + state.nextTurnPacket.activePressures.length} 条</span><span>平行世界：${settings.enabled ? '同楼回写' : '未启用'}</span></p>
             <button type="button" class="cwe-rebuild-link" data-action="refresh-injection">重建联动</button>
           </div>
         </footer>
@@ -1983,10 +2048,10 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
     const compact = width <= 980;
     const panelWidth = isMobile()
       ? Math.round(width * 0.96)
-      : Math.min(Math.round(width * (compact ? 0.92 : 0.86)), 1320);
+      : Math.min(Math.round(width * (compact ? 0.92 : 0.8)), 1180);
     const panelHeight = isMobile()
       ? Math.round(height * 0.92)
-      : Math.min(Math.round(height * (compact ? 0.9 : 0.84)), 740);
+      : Math.min(Math.round(height * (compact ? 0.9 : 0.8)), 680);
     Object.assign(frame.style, {
       display: '',
       position: 'fixed',
@@ -2199,12 +2264,19 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
     on(events.MESSAGE_EDITED, messageId => {
       if (!settings.enabled || !settings.autoRun) return;
       const key = currentMessageKey(Number(messageId));
+      const selfWrittenHash = runtime.selfWrittenMessageHashes.get(Number(messageId));
+      if (key && selfWrittenHash === key.hash) {
+        runtime.selfWrittenMessageHashes.delete(Number(messageId));
+        return;
+      }
+      runtime.selfWrittenMessageHashes.delete(Number(messageId));
       if (key) scheduleProcess(Number(messageId), { force: true, source: 'auto' });
     });
     on(events.MESSAGE_DELETED, () => {
       clearTimeout(runtime.scheduledTimer);
       runtime.pendingMessageId = null;
       runtime.pendingForce = false;
+      runtime.selfWrittenMessageHashes.clear();
       setTimeout(reconcileAfterHistoryChange, 250);
     });
     on(events.CHAT_CHANGED, chatId => {
@@ -2212,6 +2284,7 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
       clearTimeout(runtime.scheduledTimer);
       runtime.pendingMessageId = null;
       runtime.pendingForce = false;
+      runtime.selfWrittenMessageHashes.clear();
       clearInjection();
       runtime.currentChatId = String(chatId || getCurrentChatId());
       runtime.lastError = '';
