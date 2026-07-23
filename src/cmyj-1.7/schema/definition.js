@@ -229,6 +229,11 @@ export const Schema = z.object({
               是否在场: z.boolean().prefault(true),
               生育: z
                 .object({
+                  是否处女: z.boolean().prefault(true),
+                  同房次数: z.coerce
+                    .number()
+                    .transform(v => Math.max(0, Math.trunc(v)))
+                    .prefault(0),
                   周期: z.coerce
                     .number()
                     .transform(v => _.clamp(v, 1, 28))

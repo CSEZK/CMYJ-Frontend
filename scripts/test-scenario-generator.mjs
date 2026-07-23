@@ -66,6 +66,14 @@ project.characters.栖云.adaptationPrinciples = [
   '保留谨慎、重视家人和以行动表达关心的性格核心',
   '身份变化不得切断与栖月、苏晚棠和赵砚的固定关系',
 ];
+project.characters.栖月.included = true;
+project.characters.栖月.known = true;
+project.characters.栖月.scene = false;
+project.characters.栖月.category = '私帷';
+project.characters.栖月.privateRelation = '红颜';
+project.characters.栖月.affection = 42;
+project.characters.栖月.loyalty = 55;
+project.characters.栖月.identity = '随养母往来边地的义女';
 
 project.initialization = {
   patch: {
@@ -104,7 +112,7 @@ assert.equal(resource.scenario.exclusiveGroup, 'player-origin');
 assert.equal(resource.scenario.allowMidChatSwitch, false);
 assert.equal(resource.scenario.newChatRequired, true);
 assert.equal(resource.openings.length, 1);
-assert.equal(resource.characterOverviews['origin-opening'].length, 1);
+assert.equal(resource.characterOverviews['origin-opening'].length, 2);
 assert.equal(resource.characterAdaptationVersion, 3);
 assert.deepEqual(resource.portraitProfiles, [], 'DLC 不应重复携带基础卡的内置立绘');
 const protagonistEntry = resource.worldbookEntries.find(entry => entry.name === '[scenario]<user>身份');
@@ -137,6 +145,10 @@ for (const transientField of ['openingExperience', 'currentGoals', 'knownInforma
 }
 assert.equal(initvar.人际网络.亲属.栖云.是否在场, false);
 assert.equal(initvar.人际网络.亲属.栖云.好感度, 37);
+if (channel === 'cmyj-1.7') {
+  assert.equal(initvar.人际网络.私帷.栖月.生育.是否处女, true);
+  assert.equal(initvar.人际网络.私帷.栖月.生育.同房次数, 0);
+}
 assert.equal(initvar.天下地图.地区态势.山西.实控阵营, '明廷');
 assert.deepEqual(Object.keys(initvar), [
   '世界运转',

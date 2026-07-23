@@ -26,6 +26,7 @@ const releaseScenarioSource = await readFile(
 );
 const releaseGeneratorSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'generator', 'index.js'), 'utf8');
 const releaseWorldEngineSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'world-engine', 'index.js'), 'utf8');
+const releaseSchemaSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'schema', 'definition.js'), 'utf8');
 const originalTongchengAdaptations = JSON.parse(
   await readFile(
     path.join(root, 'src', 'cmyj-1.7-beta', 'statusbar', 'original-tongcheng-character-adaptations.json'),
@@ -182,6 +183,13 @@ assert.match(releaseStatusbarSource, /ACTIVE_DLC_STORAGE_PREFIX = 'canming-dlc:a
 assert.match(releaseStatusbarSource, /async function resolveBuiltinTongchengWorldbook\(\)/);
 assert.match(releaseStatusbarSource, /rebindCharWorldbooks/);
 assert.match(releaseStatusbarSource, /resolvedBaseWorldbookName = name/);
+assert.match(releaseStatusbarSource, /data\.是否处女 === false \? '非处女' : '处女'/);
+assert.match(releaseStatusbarSource, /data\.同房次数/);
+assert.match(releaseSchemaSource, /是否处女: z\.boolean\(\)\.prefault\(true\)/);
+assert.match(releaseSchemaSource, /同房次数: z\.coerce/);
+assert.match(releaseSchemaSource, /Math\.max\(0, Math\.trunc\(v\)\)/);
+assert.match(releaseScenarioSource, /是否处女: true/);
+assert.match(releaseScenarioSource, /同房次数: 0/);
 assert.match(releaseGeneratorSource, /STORAGE_KEY_API = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /API_SETTINGS_KEY = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /minBaseVersion: '1\.7\.0'/);

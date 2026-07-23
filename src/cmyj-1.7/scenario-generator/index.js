@@ -422,6 +422,8 @@ import { Schema } from '../schema/definition.js';
         好感度: clamp(state.affection, -100, 100),
         忠心: clamp(state.loyalty, 0, 100),
         生育: {
+          是否处女: true,
+          同房次数: 0,
           周期: 1,
           时期: '安全期',
           状态: '未孕',

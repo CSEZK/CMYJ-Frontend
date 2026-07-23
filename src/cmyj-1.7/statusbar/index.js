@@ -3034,6 +3034,8 @@ function renderPeople() {
 
 function renderBirth(data) {
   const parts = [
+    tag(data.是否处女 === false ? '非处女' : '处女'),
+    tag(`同房 ${Math.max(0, Math.trunc(Number(data.同房次数) || 0))} 次`),
     tag(`周期 ${data.周期 ?? 1}`),
     tag(data.时期 ?? '安全期'),
     tag(data.状态 ?? '未孕', data.状态 === '已孕' || data.状态 === '待产' ? 'private' : ''),
