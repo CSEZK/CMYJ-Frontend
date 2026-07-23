@@ -1350,3 +1350,149 @@ select:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* 真实长内容约束：摘要、事件与设置都不能撑坏主框架 */
+.cwe-content {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.cwe-overview-lead {
+  align-items: center;
+  grid-template-columns: minmax(280px, 0.85fr) minmax(430px, 1.15fr);
+}
+
+.cwe-world-brief,
+.cwe-overview-status,
+.cwe-ledger-layout,
+.cwe-ledger-main,
+.cwe-event-story,
+.cwe-event-detail,
+.cwe-margin-notes {
+  min-width: 0;
+}
+
+.cwe-world-brief h2 {
+  display: -webkit-box;
+  max-width: 760px;
+  max-height: 4.65em;
+  overflow: hidden;
+  margin-block: 10px 7px;
+  font-family: var(--cwe-font-body);
+  font-size: clamp(18px, 1.45vw, 22px);
+  font-weight: 700;
+  letter-spacing: 0.035em;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.cwe-world-brief > p,
+.cwe-event-story p,
+.cwe-event-detail dd,
+.cwe-margin-notes p {
+  overflow-wrap: anywhere;
+}
+
+.cwe-event-story p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.cwe-event-story h4,
+.cwe-ledger-head h3,
+.cwe-margin-notes h3,
+.cwe-section-head h2,
+.cwe-ledger-column > header h3,
+.cwe-archive-column > header h3,
+.cwe-record h3,
+.cwe-person h3,
+.cwe-hook h3 {
+  font-family: var(--cwe-font-body);
+}
+
+.cwe-margin-notes p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+}
+
+.cwe-mode-switch label,
+.cwe-mode-switch label:has(input:checked) {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.cwe-mode-switch span {
+  height: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.cwe-mode-switch input:checked + span {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--card));
+  box-shadow:
+    inset 3px 0 0 var(--accent2),
+    0 6px 16px var(--glow);
+}
+
+.cwe-current-connection {
+  gap: 0;
+  overflow: hidden;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr) auto;
+}
+
+.cwe-current-connection > div {
+  display: grid;
+  min-height: 58px;
+  align-content: center;
+  padding: 10px 12px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+}
+
+.cwe-current-connection button {
+  min-height: 58px;
+  border: 0;
+  border-radius: 0;
+  padding-inline: 14px;
+  white-space: nowrap;
+}
+
+.cwe-settings-section > header {
+  align-items: center;
+}
+
+.cwe-field-row {
+  align-items: start;
+}
+
+@media (max-width: 1120px) {
+  .cwe-overview-lead {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .cwe-current-connection {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cwe-current-connection > div {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .cwe-current-connection button {
+    min-height: 42px;
+  }
+}
