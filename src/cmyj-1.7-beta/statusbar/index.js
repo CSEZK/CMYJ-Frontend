@@ -962,6 +962,7 @@ let graphSearch = '';
 let portraitSelected = null;
 let portraitGalleryFilter = 'all';
 let echartsInstance = null;
+let echartsDetailInstance = null;
 let echartsReady = false;
 let echartsGeoState = null;
 let echartsGraphInstance = null;
@@ -1018,7 +1019,6 @@ const WORLD_1634_NAME_DISPLAY = {
   荷兰东印度公司据点与影响区: '爪哇',
   不丹: '不丹',
   尼泊尔诸王国: '尼婆罗',
-  澳洲原住民诸族: '澳洲',
 };
 
 function getWorld1634DisplayName(feature) {
@@ -1048,22 +1048,34 @@ function getWorld1634DisplayName(feature) {
       return '青海';
     case 'mughal_subah':
       return '莫卧儿';
+    case 'australian_indigenous_region':
+      return properties.name === '澳洲原住民诸族' ? null : '澳洲';
     default:
       return null;
   }
 }
 
-/** 从 WORLD_1634 中筛选东亚相关特征，并归并到残明区域名。 */
+/** 读取预先消除州府内边界的省级总览。 */
 function buildEastAsiaGeo() {
+  const overview = frame.contentWindow?.WORLD_1634_OVERVIEW;
+  return overview?.features ? overview : { type: 'FeatureCollection', features: [] };
+}
+
+/** 从原始数据中提取一个地区的州府/分区细图。 */
+function buildRegionDetailGeo(regionName) {
   const world = frame.contentWindow?.WORLD_1634;
   if (!world?.features) return { type: 'FeatureCollection', features: [] };
   const features = world.features.flatMap(feature => {
     const displayName = getWorld1634DisplayName(feature);
-    if (!displayName) return [];
+    if (!displayName || findRegionByGeoName(displayName) !== regionName) return [];
     return [
       {
         ...feature,
-        properties: { ...feature.properties, original_name: feature.properties.name, name: displayName },
+        properties: {
+          ...feature.properties,
+          overview_name: displayName,
+          name: feature.properties.name,
+        },
       },
     ];
   });
@@ -1193,7 +1205,7 @@ function buildOwnershipData(regions, isNight) {
 function initEChartsMap() {
   const win = frame.contentWindow;
   const echarts = win?.echarts;
-  if (!echarts || !win?.WORLD_1634) {
+  if (!echarts || !win?.WORLD_1634 || !win?.WORLD_1634_OVERVIEW) {
     echartsReady = false;
     return;
   }
@@ -1202,8 +1214,8 @@ function initEChartsMap() {
   echartsReady = true;
 
   // 注册地图（仅首次）
-  if (!echarts.getMap('east_asia_1634')) {
-    echarts.registerMap('east_asia_1634', buildEastAsiaGeo());
+  if (!echarts.getMap('east_asia_1634_provinces')) {
+    echarts.registerMap('east_asia_1634_provinces', buildEastAsiaGeo());
   }
 
   // 销毁旧实例避免重复初始化
@@ -1220,7 +1232,7 @@ function initEChartsMap() {
     series: [
       {
         type: 'map',
-        map: 'east_asia_1634',
+        map: 'east_asia_1634_provinces',
         roam: true,
         center: echartsGeoState?.center || [110, 35],
         zoom: echartsGeoState?.zoom || 1.5,
@@ -1256,6 +1268,7 @@ function initEChartsMap() {
       if (overlay) {
         overlay.innerHTML = renderMapDetail();
         overlay.classList.add('active');
+        win.requestAnimationFrame(() => initEChartsDetailMap());
       }
     }
   });
@@ -1267,13 +1280,79 @@ function initEChartsMap() {
     frameDocument.body.addEventListener(
       'wheel',
       e => {
-        if (e.target.closest('#echarts-map-wrapper') && !e.target.closest('.cm-map-overlay-card')) {
+        if (e.target.closest('#echarts-map') || e.target.closest('#echarts-detail-map')) {
           e.preventDefault();
         }
       },
       { passive: false },
     );
   }
+  if (mapSelected) win.requestAnimationFrame(() => initEChartsDetailMap());
+}
+
+/** 在详情弹窗中绘制所选省份的州府/地方分图。 */
+function initEChartsDetailMap() {
+  const win = frame.contentWindow;
+  const echarts = win?.echarts;
+  const dom = frameDocument.getElementById('echarts-detail-map');
+  if (!echarts || !dom || !mapSelected) return;
+
+  const detailGeo = buildRegionDetailGeo(mapSelected);
+  if (!detailGeo.features.length) return;
+  const mapName = `east_asia_1634_detail_${mapSelected}`;
+  if (!echarts.getMap(mapName)) echarts.registerMap(mapName, detailGeo);
+
+  if (echartsDetailInstance) echartsDetailInstance.dispose();
+  echartsDetailInstance = echarts.init(dom);
+
+  const overviewNames = REGION_GEO_MAP[mapSelected] || [];
+  const areaColor =
+    buildRegionData().find(item => overviewNames.includes(item.name))?.itemStyle?.areaColor ||
+    (theme === 'night' || theme === 'star' ? 'rgba(80,67,55,.9)' : 'rgba(175,148,115,.88)');
+  const isNight = theme === 'night' || theme === 'star';
+  const showLabels = detailGeo.features.length <= 40;
+  echartsDetailInstance.setOption({
+    animationDuration: 420,
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'item',
+      confine: true,
+      formatter: params => params.name || '',
+    },
+    series: [
+      {
+        type: 'map',
+        map: mapName,
+        roam: true,
+        layoutCenter: ['50%', '50%'],
+        layoutSize: '92%',
+        scaleLimit: { min: 0.8, max: 12 },
+        label: {
+          show: showLabels,
+          color: isNight ? '#ead2aa' : '#5c3b25',
+          fontSize: 9,
+        },
+        itemStyle: {
+          areaColor,
+          borderColor: isNight ? 'rgba(235,205,160,.72)' : 'rgba(104,66,34,.66)',
+          borderWidth: 0.8,
+        },
+        emphasis: {
+          label: { show: true, color: '#fff7e6', fontSize: 10 },
+          itemStyle: {
+            areaColor: isNight ? '#9a7656' : '#a85d3f',
+            borderColor: '#f2d5a6',
+            borderWidth: 1.4,
+          },
+        },
+        data: detailGeo.features.map(feature => ({
+          name: feature.properties.name,
+          itemStyle: { areaColor },
+        })),
+        selectedMode: false,
+      },
+    ],
+  });
 }
 
 function getGraphNode(id) {
@@ -1579,6 +1658,7 @@ function renderMap() {
 function renderMapDetail() {
   const region = get(statData, `天下地图.地区态势.${mapSelected}`, {});
   const powers = region.主要势力 || {};
+  const detailCount = buildRegionDetailGeo(mapSelected).features.length;
   return `
     <div class="cm-map-overlay-card">
       <header class="cm-map-detail-head">
@@ -1586,6 +1666,21 @@ function renderMapDetail() {
         <button class="cm-map-overlay-close" id="btn-close-map-overlay">×</button>
       </header>
       <div class="cm-map-overlay-body">
+        ${
+          detailCount
+            ? `<section class="cm-map-drill">
+          <div class="cm-map-drill-head">
+            <span>
+              <small>地方分图</small>
+              <b>${mapSelected === '澳洲' ? '部族疆域' : '州府舆图'}</b>
+            </span>
+            <em>${detailCount} 处</em>
+          </div>
+          <div id="echarts-detail-map" role="img" aria-label="${html(mapSelected)}地方分图"></div>
+          <p class="cm-map-drill-hint">拖动查看 · 滚轮或双指缩放 · 悬停显示名称</p>
+        </section>`
+            : ''
+        }
         <div class="cm-info-grid">
           ${meta('名义归属', region.名义归属 || '未载')}
           ${meta('实控势力', region.实控势力 || '未载')}
@@ -5118,6 +5213,18 @@ function styleText() {
     .cm-private-row:hover,.cm-power-row:hover{transform:translateY(-1px)}
     .cm-diff-btn:hover{transform:translateY(-1px)}
     .theme-star .cm-panel:after{content:"";position:absolute;inset:0;pointer-events:none;z-index:0;border-radius:22px;animation:cm-star-pulse 8s ease-in-out infinite alternate}@media (max-width:768px){.cm-panel{border-radius:16px}.cm-header{padding:14px;align-items:center}.cm-tools-dropdown{right:auto;left:0}.cm-refresh-time{display:none}.cm-shell{grid-template-columns:1fr;grid-template-rows:auto 1fr}.cm-tabs{display:flex;gap:8px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line);padding:10px}.cm-tabs button{width:auto;white-space:nowrap}.cm-content{padding:12px}.cm-grid.two,.cm-grid.three{grid-template-columns:1fr}.cm-list{grid-template-columns:1fr}.cm-mini-bars,.cm-subgrid{grid-template-columns:1fr}.cm-row-item{grid-template-columns:1fr}.cm-row-tags{justify-content:flex-start}.cm-info-grid{grid-template-columns:1fr}.cm-private-row{grid-template-columns:34px 1fr auto;gap:8px;padding:8px 10px}.cm-power-row{grid-template-columns:34px 1fr auto;gap:8px;padding:8px 10px}.cm-power-avatar{width:34px;height:34px;font-size:16px}.cm-private-avatar{width:34px;height:34px}.cm-hero{display:block}.cm-seal{display:none}.cm-portrait-grid{grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}.cm-portrait-detail-grid{grid-template-columns:1fr}}.is-mobile .cm-panel{border-radius:16px}.is-mobile .cm-header{padding:14px;align-items:center}.is-mobile .cm-tools-dropdown{right:auto;left:0}.is-mobile .cm-refresh-time{display:none}.is-mobile .cm-shell{grid-template-columns:1fr;grid-template-rows:auto 1fr}.is-mobile .cm-tabs{display:flex;gap:8px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line);padding:10px}.is-mobile .cm-tabs button{width:auto;white-space:nowrap}.is-mobile .cm-content{padding:12px}.is-mobile .cm-grid.two,.is-mobile .cm-grid.three{grid-template-columns:1fr}.is-mobile .cm-list{grid-template-columns:1fr}.is-mobile .cm-mini-bars,.is-mobile .cm-subgrid{grid-template-columns:1fr}.is-mobile .cm-row-item{grid-template-columns:1fr}.is-mobile .cm-row-tags{justify-content:flex-start}.is-mobile .cm-info-grid{grid-template-columns:1fr}.is-mobile .cm-private-row{grid-template-columns:34px 1fr auto;gap:8px;padding:8px 10px}.is-mobile .cm-private-avatar{width:34px;height:34px}.is-mobile .cm-hero{display:block}.is-mobile .cm-seal{display:none}.is-mobile .cm-portrait-grid{grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}.is-mobile .cm-portrait-detail-grid{grid-template-columns:1fr}.is-mobile .cm-modal-character-studio,.is-mobile .cm-modal-character-manager,.is-mobile .cm-modal-portrait-manager{width:100%;max-height:96vh;border-radius:14px}.is-mobile .cm-studio{min-height:0}.is-mobile .cm-studio-content{padding:10px}.is-mobile .cm-studio-tabs>button{font-size:12px;padding:5px 8px}.is-mobile .cm-character-toolbar,.is-mobile .cm-portrait-toolbar{flex-wrap:wrap;gap:6px;align-items:center}.is-mobile .cm-character-toolbar .cm-portrait-select,.is-mobile .cm-portrait-toolbar .cm-portrait-select{min-width:100%;flex-basis:100%}.is-mobile .cm-character-toolbar-actions{width:100%;margin-top:4px}.is-mobile .cm-character-worldbook-row{flex-wrap:wrap;gap:6px}.is-mobile .cm-character-picker-results{max-height:200px}.is-mobile .cm-portrait-toolbar-btn{font-size:12px;padding:0 8px;height:30px}.is-mobile .cm-portrait-form label{font-size:12px}.is-mobile .cm-portrait-category-editor{padding:8px}.is-mobile .cm-background-input{padding:8px 10px;font-size:13px}.is-mobile .cm-studio-sidebar{padding:10px!important;min-width:0!important;overflow:hidden!important;max-width:100%!important}.is-mobile .cm-studio-character-list{display:flex!important;flex-direction:row!important;flex-wrap:nowrap!important;max-height:none!important;overflow-x:auto!important;overflow-y:hidden!important;gap:4px}.is-mobile .cm-studio-character{min-width:110px!important;flex-shrink:0!important}.is-mobile .cm-studio-tabs{flex-wrap:wrap}.is-mobile .cm-studio-actions{margin-left:0;width:100%;justify-content:flex-start}@media(max-width:620px){.cm-modal-character-studio,.cm-modal-character-manager,.cm-modal-portrait-manager{width:100%;max-height:96vh;border-radius:14px}.cm-studio{min-height:0}.cm-studio-content{padding:10px}.cm-studio-tabs>button{font-size:12px;padding:5px 8px}.cm-character-toolbar,.cm-portrait-toolbar{flex-wrap:wrap;gap:6px;align-items:center}.cm-character-toolbar .cm-portrait-select,.cm-portrait-toolbar .cm-portrait-select{min-width:100%;flex-basis:100%}.cm-character-toolbar-actions{width:100%;margin-top:4px}.cm-character-worldbook-row{flex-wrap:wrap;gap:6px}.cm-character-picker-results{max-height:200px}.cm-portrait-toolbar-btn{font-size:12px;padding:0 8px;height:30px}.cm-portrait-form label{font-size:12px}.cm-portrait-category-editor{padding:8px}.cm-background-input{padding:8px 10px;font-size:13px}}
+    .cm-map-overlay-card{width:min(680px,96%);max-height:88%;padding:14px}
+    .cm-map-detail-head{margin-bottom:10px}
+    .cm-map-drill{position:relative;margin:0 0 12px;padding:9px;border:1px solid var(--line);border-radius:12px;background:linear-gradient(145deg,rgba(255,255,255,.08),rgba(0,0,0,.035));overflow:hidden}
+    .cm-map-drill:before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle at 82% 16%,var(--glow),transparent 34%);opacity:.55}
+    .cm-map-drill-head{position:relative;display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 2px 6px}
+    .cm-map-drill-head span{display:grid;gap:1px}
+    .cm-map-drill-head small{color:var(--muted);font-size:9px;letter-spacing:.18em}
+    .cm-map-drill-head b{color:var(--accent);font-size:13px;letter-spacing:.08em}
+    .cm-map-drill-head em{border:1px solid var(--line);border-radius:999px;padding:2px 8px;color:var(--muted);font:normal 10px/1.5 sans-serif}
+    #echarts-detail-map{position:relative;width:100%;height:180px;border-top:1px dashed var(--line);border-bottom:1px dashed var(--line)}
+    .cm-map-drill-hint{position:relative;margin:5px 0 0!important;color:var(--muted);font-size:10px;text-align:center;letter-spacing:.04em}
+    @media(max-width:620px){.cm-map-overlay-card{padding:10px}#echarts-detail-map{height:150px}}
   `;
 }
 
@@ -5146,11 +5253,23 @@ function loadIframeScripts() {
     const script2 = doc.createElement('script');
     script2.src = 'https://testingcf.jsdelivr.net/gh/CSEZK/CMYJ-Frontend@develop/assets/maps/world_1634.js';
     script2.onload = () => {
-      echartsReady = true;
-      // 如果已在地图标签页，初始化
-      if (isOpen && activeTab === 'map') {
-        initEChartsMap();
-      }
+      const script3 = doc.createElement('script');
+      script3.src =
+        'https://testingcf.jsdelivr.net/gh/CSEZK/CMYJ-Frontend@develop/assets/maps/world_1634_overview.js';
+      script3.onload = () => {
+        echartsReady = true;
+        // 如果已在地图标签页，初始化
+        if (isOpen && activeTab === 'map') {
+          initEChartsMap();
+        }
+      };
+      script3.onerror = () => {
+        win._canmingScriptsLoaded = false;
+      };
+      doc.head.appendChild(script3);
+    };
+    script2.onerror = () => {
+      win._canmingScriptsLoaded = false;
     };
     doc.head.appendChild(script2);
   };
@@ -5306,7 +5425,7 @@ function render() {
 let echartsRetryCount = 0;
 function tryInitEChartsMap() {
   const win = frame.contentWindow;
-  if (win?.echarts && win?.WORLD_1634) {
+  if (win?.echarts && win?.WORLD_1634 && win?.WORLD_1634_OVERVIEW) {
     echartsRetryCount = 0;
     initEChartsMap();
     return;
@@ -5759,6 +5878,10 @@ function bindFrameEvents() {
 
     // 关闭地图 overlay（直接更新 DOM，不销毁地图）
     if (target.closest('#btn-close-map-overlay')) {
+      if (echartsDetailInstance) {
+        echartsDetailInstance.dispose();
+        echartsDetailInstance = null;
+      }
       mapSelected = null;
       const overlay = frameDocument.getElementById('cm-map-overlay');
       if (overlay) {
@@ -7779,6 +7902,13 @@ async function bootstrap() {
         /* ignore */
       }
     }
+    if (echartsDetailInstance) {
+      try {
+        echartsDetailInstance.resize();
+      } catch {
+        /* ignore */
+      }
+    }
   };
   parentWindow.addEventListener('resize', onResize);
   // 保存引用用于 cleanup
@@ -7794,6 +7924,10 @@ function cleanup() {
   if (echartsInstance) {
     echartsInstance.dispose();
     echartsInstance = null;
+  }
+  if (echartsDetailInstance) {
+    echartsDetailInstance.dispose();
+    echartsDetailInstance = null;
   }
   frame?.remove();
   lamp?.remove();
