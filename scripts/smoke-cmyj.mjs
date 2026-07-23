@@ -169,7 +169,7 @@ for (const [name, anchor] of Object.entries(experienceAnchors)) {
 assert.ok(releaseLoader.length > 300_000, '1.7 正式版共享加载器未包含完整脚本集');
 assert.match(releaseLoader, /__CMYJRemoteScriptsV17/);
 assert.doesNotMatch(releaseLoader, /__CMYJRemoteScriptsV17Beta/);
-assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.4'/);
+assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.5'/);
 assert.match(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps\/world_1634\.js/);
 assert.match(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps\/world_1634_overview\.js/);
 assert.match(releaseStatusbarSource, /east_asia_1634_provinces/);
@@ -180,9 +180,9 @@ assert.match(releaseWorkshopSource, /UK='canming-workshop:user'/);
 assert.match(releaseWorkshopSource, /INSTALLS_KEY='canming-workshop:installs-v1'/);
 assert.match(releaseStatusbarSource, /WORKSHOP_TOKEN_KEY = 'canming-workshop:token'/);
 assert.match(releaseStatusbarSource, /ACTIVE_DLC_STORAGE_PREFIX = 'canming-dlc:active-scenario-v1:'/);
-assert.match(releaseStatusbarSource, /async function resolveBuiltinTongchengWorldbook\(\)/);
+assert.match(releaseStatusbarSource, /const FORMAL_WORLDBOOK_NAME = '残明余烬1\.7'/);
+assert.match(releaseStatusbarSource, /async function bindFormalWorldbook\(\)/);
 assert.match(releaseStatusbarSource, /rebindCharWorldbooks/);
-assert.match(releaseStatusbarSource, /resolvedBaseWorldbookName = name/);
 assert.match(releaseStatusbarSource, /data\.是否处女 === false \? '非处女' : '处女'/);
 assert.match(releaseStatusbarSource, /data\.同房次数/);
 assert.match(releaseSchemaSource, /是否处女: z\.boolean\(\)\.prefault\(true\)/);
@@ -190,11 +190,13 @@ assert.match(releaseSchemaSource, /同房次数: z\.coerce/);
 assert.match(releaseSchemaSource, /Math\.max\(0, Math\.trunc\(v\)\)/);
 assert.match(releaseScenarioSource, /是否处女: true/);
 assert.match(releaseScenarioSource, /同房次数: 0/);
-assert.match(releaseStatusbarSource, /rebindWorldbooks\('current', \{ primary: name, additional: \[\] \}\)/);
+assert.match(
+  releaseStatusbarSource,
+  /rebindWorldbooks\('current', \{ primary: FORMAL_WORLDBOOK_NAME, additional: \[\] \}\)/,
+);
 assert.doesNotMatch(releaseStatusbarSource, /additional\.push\(binding\.primary\)/);
-assert.match(releaseStatusbarSource, /await resolveBuiltinTongchengWorldbook\(\)/);
+assert.match(releaseStatusbarSource, /await bindFormalWorldbook\(\)/);
 assert.match(releaseStatusbarSource, /自动校正单主世界书失败/);
-assert.match(releaseStatusbarSource, /availableNames\.filter\(name => name === '残明余烬1\.7'\)/);
 assert.match(releaseGeneratorSource, /STORAGE_KEY_API = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /API_SETTINGS_KEY = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /minBaseVersion: '1\.7\.0'/);
