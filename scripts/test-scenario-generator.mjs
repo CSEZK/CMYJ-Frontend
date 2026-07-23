@@ -36,6 +36,13 @@ project.id = 'cmyj.test.datong-fort';
 project.protagonist.identity = '大同镇边军小旗';
 project.protagonist.occupation = '边堡小旗';
 project.protagonist.location = '山西大同府北境边堡';
+project.protagonist.socialStanding = '有军籍与小旗名分，但在上官眼中只是可替换的基层武官';
+project.protagonist.familyBackground = '辽东军户遗民，家族在战乱中离散';
+project.protagonist.pastExperience = '从辽东败退至大同，靠识字与火器经验升任小旗';
+project.protagonist.strengths = '熟悉鸟铳操练、简易筑城与基层军务，不通高层政务';
+project.protagonist.resources = '可稳定号令本旗军士，持有小旗腰牌与一份残缺军册';
+project.protagonist.longTermPursuit = '在边镇乱局中保住部下与军户家眷';
+project.protagonist.identityBoundaries = '只能号令本旗，缺乏上层靠山与独立财权';
 project.opening.body =
   '风卷着沙砾撞上堡门，user看见欠饷的军士已经堵在门外。\n\n<initial_variables>\n不应保留\n</initial_variables>';
 project.characters.栖云.included = true;
@@ -98,13 +105,19 @@ assert.equal(resource.openings.length, 1);
 assert.equal(resource.characterOverviews['origin-opening'].length, 1);
 assert.equal(resource.characterAdaptationVersion, 3);
 assert.deepEqual(resource.portraitProfiles, [{ name: '栖云' }], 'DLC 应启用已选角色的内置立绘');
-const protagonistEntry = resource.worldbookEntries.find(entry => entry.name === '[scenario]主角身份');
+const protagonistEntry = resource.worldbookEntries.find(entry => entry.name === '[scenario]<user>身份');
 assert.ok(protagonistEntry, 'DLC 必须包含专门记录 <user> 身份的世界书条目');
-assert.match(protagonistEntry.content, /<主角身份背景>/);
-assert.match(protagonistEntry.content, /开局身份：大同镇边军小旗/);
-assert.match(protagonistEntry.content, /开局职业：边堡小旗/);
+assert.match(protagonistEntry.content, /<玩家身份背景>/);
+assert.match(protagonistEntry.content, /公开身份：大同镇边军小旗/);
+assert.match(protagonistEntry.content, /职业或官职：边堡小旗/);
 assert.match(protagonistEntry.content, /开局所属区域：山西大同府北境边堡/);
-assert.ok(resource.worldbookEntries.some(entry => entry.name === '人物概览'), 'DLC 必须包含人物概览条目');
+assert.match(protagonistEntry.content, /社会身份与地位：有军籍与小旗名分/);
+assert.match(protagonistEntry.content, /身份形成前的关键经历：从辽东败退至大同/);
+assert.match(protagonistEntry.content, /身份边界与限制：只能号令本旗/);
+assert.ok(
+  resource.worldbookEntries.some(entry => entry.name === '人物概览'),
+  'DLC 必须包含人物概览条目',
+);
 const qiyunAdaptation = resource.characterAdaptations.find(item => item.character === '栖云');
 assert.ok(qiyunAdaptation, '应导出栖云的长期角色适配');
 assert.equal(qiyunAdaptation.identity, '随养母经营边地商路的义女');

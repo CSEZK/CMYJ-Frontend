@@ -11,6 +11,7 @@ import { Schema } from '../schema/definition.js';
   const API_SETTINGS_KEY = 'canming-dlc-staging:generator:api';
   const ERA_ENTRY_NAME = '[scenario_generator]崇祯七年七月模板';
   const ERA_ID = 'cmyj.era.chongzhen-7-07';
+  const IDENTITY_ENTRY_NAME = '[scenario]<user>身份';
   const MAX_BYTES = 1_400_000;
   const MAX_REFERENCE_CHARS = 24_000;
   const MAX_PERSONA_CHARS = 120_000;
@@ -140,11 +141,19 @@ import { Schema } from '../schema/definition.js';
       summary: '',
       tags: ['残明余烬', '身份DLC'],
       protagonist: {
+        description: '',
         origin: '原生人物',
         identity: '',
         occupation: '',
         location: '',
         faction: '',
+        socialStanding: '',
+        familyBackground: '',
+        pastExperience: '',
+        strengths: '',
+        resources: '',
+        longTermPursuit: '',
+        identityBoundaries: '',
         predicament: '',
         goal: '',
         tone: '乱世写实、克制有余韵',
@@ -582,7 +591,7 @@ import { Schema } from '../schema/definition.js';
 
   function protagonistIdentityContent() {
     return normalizeUserToken(
-      `<主角身份背景>\n时代起点：崇祯七年七月\n来历：${project.protagonist.origin}\n开局身份：${project.protagonist.identity}\n开局职业：${project.protagonist.occupation || '无固定职业'}\n开局所属区域：${project.protagonist.location}\n开局所属势力：${project.protagonist.faction || '无固定势力'}\n说明：以上记录的是身份出发点，不代表剧情推进后的当前地点、职务、势力或目标；后续状态以变量与正文为准。\n</主角身份背景>`,
+      `<玩家身份背景>\n时代起点：崇祯七年七月\n来历：${project.protagonist.origin || '未详细设定'}\n公开身份：${project.protagonist.identity}\n职业或官职：${project.protagonist.occupation || '无固定职业'}\n开局所属区域：${project.protagonist.location}\n长期所属势力：${project.protagonist.faction || '无固定势力'}\n社会身份与地位：${project.protagonist.socialStanding || '未详细设定'}\n出身与家庭背景：${project.protagonist.familyBackground || '未详细设定'}\n身份形成前的关键经历：${project.protagonist.pastExperience || '未详细设定'}\n稳定能力与知识：${project.protagonist.strengths || '未详细设定'}\n可长期支配或调用的资源：${project.protagonist.resources || '未详细设定'}\n长期诉求：${project.protagonist.longTermPursuit || '未详细设定'}\n身份边界与限制：${project.protagonist.identityBoundaries || '遵守身份、时代与现实条件，不因主角光环获得额外权力或知识'}\n叙事气质：${project.protagonist.tone || '乱世写实、克制有余韵'}\n说明：以上记录的是<user>稳定的身份背景与故事出发点，不代表剧情推进后的当前地点、职务、势力、资源或目标；后续状态以变量与正文为准。\n</玩家身份背景>`,
     );
   }
 
@@ -644,7 +653,7 @@ import { Schema } from '../schema/definition.js';
     const id = project.id.trim() || `cmyj.custom.${slug(project.title)}`;
     const identityContent = protagonistIdentityContent();
     const worldbookEntries = [
-      entry('[scenario]主角身份', identityContent, 1),
+      entry(IDENTITY_ENTRY_NAME, identityContent, 1),
       entry('人物概览', overviewEntry(people), 0, 'after_character_definition'),
     ];
     const adaptations = characterAdaptations();
@@ -669,7 +678,7 @@ import { Schema } from '../schema/definition.js';
         id,
         version: project.packageVersion || '0.1.0',
         baseCard: 'cmyj.base',
-        minBaseVersion: '1.7.0-beta.10',
+        minBaseVersion: '1.7.0-beta.11',
         exclusiveGroup: 'player-origin',
         allowMidChatSwitch: false,
         newChatRequired: true,
@@ -892,6 +901,79 @@ import { Schema } from '../schema/definition.js';
     );
   }
 
+  async function generateProtagonistProfile() {
+    const p = project.protagonist;
+    if (!String(p.description || '').trim()) throw new Error('请先用一段话描述想体验的 <user> 身份。');
+    const fields = {
+      title: ['DLC 名称', project.title],
+      origin: ['来历', p.origin],
+      identity: ['公开身份', p.identity],
+      occupation: ['职业或官职', p.occupation],
+      location: ['开局地点', p.location],
+      faction: ['长期所属势力', p.faction],
+      social_standing: ['社会身份与地位', p.socialStanding],
+      family_background: ['出身与家庭背景', p.familyBackground],
+      past_experience: ['身份形成前的关键经历', p.pastExperience],
+      strengths: ['稳定能力与知识', p.strengths],
+      resources: ['可长期支配或调用的资源', p.resources],
+      long_term_pursuit: ['长期诉求', p.longTermPursuit],
+      identity_boundaries: ['身份边界与限制', p.identityBoundaries],
+      tone: ['叙事气质', p.tone],
+    };
+    const system =
+      '你负责把玩家的一段身份设想整理成《残明余烬》崇祯七年七月的长期身份档案。所有内容必须符合明末社会、地理、官制与生产力；涉及玩家时一律写作<user>。只写长期稳定的信息，不得写开场时的即时目标、临时处境、当前情报、是否在场或尚未发生的剧情。身份边界必须明确权力、知识、财富或人脉的现实限制，避免主角光环。已有非空字段是硬约束，不得改写；只有默认标题“我的残明开局”和默认来历“原生人物”可以依照描述重新拟定。请补全其余字段，只输出符合 Schema 的 JSON 对象。';
+    const user = `玩家描述：\n${p.description.trim().slice(0, 4000)}\n\n时代固定：崇祯七年七月。\n当前表格如下。非空内容必须保留原意；默认的“我的残明开局”和“原生人物”可以根据描述重新拟定：\n${JSON.stringify(
+      Object.fromEntries(Object.entries(fields).map(([key, [, value]]) => [key, value])),
+      null,
+      2,
+    )}`;
+    const string = { type: 'string', minLength: 1, maxLength: 600 };
+    const schema = {
+      name: 'canming_protagonist_identity_v1',
+      value: {
+        type: 'object',
+        additionalProperties: false,
+        required: Object.keys(fields),
+        properties: Object.fromEntries(Object.keys(fields).map(key => [key, string])),
+      },
+    };
+    const raw = await requestAi(system, user, schema);
+    const result = raw?.protagonist && typeof raw.protagonist === 'object' ? raw.protagonist : raw;
+    const missing = Object.entries(fields)
+      .filter(([key]) => !String(result?.[key] || '').trim())
+      .map(([, [label]]) => label);
+    if (missing.length) throw new Error(`AI 返回仍缺少：${missing.join('、')}`);
+    const fill = (target, key, softDefaults = []) => {
+      const current = String(target.value || '').trim();
+      if (!current || softDefaults.includes(current)) target.value = String(result[key]).trim();
+    };
+    const titleTarget = { value: project.title };
+    fill(titleTarget, 'title', ['我的残明开局']);
+    project.title = titleTarget.value;
+    for (const [property, outputKey, defaults] of [
+      ['origin', 'origin', ['原生人物']],
+      ['identity', 'identity'],
+      ['occupation', 'occupation'],
+      ['location', 'location'],
+      ['faction', 'faction'],
+      ['socialStanding', 'social_standing'],
+      ['familyBackground', 'family_background'],
+      ['pastExperience', 'past_experience'],
+      ['strengths', 'strengths'],
+      ['resources', 'resources'],
+      ['longTermPursuit', 'long_term_pursuit'],
+      ['identityBoundaries', 'identity_boundaries'],
+      ['tone', 'tone'],
+    ]) {
+      const target = { value: p[property] };
+      fill(target, outputKey, defaults || []);
+      p[property] = target.value;
+    }
+    project.summary = project.summary || p.description.trim().slice(0, 120);
+    markInitializationStale();
+    saveProject();
+  }
+
   async function generateCharacterAdaptations(characters) {
     const targets = characters.filter(character => character.lock !== 'history');
     if (!targets.length) throw new Error('所选人物均为历史人物，身份无需适配。');
@@ -914,7 +996,7 @@ import { Schema } from '../schema/definition.js';
       const system =
         `你负责为《残明余烬》的原创人物“${character.name}”制作长期人物定位。` +
         '必须保留原始人设的性格核心、能力边界和人物关系。用户提供的“一句话适配设想”是创作方向，需结合<user>身份与原始人设展开成长期有效的身份、经历与相处方式。不得输出当前目标、当前情报、开场所在地、即时态度、是否在场或其他只在某一时刻成立的状态。只处理这一名人物，不要输出人物姓名，也不要使用 characters 数组或 character 外层。涉及玩家时一律写作<user>，不得写user或{{user}}。每个字符串都要有具体内容；确实没有固定势力时写“无固定势力”，不得用空字符串代替。adaptation_principles 至少给出两条可执行原则。输出符合 Schema 的单个 JSON 对象。';
-      const user = `目标人物：${character.name}\n<user>长期身份：${project.protagonist.identity}；职业：${project.protagonist.occupation || '未定'}；主要活动地：${project.protagonist.location}；势力：${project.protagonist.faction || '无固定势力'}\n不可改写的人物关系：${fixedRelationsFor([character])}\nadaptation_brief 是用户的一句话设想，只用于指导补全，不需要原样复述。其他非空字段是硬约束，不得改写；请把所有空白字段补成具体、长期有效的内容：\n${JSON.stringify(current, null, 2)}\n\n<${character.name}原始人设>\n${personaContext}\n</${character.name}原始人设>`;
+      const user = `目标人物：${character.name}\n<user>长期身份档案：\n${protagonistIdentityContent()}\n不可改写的人物关系：${fixedRelationsFor([character])}\nadaptation_brief 是用户的一句话设想，只用于指导补全，不需要原样复述。其他非空字段是硬约束，不得改写；请把所有空白字段补成具体、长期有效的内容：\n${JSON.stringify(current, null, 2)}\n\n<${character.name}原始人设>\n${personaContext}\n</${character.name}原始人设>`;
       const schema = {
         name: 'canming_single_character_adaptation_v3',
         value: {
@@ -1015,7 +1097,7 @@ import { Schema } from '../schema/definition.js';
     );
     const system =
       '你是《残明余烬》的开局创作助手。时代严格固定在崇祯七年七月。现场角色的原始人设是硬约束，长期人物定位只能改变其身份与关系背景，不能改变人格核心。只有“开场现场人物”可以实际出场；其他人物不得为了展示名单被塞入第一幕。开场只是故事引子，不必让所有现场人物轮流说话。涉及玩家时一律写作<user>，不得写user或{{user}}。直接输出可供酒馆使用的中文正文，不要输出标题、说明、JSON、Markdown代码块、<initvar>或任何其他初始化标签。';
-    const user = `DLC：${project.title}\n开场名称：${project.opening.name}\n<user>：${project.protagonist.origin}，${project.protagonist.identity}，职业${project.protagonist.occupation || '未定'}\n地点：${project.protagonist.location}\n故事气质：${project.protagonist.tone}\n一句话开局设想：${project.opening.hook || '请根据身份设计一个具体而紧迫的引子'}\n开场白目标字数：约${project.opening.targetWords}字，允许上下浮动15%\n纳入DLC的人物：${selected.map(character => character.name).join('、') || '无'}\n开场前已经相识：${known.map(character => `${character.name}（${project.characters[character.name].relation || '相识'}）`).join('、') || '无'}\n允许在开场现场出现：${scene.map(character => character.name).join('、') || '无现有角色，开场只写<user>及必要的一次性路人'}\n不可改写的人物关系：${fixedRelationsFor(selected)}\n现场人物长期定位：${JSON.stringify(sceneAdaptations, null, 2)}${personaContext ? `\n\n<现场人物原始人设>\n${personaContext}\n</现场人物原始人设>` : ''}${referenceContext ? `\n\n<参考世界书>\n${referenceContext}\n</参考世界书>` : ''}\n\n现在直接写开场正文。`;
+    const user = `DLC：${project.title}\n开场名称：${project.opening.name}\n<user>长期身份档案：\n${protagonistIdentityContent()}\n一句话开局设想：${project.opening.hook || '请根据身份设计一个具体而紧迫的引子'}\n开场白目标字数：约${project.opening.targetWords}字，允许上下浮动15%\n纳入DLC的人物：${selected.map(character => character.name).join('、') || '无'}\n开场前已经相识：${known.map(character => `${character.name}（${project.characters[character.name].relation || '相识'}）`).join('、') || '无'}\n允许在开场现场出现：${scene.map(character => character.name).join('、') || '无现有角色，开场只写<user>及必要的一次性路人'}\n不可改写的人物关系：${fixedRelationsFor(selected)}\n现场人物长期定位：${JSON.stringify(sceneAdaptations, null, 2)}${personaContext ? `\n\n<现场人物原始人设>\n${personaContext}\n</现场人物原始人设>` : ''}${referenceContext ? `\n\n<参考世界书>\n${referenceContext}\n</参考世界书>` : ''}\n\n现在直接写开场正文。`;
     project.opening.body = await requestOpeningText(system, user, project.opening.targetWords);
     project.summary = String(
       project.opening.hook || project.summary || project.opening.body.replace(/\s+/g, ' ').slice(0, 120),
@@ -1293,7 +1375,8 @@ import { Schema } from '../schema/definition.js';
     style.textContent += `#${ROOT_ID} .sg-opening-tools{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);gap:12px;margin:0 0 16px}#${ROOT_ID} .sg-opening-tool{padding:15px;border:1px solid var(--line);border-radius:var(--radius-card);background:color-mix(in srgb,var(--card) 86%,transparent);box-shadow:0 8px 24px color-mix(in srgb,var(--shadow) 18%,transparent)}#${ROOT_ID} .sg-tool-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px}#${ROOT_ID} .sg-tool-head b{display:block;font-size:14px}#${ROOT_ID} .sg-tool-head small{display:block;margin-top:2px;color:var(--muted);font-size:10px}#${ROOT_ID} .sg-length-row{display:grid;grid-template-columns:minmax(110px,.7fr) minmax(0,1.3fr);gap:9px;align-items:center}#${ROOT_ID} .sg-length-presets{display:flex;gap:5px;flex-wrap:wrap}#${ROOT_ID} .sg-length-preset{padding:6px 8px;border:1px solid var(--line);border-radius:999px;color:var(--muted);background:var(--paper2);cursor:pointer}#${ROOT_ID} .sg-length-preset.on{border-color:var(--accent);color:#fff;background:var(--accent)}#${ROOT_ID} .sg-reference-summary{display:flex;gap:6px;flex-wrap:wrap;min-height:28px;align-items:center}#${ROOT_ID} .sg-reference-chip{display:flex;align-items:center;gap:5px;padding:4px 7px;border:1px solid var(--line);border-radius:999px;color:var(--ink);background:var(--paper2);font-size:10px}#${ROOT_ID} .sg-reference-chip button{padding:0;border:0;color:var(--accent);background:transparent;cursor:pointer;font-size:14px}#${ROOT_ID} .sg-reference-empty{color:var(--muted);font-size:11px}#${ROOT_ID} .sg-reference-overlay{position:absolute;inset:0;z-index:40;display:grid;place-items:center;padding:18px;background:rgba(12,12,10,.54);backdrop-filter:blur(7px)}#${ROOT_ID} .sg-reference-modal{display:grid;grid-template-rows:auto minmax(0,1fr);width:min(680px,96%);max-height:88%;border:1px solid var(--line);border-radius:18px;color:var(--ink);background:var(--paper);box-shadow:0 24px 70px rgba(0,0,0,.42);overflow:hidden}#${ROOT_ID} .sg-reference-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line)}#${ROOT_ID} .sg-reference-head h2{margin:0;font-size:20px}#${ROOT_ID} .sg-reference-body{overflow:auto;padding:16px 18px}#${ROOT_ID} .sg-reference-toolbar{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:12px}#${ROOT_ID} .sg-reference-list{display:grid;gap:6px;max-height:380px;overflow:auto;padding-right:4px;scrollbar-width:thin}#${ROOT_ID} .sg-reference-entry{display:grid;grid-template-columns:22px minmax(0,1fr);gap:9px;align-items:center;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card);cursor:pointer}#${ROOT_ID} .sg-reference-entry:hover{border-color:var(--accent)}#${ROOT_ID} .sg-reference-entry input{width:18px;height:18px;accent-color:var(--accent)}#${ROOT_ID} .sg-reference-entry b,#${ROOT_ID} .sg-reference-entry small{display:block}#${ROOT_ID} .sg-reference-entry small{overflow:hidden;color:var(--muted);font-size:9px;text-overflow:ellipsis;white-space:nowrap}#${ROOT_ID} .sg-reference-footer{display:flex;justify-content:space-between;gap:10px;margin-top:12px;color:var(--muted);font-size:10px}#${ROOT_ID} .sg-initvar-note{border-radius:var(--radius-card)}@media(max-width:720px){#${ROOT_ID} .sg-opening-tools{grid-template-columns:1fr}#${ROOT_ID} .sg-reference-toolbar,#${ROOT_ID} .sg-length-row{grid-template-columns:1fr}}`;
     style.textContent += `#${ROOT_ID} .sg-toolbar-actions{display:flex;align-items:center;gap:7px}#${ROOT_ID} .sg-mini-btn.accent{border-color:color-mix(in srgb,var(--accent) 55%,var(--line));color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}#${ROOT_ID} .sg-mini-btn:disabled,#${ROOT_ID} .sg-btn:disabled{cursor:wait;opacity:.58;transform:none}#${ROOT_ID} .sg-long-term{display:grid;gap:12px;margin-top:14px;padding-top:14px;border-top:1px dashed var(--line)}#${ROOT_ID} .sg-long-term-head b,#${ROOT_ID} .sg-long-term-head small{display:block}#${ROOT_ID} .sg-long-term-head small{margin-top:2px;color:var(--muted);font-size:10px}#${ROOT_ID} .sg-adaptation-seed{padding:12px;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--line));border-radius:var(--radius-card);background:color-mix(in srgb,var(--accent) 7%,var(--card))}#${ROOT_ID} .sg-adaptation-seed .sg-field>span{color:var(--accent);font-weight:700}#${ROOT_ID} .sg-persona-strip{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:12px 0;padding:10px 12px;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));border-radius:var(--radius-card);background:color-mix(in srgb,var(--accent) 7%,var(--card))}#${ROOT_ID} .sg-persona-strip small{color:var(--muted)}#${ROOT_ID} .sg-generation-flow{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:stretch;margin:16px 0}#${ROOT_ID} .sg-flow-card{padding:13px;border:1px solid var(--line);border-radius:var(--radius-card);background:var(--card)}#${ROOT_ID} .sg-flow-card b,#${ROOT_ID} .sg-flow-card small{display:block}#${ROOT_ID} .sg-flow-card small{margin-top:3px;color:var(--muted)}#${ROOT_ID} .sg-flow-arrow{display:grid;place-items:center;color:var(--accent);font-size:20px}@media(max-width:650px){#${ROOT_ID} .sg-generation-flow{grid-template-columns:1fr}#${ROOT_ID} .sg-flow-arrow{transform:rotate(90deg)}#${ROOT_ID} .sg-config-toolbar{align-items:flex-start;flex-direction:column}#${ROOT_ID} .sg-toolbar-actions{width:100%;flex-wrap:wrap}}`;
     style.textContent += `#${ROOT_ID} [hidden]{display:none!important}#${ROOT_ID} .sg-head-actions{display:flex;align-items:center;gap:8px}#${ROOT_ID} .sg-api-trigger{display:flex;align-items:center;gap:8px;max-width:230px;padding:7px 10px;border:1px solid var(--line);border-radius:var(--radius-control);color:var(--ink);background:var(--card);cursor:pointer}#${ROOT_ID} .sg-api-trigger:hover{border-color:var(--accent)}#${ROOT_ID} .sg-api-trigger span{color:var(--accent);font-weight:800}#${ROOT_ID} .sg-api-trigger small{overflow:hidden;color:var(--muted);font-size:10px;text-overflow:ellipsis;white-space:nowrap}#${ROOT_ID} .sg-api-modal{grid-template-rows:auto minmax(0,1fr);width:min(720px,96%)}#${ROOT_ID} .sg-api-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}#${ROOT_ID} .sg-api-model-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px}#${ROOT_ID} [data-api-models]{margin-top:7px}#${ROOT_ID} .sg-api-note{margin-top:14px;padding:10px 12px;border-left:3px solid var(--accent);border-radius:8px;color:var(--muted);background:color-mix(in srgb,var(--accent) 7%,var(--card));font-size:11px}#${ROOT_ID} .sg-api-actions{justify-content:flex-end;margin-top:14px}@media(max-width:640px){#${ROOT_ID} .sg-api-trigger small{display:none}#${ROOT_ID} .sg-api-grid{grid-template-columns:1fr}#${ROOT_ID} .sg-api-grid .sg-field.full{grid-column:auto}}`;
-    style.textContent += `#${ROOT_ID} .sg-identity-record{margin-top:16px;padding:16px;border:1px solid color-mix(in srgb,var(--accent) 38%,var(--line));border-radius:var(--radius-card);background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 8%,var(--card)),var(--card));box-shadow:0 10px 26px color-mix(in srgb,var(--shadow) 20%,transparent)}#${ROOT_ID} .sg-identity-record-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}#${ROOT_ID} .sg-identity-record-head b,#${ROOT_ID} .sg-identity-record-head small{display:block}#${ROOT_ID} .sg-identity-record-head small{margin-top:2px;color:var(--muted);font-size:10px}#${ROOT_ID} .sg-entry-name{flex:0 0 auto;padding:4px 8px;border:1px solid color-mix(in srgb,var(--accent) 45%,var(--line));border-radius:999px;color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent);font:700 10px/1.4 monospace}#${ROOT_ID} .sg-identity-record dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0}#${ROOT_ID} .sg-identity-record dl>div{min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:color-mix(in srgb,var(--paper) 36%,transparent)}#${ROOT_ID} .sg-identity-record dt{color:var(--muted);font-size:9px;letter-spacing:.08em}#${ROOT_ID} .sg-identity-record dd{overflow:hidden;margin:2px 0 0;color:var(--ink);text-overflow:ellipsis;white-space:nowrap}#${ROOT_ID} .sg-identity-note{margin:10px 0 0;color:var(--muted);font-size:10px}@media(max-width:560px){#${ROOT_ID} .sg-identity-record-head{flex-direction:column}#${ROOT_ID} .sg-identity-record dl{grid-template-columns:1fr}}`;
+    style.textContent += `#${ROOT_ID} .sg-identity-record{margin-top:16px;padding:16px;border:1px solid color-mix(in srgb,var(--accent) 38%,var(--line));border-radius:var(--radius-card);background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 8%,var(--card)),var(--card));box-shadow:0 10px 26px color-mix(in srgb,var(--shadow) 20%,transparent)}#${ROOT_ID} .sg-identity-record-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}#${ROOT_ID} .sg-identity-record-head b,#${ROOT_ID} .sg-identity-record-head small{display:block}#${ROOT_ID} .sg-identity-record-head small{margin-top:2px;color:var(--muted);font-size:10px}#${ROOT_ID} .sg-entry-name{flex:0 0 auto;padding:4px 8px;border:1px solid color-mix(in srgb,var(--accent) 45%,var(--line));border-radius:999px;color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent);font:700 10px/1.4 monospace}#${ROOT_ID} .sg-identity-record dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0}#${ROOT_ID} .sg-identity-record dl>div{min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:color-mix(in srgb,var(--paper) 36%,transparent)}#${ROOT_ID} .sg-identity-record dt{color:var(--muted);font-size:9px;letter-spacing:.08em}#${ROOT_ID} .sg-identity-record dd{display:-webkit-box;overflow:hidden;margin:2px 0 0;color:var(--ink);white-space:normal;-webkit-box-orient:vertical;-webkit-line-clamp:2}#${ROOT_ID} .sg-identity-note{margin:10px 0 0;color:var(--muted);font-size:10px}@media(max-width:560px){#${ROOT_ID} .sg-identity-record-head{flex-direction:column}#${ROOT_ID} .sg-identity-record dl{grid-template-columns:1fr}}`;
+    style.textContent += `#${ROOT_ID} .sg-identity-ai{position:relative;margin:0 0 16px;padding:16px;border:1px solid color-mix(in srgb,var(--accent) 45%,var(--line));border-radius:var(--radius-card);background:radial-gradient(circle at 92% 12%,color-mix(in srgb,var(--accent) 18%,transparent),transparent 34%),color-mix(in srgb,var(--card) 88%,transparent);overflow:hidden}#${ROOT_ID} .sg-identity-ai:before{content:'AI';position:absolute;right:16px;top:5px;color:color-mix(in srgb,var(--accent) 14%,transparent);font:900 58px/1 Georgia,serif;pointer-events:none}#${ROOT_ID} .sg-identity-ai-head{position:relative;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}#${ROOT_ID} .sg-identity-ai-head b,#${ROOT_ID} .sg-identity-ai-head small{display:block}#${ROOT_ID} .sg-identity-ai-head small{margin-top:2px;color:var(--muted);font-size:10px}#${ROOT_ID} .sg-identity-ai textarea{position:relative;min-height:84px}#${ROOT_ID} .sg-identity-ai-actions{position:relative;display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:9px}#${ROOT_ID} .sg-identity-ai-actions small{color:var(--muted);font-size:9px}#${ROOT_ID} .sg-profile-detail{margin-top:16px}#${ROOT_ID} .sg-profile-detail summary{cursor:pointer;font-weight:700}#${ROOT_ID} .sg-profile-detail .sg-grid{margin-top:13px}@media(max-width:560px){#${ROOT_ID} .sg-identity-ai-head,#${ROOT_ID} .sg-identity-ai-actions{align-items:stretch;flex-direction:column}}`;
     mountDocument.head.appendChild(style);
   }
 
@@ -1329,12 +1412,21 @@ import { Schema } from '../schema/definition.js';
   function textarea(label, path, value, placeholder = '') {
     return `<label class="sg-field full"><span>${esc(label)}</span><textarea data-bind="${esc(path)}" placeholder="${esc(placeholder)}">${esc(value)}</textarea></label>`;
   }
+  function compactTextarea(label, path, value, placeholder = '') {
+    return `<label class="sg-field"><span>${esc(label)}</span><textarea data-bind="${esc(path)}" placeholder="${esc(placeholder)}">${esc(value)}</textarea></label>`;
+  }
   function listTextarea(label, path, values, placeholder = '') {
     return `<label class="sg-field full"><span>${esc(label)}</span><textarea data-list-bind="${esc(path)}" placeholder="${esc(placeholder)}">${esc((values || []).join('\n'))}</textarea></label>`;
   }
+  function identityPreviewItem(label, key, fallback = '未填写') {
+    return `<div><dt>${esc(label)}</dt><dd data-identity-preview="${esc(key)}">${esc(project.protagonist[key] || fallback)}</dd></div>`;
+  }
+  function identityRecord() {
+    return `<section class="sg-identity-record" aria-label="玩家身份世界书条目预览"><div class="sg-identity-record-head"><span><b>&lt;user&gt; 身份条目</b><small>安装 DLC 后会作为常驻世界书条目写入，供 AI 长期识别玩家的身份出发点。</small></span><code class="sg-entry-name">${esc(IDENTITY_ENTRY_NAME)}</code></div><dl>${identityPreviewItem('来历', 'origin')}${identityPreviewItem('公开身份', 'identity')}${identityPreviewItem('职业或官职', 'occupation', '无固定职业')}${identityPreviewItem('开局地点', 'location')}${identityPreviewItem('所属势力', 'faction', '无固定势力')}${identityPreviewItem('社会身份', 'socialStanding')}${identityPreviewItem('出身家庭', 'familyBackground')}${identityPreviewItem('关键经历', 'pastExperience')}${identityPreviewItem('能力知识', 'strengths')}${identityPreviewItem('长期资源', 'resources')}${identityPreviewItem('长期诉求', 'longTermPursuit')}${identityPreviewItem('身份边界', 'identityBoundaries')}</dl><p class="sg-identity-note">这里只保存稳定的身份背景；开局后的当前地点、职务、资源、目标和处境以正文及变量为准。</p></section>`;
+  }
   function stepOne() {
     const p = project.protagonist;
-    return `<section class="sg-page"><p class="sg-kicker">STEP ONE · YOUR PLACE IN HISTORY</p><h1>先回答：你是谁？</h1><p class="sg-lead">这里只确定长期身份与起点。具体冲突、目标和故事引子统一放在第三步，避免重复填写。</p><div class="sg-era ${eraError ? 'bad' : ''}"><b>时代锚点：崇祯七年七月</b><br><span>${eraError ? esc(eraError) : `已载入官方天下地图快照 · ${Object.keys(eraPreset?.变量?.天下地图?.地区态势 || {}).length} 个地区`}</span></div><div class="sg-grid">${field('DLC 名称', 'title', project.title, '例如：大同孤堡')}${field('来历', 'protagonist.origin', p.origin, '原生人物 / 魂穿者')}${field('身份', 'protagonist.identity', p.identity, '例如：大同镇军户')}${field('职业或官职', 'protagonist.occupation', p.occupation, '例如：边堡小旗')}${field('开局地点', 'protagonist.location', p.location, '例如：山西大同府某边堡')}${field('所属势力', 'protagonist.faction', p.faction, '没有可留空')}${field('故事气质', 'protagonist.tone', p.tone)}</div><section class="sg-identity-record" aria-label="主角身份世界书条目预览"><div class="sg-identity-record-head"><span><b>主角身份条目</b><small>安装 DLC 后会作为常驻世界书条目写入，供 AI 长期识别 &lt;user&gt; 的身份出发点。</small></span><code class="sg-entry-name">[scenario]主角身份</code></div><dl><div><dt>来历</dt><dd data-identity-preview="origin">${esc(p.origin || '未填写')}</dd></div><div><dt>开局身份</dt><dd data-identity-preview="identity">${esc(p.identity || '未填写')}</dd></div><div><dt>职业或官职</dt><dd data-identity-preview="occupation">${esc(p.occupation || '无固定职业')}</dd></div><div><dt>开局地点</dt><dd data-identity-preview="location">${esc(p.location || '未填写')}</dd></div><div><dt>所属势力</dt><dd data-identity-preview="faction">${esc(p.faction || '无固定势力')}</dd></div><div><dt>时代起点</dt><dd>崇祯七年七月</dd></div></dl><p class="sg-identity-note">这里只保存稳定的身份背景；开局后的当前地点、职务、目标和处境以正文及变量为准。</p></section><details class="sg-detail"><summary>日期和基础数值（可选）</summary><div class="sg-grid" style="margin-top:12px">${field('七月日期', 'date.day', project.date.day, '初五日')}${field('天气', 'date.weather', project.date.weather)}${field('小时', 'date.hour', project.date.hour, '', 'number')}${field('分钟', 'date.minute', project.date.minute, '', 'number')}${field('生命', 'stats.life', project.stats.life, '', 'number')}${field('武力', 'stats.martial', project.stats.martial, '', 'number')}${field('统率', 'stats.command', project.stats.command, '', 'number')}${field('智谋', 'stats.wisdom', project.stats.wisdom, '', 'number')}${field('政治', 'stats.politics', project.stats.politics, '', 'number')}${field('初始白银', 'stats.silver', project.stats.silver, '', 'number')}</div></details></section>`;
+    return `<section class="sg-page"><p class="sg-kicker">STEP ONE · YOUR PLACE IN HISTORY</p><h1>先回答：你是谁？</h1><p class="sg-lead">这里只确定长期身份与起点。具体冲突、目标和故事引子统一放在第三步，避免重复填写。</p><div class="sg-era ${eraError ? 'bad' : ''}"><b>时代锚点：崇祯七年七月</b><br><span>${eraError ? esc(eraError) : `已载入官方天下地图快照 · ${Object.keys(eraPreset?.变量?.天下地图?.地区态势 || {}).length} 个地区`}</span></div><section class="sg-identity-ai"><div class="sg-identity-ai-head"><span><b>用一段话描述想玩的身份</b><small>不必懂明代官制，写清大致身份、地区和想体验的方向即可。</small></span></div><textarea data-bind="protagonist.description" placeholder="例如：我想扮演辽东溃兵出身的小军官，懂火器和筑城，在大同边堡有几十名愿意追随的旧部，但没有正式靠山。">${esc(p.description)}</textarea><div class="sg-identity-ai-actions"><small>AI 只补空项；已有手填内容会作为硬约束保留，默认标题和“原生人物”可按描述调整。</small><button type="button" class="sg-btn primary" data-action="ai-protagonist" ${busy ? 'disabled' : ''}>${busy && aiTask === 'protagonist' ? '正在整理身份…' : 'AI 一键填表'}</button></div></section><div class="sg-grid">${field('DLC 名称', 'title', project.title, '例如：大同孤堡')}${field('来历', 'protagonist.origin', p.origin, '原生人物 / 魂穿者')}${field('公开身份', 'protagonist.identity', p.identity, '例如：大同镇军户')}${field('职业或官职', 'protagonist.occupation', p.occupation, '例如：边堡小旗')}${field('开局地点', 'protagonist.location', p.location, '例如：山西大同府某边堡')}${field('长期所属势力', 'protagonist.faction', p.faction, '没有固定势力可留空')}${field('故事气质', 'protagonist.tone', p.tone)}</div><details class="sg-detail sg-profile-detail" open><summary>长期身份档案</summary><div class="sg-grid">${compactTextarea('社会身份与地位', 'protagonist.socialStanding', p.socialStanding, '身份在官府、军中、宗族或地方社会里意味着什么。')}${compactTextarea('出身与家庭背景', 'protagonist.familyBackground', p.familyBackground, '家庭来源、宗族情况及稳定的亲缘背景。')}${compactTextarea('身份形成前的关键经历', 'protagonist.pastExperience', p.pastExperience, '只写塑造身份的既往经历，不写开局现场。')}${compactTextarea('稳定能力与知识', 'protagonist.strengths', p.strengths, '长期具备的技能、学识及明确短板。')}${compactTextarea('可长期支配或调用的资源', 'protagonist.resources', p.resources, '长期可依靠的人手、产业、凭据或物资，不写临时战利品。')}${compactTextarea('长期诉求', 'protagonist.longTermPursuit', p.longTermPursuit, '跨越多段剧情仍成立的方向，不是开场任务。')}${compactTextarea('身份边界与限制', 'protagonist.identityBoundaries', p.identityBoundaries, '明确权力、知识、财富和人脉的现实边界。')}</div></details>${identityRecord()}<details class="sg-detail"><summary>日期和基础数值（可选）</summary><div class="sg-grid" style="margin-top:12px">${field('七月日期', 'date.day', project.date.day, '初五日')}${field('天气', 'date.weather', project.date.weather)}${field('小时', 'date.hour', project.date.hour, '', 'number')}${field('分钟', 'date.minute', project.date.minute, '', 'number')}${field('生命', 'stats.life', project.stats.life, '', 'number')}${field('武力', 'stats.martial', project.stats.martial, '', 'number')}${field('统率', 'stats.command', project.stats.command, '', 'number')}${field('智谋', 'stats.wisdom', project.stats.wisdom, '', 'number')}${field('政治', 'stats.politics', project.stats.politics, '', 'number')}${field('初始白银', 'stats.silver', project.stats.silver, '', 'number')}</div></details></section>`;
   }
 
   function updateIdentityPreview() {
@@ -1344,11 +1436,29 @@ import { Schema } from '../schema/definition.js';
       occupation: '无固定职业',
       location: '未填写',
       faction: '无固定势力',
+      socialStanding: '未填写',
+      familyBackground: '未填写',
+      pastExperience: '未填写',
+      strengths: '未填写',
+      resources: '未填写',
+      longTermPursuit: '未填写',
+      identityBoundaries: '未填写',
     };
     for (const [key, emptyValue] of Object.entries(fallback)) {
       const target = root?.querySelector(`[data-identity-preview="${key}"]`);
       if (target) target.textContent = project.protagonist[key] || emptyValue;
     }
+  }
+  function syncProtagonistForm() {
+    const values = {
+      title: project.title,
+      ...Object.fromEntries(Object.entries(project.protagonist).map(([key, value]) => [`protagonist.${key}`, value])),
+    };
+    for (const [path, value] of Object.entries(values)) {
+      const input = root?.querySelector(`[data-bind="${path}"]`);
+      if (input) input.value = value ?? '';
+    }
+    updateIdentityPreview();
   }
 
   function characterKind(character) {
@@ -1657,7 +1767,7 @@ import { Schema } from '../schema/definition.js';
     } catch {
       /* shown below */
     }
-    return `<section class="sg-page"><p class="sg-kicker">STEP FOUR · SEAL THE DOCUMENT</p><h1>核对身份文牒</h1><p class="sg-lead">这里展示最终会写入角色卡的内容。安装后只能新建聊天使用，不支持中途切换。</p>${errors.length ? `<div class="sg-errors"><b>还不能生成：</b><br>${errors.map(error => `• ${esc(error)}`).join('<br>')}</div>` : ''}<div class="sg-preview"><article class="sg-card"><h3>${esc(project.title)}</h3><p>崇祯七年七月 · ${esc(project.protagonist.location)} · ${esc(project.protagonist.identity)}</p></article><article class="sg-card"><h3>写入世界书</h3><p><code>[scenario]主角身份</code> · <code>人物概览</code>；另将 ${selected.filter(character => character.lock !== 'history').length} 名原创人物的适配信息写回对应人设条目。</p></article><article class="sg-card"><h3>人物分配</h3><p>人物概览 ${selected.length} 人 · 已相识 ${known.length} 人 · 开场现场 ${scene.length} 人</p></article><article class="sg-card"><h3>第一幕</h3><p>${esc(project.opening.name)} · ${esc(project.opening.body.slice(0, 180) || '尚未填写正文')}${project.opening.body.length > 180 ? '……' : ''}</p></article><article class="sg-card"><h3>初始变量</h3><p>${project.initialization?.stale ? '需要回到第三步重新补全' : `固定 Schema 校验通过 · ${esc(project.initialization?.summary || '没有额外事实')}`}</p></article><article class="sg-card"><h3>时代与包体</h3><p>官方七月地图 ${Object.keys(eraPreset?.变量?.天下地图?.地区态势 || {}).length} 地区 · 预计 ${(bytes / 1024).toFixed(1)} KB / 1367 KB</p></article></div><input type="file" hidden accept="application/json,.json" data-project-file><div class="sg-actions" style="margin-top:18px"><button class="sg-btn" data-action="import-project">载入工程</button><button class="sg-btn" data-action="download-project">保存工程</button><button class="sg-btn" data-action="download-package" ${errors.length ? 'disabled' : ''}>下载 DLC</button><button class="sg-btn primary" data-action="install" ${errors.length ? 'disabled' : ''}>直接安装试玩</button><button class="sg-btn primary" data-action="publish" ${errors.length ? 'disabled' : ''}>带到创意工坊</button></div></section>`;
+    return `<section class="sg-page"><p class="sg-kicker">STEP FOUR · SEAL THE DOCUMENT</p><h1>核对身份文牒</h1><p class="sg-lead">这里展示最终会写入角色卡的内容。安装后只能新建聊天使用，不支持中途切换。</p>${errors.length ? `<div class="sg-errors"><b>还不能生成：</b><br>${errors.map(error => `• ${esc(error)}`).join('<br>')}</div>` : ''}<div class="sg-preview"><article class="sg-card"><h3>${esc(project.title)}</h3><p>崇祯七年七月 · ${esc(project.protagonist.location)} · ${esc(project.protagonist.identity)}</p></article><article class="sg-card"><h3>写入世界书</h3><p><code>${esc(IDENTITY_ENTRY_NAME)}</code> · <code>人物概览</code>；另将 ${selected.filter(character => character.lock !== 'history').length} 名原创人物的适配信息写回对应人设条目。</p></article><article class="sg-card"><h3>人物分配</h3><p>人物概览 ${selected.length} 人 · 已相识 ${known.length} 人 · 开场现场 ${scene.length} 人</p></article><article class="sg-card"><h3>第一幕</h3><p>${esc(project.opening.name)} · ${esc(project.opening.body.slice(0, 180) || '尚未填写正文')}${project.opening.body.length > 180 ? '……' : ''}</p></article><article class="sg-card"><h3>初始变量</h3><p>${project.initialization?.stale ? '需要回到第三步重新补全' : `固定 Schema 校验通过 · ${esc(project.initialization?.summary || '没有额外事实')}`}</p></article><article class="sg-card"><h3>时代与包体</h3><p>官方七月地图 ${Object.keys(eraPreset?.变量?.天下地图?.地区态势 || {}).length} 地区 · 预计 ${(bytes / 1024).toFixed(1)} KB / 1367 KB</p></article></div><input type="file" hidden accept="application/json,.json" data-project-file><div class="sg-actions" style="margin-top:18px"><button class="sg-btn" data-action="import-project">载入工程</button><button class="sg-btn" data-action="download-project">保存工程</button><button class="sg-btn" data-action="download-package" ${errors.length ? 'disabled' : ''}>下载 DLC</button><button class="sg-btn primary" data-action="install" ${errors.length ? 'disabled' : ''}>直接安装试玩</button><button class="sg-btn primary" data-action="publish" ${errors.length ? 'disabled' : ''}>带到创意工坊</button></div></section>`;
   }
 
   function render({ preserveScroll = false } = {}) {
@@ -1733,6 +1843,28 @@ import { Schema } from '../schema/definition.js';
       const label = root.querySelector('.sg-api-trigger small');
       if (label) label.textContent = apiSettingsLabel();
       notify('API 配置已保存，并与万象生成器同步。', 'success');
+      return;
+    }
+    if (action === 'ai-protagonist') {
+      aiTask = 'protagonist';
+      busy = true;
+      actionElement.disabled = true;
+      const previousText = actionElement.textContent;
+      actionElement.textContent = 'AI 正在整理身份…';
+      try {
+        await generateProtagonistProfile();
+        syncProtagonistForm();
+        notify('已根据描述补全 <user> 的长期身份档案。', 'success');
+      } catch (error) {
+        notify(`身份补全失败：${error?.message || error}`, 'error');
+      } finally {
+        aiTask = '';
+        busy = false;
+        if (actionElement.isConnected) {
+          actionElement.disabled = false;
+          actionElement.textContent = previousText;
+        }
+      }
       return;
     }
     if (action === 'close-reference-selector') {
@@ -2024,7 +2156,10 @@ import { Schema } from '../schema/definition.js';
     if (target.matches?.('[data-bind]')) {
       bindInput(target.dataset.bind, target.value);
       if (target.dataset.bind.startsWith('protagonist.')) updateIdentityPreview();
-      if (/^(protagonist|date|stats|characters|opening\.(hook|body|id|name))/.test(target.dataset.bind)) {
+      if (
+        target.dataset.bind !== 'protagonist.description' &&
+        /^(protagonist|date|stats|characters|opening\.(hook|body|id|name))/.test(target.dataset.bind)
+      ) {
         markInitializationStale();
         saveProject();
         const initStatus = root?.querySelector('[data-initvar-status]');

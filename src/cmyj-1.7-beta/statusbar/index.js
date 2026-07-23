@@ -1,7 +1,7 @@
 import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.7.0-beta.10';
+const STATUSBAR_VERSION = '1.7.0-beta.11';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
@@ -4645,6 +4645,12 @@ async function importScenarioWorkshopPackage(bundle) {
 
   const scenarioWorldbookNames = new Set((resource.worldbookEntries || []).map(entry => entry?.name).filter(Boolean));
   const getWorldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
+  const replaceWorldbook = globalThis.replaceWorldbook ?? window.parent?.replaceWorldbook;
+  const staleInstalledWorldbookNames = new Set(
+    previous?.id === resource.scenario.id
+      ? (previous.worldbookEntries || []).filter(name => name && !scenarioWorldbookNames.has(name))
+      : [],
+  );
   const worldbookEntryBackups = previous?.id
     ? Array.isArray(previous.worldbookEntryBackups)
       ? JSON.parse(JSON.stringify(previous.worldbookEntryBackups))
@@ -4671,6 +4677,18 @@ async function importScenarioWorkshopPackage(bundle) {
     ],
   };
   await importWorldbookWorkshopPackage(worldbookBundle);
+  if (
+    staleInstalledWorldbookNames.size &&
+    typeof getWorldbook === 'function' &&
+    typeof replaceWorldbook === 'function'
+  ) {
+    const current = (await getWorldbook(getWorldbookName())) || [];
+    await replaceWorldbook(
+      getWorldbookName(),
+      current.filter(entry => !staleInstalledWorldbookNames.has(entry?.name)),
+      { render: 'immediate' },
+    );
+  }
   if (previous?.characterAdaptationBackups?.length)
     await restoreScenarioCharacterAdaptations(previous.characterAdaptationBackups);
   const characterAdaptationBackups = await applyScenarioCharacterAdaptations(
