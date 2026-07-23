@@ -15,6 +15,15 @@ const betaScenarioSource = await readFile(
   path.join(root, 'src', 'cmyj-1.7-beta', 'scenario-generator', 'index.js'),
   'utf8',
 );
+const releaseLoader = await readFile(path.join(root, 'dist', 'cmyj-1.7', 'loader', 'index.js'), 'utf8');
+const releaseWorkshopSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'workshop', 'index.js'), 'utf8');
+const releaseStatusbarSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'statusbar', 'index.js'), 'utf8');
+const releaseScenarioSource = await readFile(
+  path.join(root, 'src', 'cmyj-1.7', 'scenario-generator', 'index.js'),
+  'utf8',
+);
+const releaseGeneratorSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'generator', 'index.js'), 'utf8');
+const releaseWorldEngineSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'world-engine', 'index.js'), 'utf8');
 const originalTongchengAdaptations = JSON.parse(
   await readFile(
     path.join(root, 'src', 'cmyj-1.7-beta', 'statusbar', 'original-tongcheng-character-adaptations.json'),
@@ -32,7 +41,9 @@ assert.match(workshopSource, /canming-workshop-installs/);
 assert.match(workshopSource, /data-repair-install/);
 assert.match(workshopSource, /repairInstalledWork/);
 assert.match(statusbarSource, /worldbookSignatures/);
-assert.match(statusbarSource, /STATUSBAR_VERSION = '1\.6\.1'/);
+assert.match(statusbarSource, /STATUSBAR_VERSION = '1\.6\.2'/);
+assert.match(workshopSource, /k==='scenario'\?'身份 DLC'/);
+assert.match(workshopSource, /身份 DLC 需要《残明余烬》1\.7/);
 
 assert.ok(betaLoader.length > 300_000, 'DLC 测试版共享加载器未包含完整脚本集');
 assert.match(betaLoader, /__CMYJRemoteScriptsV17Beta/);
@@ -144,4 +155,30 @@ for (const [name, anchor] of Object.entries(experienceAnchors)) {
   assert.match(JSON.stringify(adaptation), new RegExp(anchor), `${name} 缺少正式版关键经历「${anchor}」`);
 }
 
-console.info('稳定版与 DLC 测试版加载器、环境隔离及脚本模块均已接入。');
+assert.ok(releaseLoader.length > 300_000, '1.7 正式版共享加载器未包含完整脚本集');
+assert.match(releaseLoader, /__CMYJRemoteScriptsV17/);
+assert.doesNotMatch(releaseLoader, /__CMYJRemoteScriptsV17Beta/);
+assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.0'/);
+assert.match(releaseWorkshopSource, /const API='https:\/\/cm-yj-workshop\.canming-cloud\.workers\.dev'/);
+assert.match(releaseWorkshopSource, /TK='canming-workshop:token'/);
+assert.match(releaseWorkshopSource, /UK='canming-workshop:user'/);
+assert.match(releaseWorkshopSource, /INSTALLS_KEY='canming-workshop:installs-v1'/);
+assert.match(releaseStatusbarSource, /WORKSHOP_TOKEN_KEY = 'canming-workshop:token'/);
+assert.match(releaseStatusbarSource, /ACTIVE_DLC_STORAGE_PREFIX = 'canming-dlc:active-scenario-v1:'/);
+assert.match(releaseGeneratorSource, /STORAGE_KEY_API = 'canming-gen-api-cfg'/);
+assert.match(releaseScenarioSource, /API_SETTINGS_KEY = 'canming-gen-api-cfg'/);
+assert.match(releaseScenarioSource, /minBaseVersion: '1\.7\.0'/);
+assert.match(releaseWorldEngineSource, /VERSION = '1\.0\.0'/);
+for (const source of [
+  releaseLoader,
+  releaseWorkshopSource,
+  releaseStatusbarSource,
+  releaseScenarioSource,
+  releaseGeneratorSource,
+  releaseWorldEngineSource,
+]) {
+  assert.doesNotMatch(source, /cm-yj-workshop-staging|canming-workshop-staging|canming-dlc-staging|1\.7-beta/);
+  assert.doesNotMatch(source, /测试环境本地/);
+}
+
+console.info('1.6 兼容版、1.7 测试版与 1.7 正式版的加载器、环境隔离及脚本模块均已接入。');

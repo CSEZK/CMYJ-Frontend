@@ -5,7 +5,9 @@ globalThis.window = {};
 window.parent = window;
 globalThis.document = {};
 
-await import('../src/cmyj-1.7-beta/scenario-generator/index.js');
+const channel = process.argv[2] || 'cmyj-1.7-beta';
+if (!['cmyj-1.7-beta', 'cmyj-1.7'].includes(channel)) throw new Error(`不支持的开局生成器通道：${channel}`);
+await import(`../src/${channel}/scenario-generator/index.js`);
 
 const era = {
   格式: 'canming-era-preset',

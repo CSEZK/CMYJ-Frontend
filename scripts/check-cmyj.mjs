@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const channels = ['cmyj-1.6', 'cmyj-1.7-beta'];
+const channels = ['cmyj-1.6', 'cmyj-1.7-beta', 'cmyj-1.7'];
 const trees = channels.flatMap(channel => [path.join(root, 'src', channel), path.join(root, 'dist', channel)]);
 
 async function collect(directory) {
@@ -28,4 +28,4 @@ for (const tree of trees) {
   }
 }
 
-console.info('残明余烬稳定版与 DLC 测试版源码、构建产物均通过语法检查。');
+console.info('残明余烬 1.6、DLC 测试版与 1.7 正式版源码、构建产物均通过语法检查。');

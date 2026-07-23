@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist');
-const channels = ['cmyj-1.6', 'cmyj-1.7-beta'];
+const channels = ['cmyj-1.6', 'cmyj-1.7-beta', 'cmyj-1.7'];
 
 await Promise.all(channels.map(channel => access(path.join(dist, channel, 'loader', 'index.js'))));
 await mkdir(dist, { recursive: true });

@@ -1,14 +1,47 @@
+import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
+
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.6.2';
+const STATUSBAR_VERSION = '1.7.0';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
+const SCENARIO_GENERATOR_FILE = '开局生成器.js';
 const WORKSHOP_FILE = '云端创意工坊.js';
-const CORE_REMOTE_SCRIPT_NAMES = new Set(['变量结构', '旧档兼容', '云端创意工坊', '状态栏', '万象生成器', '变量修改器']);
+const CORE_REMOTE_SCRIPT_NAMES = new Set([
+  '变量结构',
+  '旧档兼容',
+  '云端创意工坊',
+  '状态栏',
+  '万象生成器',
+  '开局生成器',
+  '变量修改器',
+]);
 const PORTRAIT_LIBRARY_STORAGE_KEY = 'portrait_library_v1';
 const CHARACTER_PROFILE_STORAGE_KEY = 'character_profiles_v1';
+const ACTIVE_DLC_STORAGE_PREFIX = 'canming-dlc:active-scenario-v1:';
 const CHARACTER_PACKAGE_FORMAT = 'canming-character-package';
 const WORKSHOP_PACKAGE_FORMAT = 'canming-workshop-package';
+const STATUSBAR_ACTIONS_OWNER = {};
+const BUILTIN_TONGCHENG_OPENINGS = [
+  {
+    entry: '[scenario_builtin]桐城开局-街头魂穿',
+    id: 'tongcheng-rebirth',
+    name: '街头魂穿',
+    subtitle: '崇祯七年七月初五 · 桐城皂隶',
+  },
+  {
+    entry: '[scenario_builtin]桐城开局-云际寺夺银',
+    id: 'tongcheng-yunjisi',
+    name: '云际寺夺银',
+    subtitle: '崇祯七年八月 · 桐城皂隶',
+  },
+  {
+    entry: '[scenario_builtin]桐城开局-凤阳惊变',
+    id: 'tongcheng-fengyang',
+    name: '凤阳惊变',
+    subtitle: '崇祯八年正月 · 桐城快班班头',
+  },
+];
 
 const STATUSBAR_SCRIPT_SRC = document.currentScript?.src || '';
 const WORKSHOP_API = 'https://cm-yj-workshop.canming-cloud.workers.dev';
@@ -75,14 +108,20 @@ function showWorkshopNoticeBanner(onlyWhenNew = false, { force = false } = {}) {
     return Promise.resolve(null);
   }
   let token = '';
-  try { token = hostWindow.localStorage?.getItem(WORKSHOP_TOKEN_KEY) || localStorage.getItem(WORKSHOP_TOKEN_KEY) || ''; } catch { return; }
+  try {
+    token = hostWindow.localStorage?.getItem(WORKSHOP_TOKEN_KEY) || localStorage.getItem(WORKSHOP_TOKEN_KEY) || '';
+  } catch {
+    return;
+  }
   if (!token) {
     setWorkshopUnreadCount(runtime, 0);
     return Promise.resolve(null);
   }
   runtime.lastCheckedAt = now;
-  const request = fetch(`${WORKSHOP_API}/api/me/notifications?page=1&pageSize=20`, { headers: { authorization: `Bearer ${token}` } })
-    .then(response => response.ok ? response.json() : null)
+  const request = fetch(`${WORKSHOP_API}/api/me/notifications?page=1&pageSize=20`, {
+    headers: { authorization: `Bearer ${token}` },
+  })
+    .then(response => (response.ok ? response.json() : null))
     .then(data => {
       setWorkshopUnreadCount(runtime, data?.unread);
       const notice = data?.items?.find?.(item => !item?.is_read);
@@ -138,8 +177,16 @@ function startWorkshopNoticePolling() {
   clearWorkshopNoticePolling(runtime);
   hostWindow.clearInterval(hostWindow._canmingWorkshopNoticeTimer);
   if (window !== hostWindow) window.clearInterval(window._canmingWorkshopNoticeTimer);
-  try { delete hostWindow._canmingWorkshopNoticeTimer; } catch { hostWindow._canmingWorkshopNoticeTimer = null; }
-  try { delete window._canmingWorkshopNoticeTimer; } catch { window._canmingWorkshopNoticeTimer = null; }
+  try {
+    delete hostWindow._canmingWorkshopNoticeTimer;
+  } catch {
+    hostWindow._canmingWorkshopNoticeTimer = null;
+  }
+  try {
+    delete window._canmingWorkshopNoticeTimer;
+  } catch {
+    window._canmingWorkshopNoticeTimer = null;
+  }
 
   const checkAfterResume = () => {
     if (hostDocument.visibilityState === 'hidden') return;
@@ -204,22 +251,166 @@ const MARKET_CATEGORIES = [
   ['常用物资', '民生物料'],
 ];
 const MARKET_ITEMS = [
-  { id: 'rice', name: '稻米', category: '粮食', unit: '石', basePrice: 0.6, monthlyStock: 200, defaultQty: 10, desc: '南方常见主粮，可直接充作军粮或赈济用粮。' },
-  { id: 'wheat', name: '小麦', category: '粮食', unit: '石', basePrice: 0.55, monthlyStock: 150, defaultQty: 10, desc: '耐储耐运，磨面后便于行军携带。' },
-  { id: 'millet', name: '粟米', category: '粮食', unit: '石', basePrice: 0.5, monthlyStock: 150, defaultQty: 10, desc: '北地常用口粮，炊煮方便，适合作为营中军粮。' },
-  { id: 'mixed_grain', name: '杂粮', category: '粮食', unit: '石', basePrice: 0.4, monthlyStock: 200, defaultQty: 10, desc: '高粱、大麦与荞麦等混装粗粮，价廉而耐放。' },
-  { id: 'soybean', name: '黄豆', category: '粮食', unit: '石', basePrice: 0.65, monthlyStock: 80, defaultQty: 10, desc: '可煮食、磨浆或制成豆食，适合补充军粮。' },
-  { id: 'fodder', name: '草料', category: '粮食', unit: '石', basePrice: 0.2, monthlyStock: 200, defaultQty: 10, desc: '供牲畜与运输畜力消耗，不计入士卒口粮。' },
-  { id: 'spear', name: '长枪', category: '军需', unit: '杆', basePrice: 0.18, monthlyStock: 200, defaultQty: 10, desc: '木杆铁首的基础长兵，适合成批装备步卒。' },
-  { id: 'sabre_shield', name: '刀盾', category: '军需', unit: '套', basePrice: 0.6, monthlyStock: 100, defaultQty: 10, desc: '腰刀与藤木盾成套出售，供近战兵卒使用。' },
-  { id: 'bow_arrow', name: '弓箭', category: '军需', unit: '套', basePrice: 0.8, monthlyStock: 100, defaultQty: 10, desc: '步弓一张配常用箭矢，适合基础弓手操练。' },
-  { id: 'cotton_armour', name: '棉甲', category: '军需', unit: '领', basePrice: 1.5, monthlyStock: 100, defaultQty: 10, desc: '多层棉布缀甲片制成，价格与防护较为均衡。' },
-  { id: 'salt', name: '食盐', category: '常用物资', unit: '斤', basePrice: 0.035, monthlyStock: 500, defaultQty: 50, desc: '炊食、腌藏与赈济皆不可缺少的民生物资。' },
-  { id: 'cotton_cloth', name: '棉布', category: '常用物资', unit: '匹', basePrice: 0.25, monthlyStock: 100, defaultQty: 10, desc: '可制衣被、军服、包扎布与各类日常用品。' },
-  { id: 'pig_iron', name: '生铁', category: '常用物资', unit: '斤', basePrice: 0.03, monthlyStock: 1000, defaultQty: 50, desc: '打造农具、修补军械和作坊生产所需原料。' },
-  { id: 'timber', name: '木料', category: '常用物资', unit: '方', basePrice: 0.08, monthlyStock: 100, defaultQty: 10, desc: '用于修缮房舍、车辆、仓场与简易工事。' },
-  { id: 'medicine', name: '药材', category: '常用物资', unit: '份', basePrice: 0.12, monthlyStock: 100, defaultQty: 10, desc: '常用内外伤药材合包，适合药铺与军营储备。' },
-  { id: 'vegetable_oil', name: '菜油', category: '常用物资', unit: '斤', basePrice: 0.02, monthlyStock: 300, defaultQty: 20, desc: '可供炊食、照明及部分作坊生产使用。' },
+  {
+    id: 'rice',
+    name: '稻米',
+    category: '粮食',
+    unit: '石',
+    basePrice: 0.6,
+    monthlyStock: 200,
+    defaultQty: 10,
+    desc: '南方常见主粮，可直接充作军粮或赈济用粮。',
+  },
+  {
+    id: 'wheat',
+    name: '小麦',
+    category: '粮食',
+    unit: '石',
+    basePrice: 0.55,
+    monthlyStock: 150,
+    defaultQty: 10,
+    desc: '耐储耐运，磨面后便于行军携带。',
+  },
+  {
+    id: 'millet',
+    name: '粟米',
+    category: '粮食',
+    unit: '石',
+    basePrice: 0.5,
+    monthlyStock: 150,
+    defaultQty: 10,
+    desc: '北地常用口粮，炊煮方便，适合作为营中军粮。',
+  },
+  {
+    id: 'mixed_grain',
+    name: '杂粮',
+    category: '粮食',
+    unit: '石',
+    basePrice: 0.4,
+    monthlyStock: 200,
+    defaultQty: 10,
+    desc: '高粱、大麦与荞麦等混装粗粮，价廉而耐放。',
+  },
+  {
+    id: 'soybean',
+    name: '黄豆',
+    category: '粮食',
+    unit: '石',
+    basePrice: 0.65,
+    monthlyStock: 80,
+    defaultQty: 10,
+    desc: '可煮食、磨浆或制成豆食，适合补充军粮。',
+  },
+  {
+    id: 'fodder',
+    name: '草料',
+    category: '粮食',
+    unit: '石',
+    basePrice: 0.2,
+    monthlyStock: 200,
+    defaultQty: 10,
+    desc: '供牲畜与运输畜力消耗，不计入士卒口粮。',
+  },
+  {
+    id: 'spear',
+    name: '长枪',
+    category: '军需',
+    unit: '杆',
+    basePrice: 0.18,
+    monthlyStock: 200,
+    defaultQty: 10,
+    desc: '木杆铁首的基础长兵，适合成批装备步卒。',
+  },
+  {
+    id: 'sabre_shield',
+    name: '刀盾',
+    category: '军需',
+    unit: '套',
+    basePrice: 0.6,
+    monthlyStock: 100,
+    defaultQty: 10,
+    desc: '腰刀与藤木盾成套出售，供近战兵卒使用。',
+  },
+  {
+    id: 'bow_arrow',
+    name: '弓箭',
+    category: '军需',
+    unit: '套',
+    basePrice: 0.8,
+    monthlyStock: 100,
+    defaultQty: 10,
+    desc: '步弓一张配常用箭矢，适合基础弓手操练。',
+  },
+  {
+    id: 'cotton_armour',
+    name: '棉甲',
+    category: '军需',
+    unit: '领',
+    basePrice: 1.5,
+    monthlyStock: 100,
+    defaultQty: 10,
+    desc: '多层棉布缀甲片制成，价格与防护较为均衡。',
+  },
+  {
+    id: 'salt',
+    name: '食盐',
+    category: '常用物资',
+    unit: '斤',
+    basePrice: 0.035,
+    monthlyStock: 500,
+    defaultQty: 50,
+    desc: '炊食、腌藏与赈济皆不可缺少的民生物资。',
+  },
+  {
+    id: 'cotton_cloth',
+    name: '棉布',
+    category: '常用物资',
+    unit: '匹',
+    basePrice: 0.25,
+    monthlyStock: 100,
+    defaultQty: 10,
+    desc: '可制衣被、军服、包扎布与各类日常用品。',
+  },
+  {
+    id: 'pig_iron',
+    name: '生铁',
+    category: '常用物资',
+    unit: '斤',
+    basePrice: 0.03,
+    monthlyStock: 1000,
+    defaultQty: 50,
+    desc: '打造农具、修补军械和作坊生产所需原料。',
+  },
+  {
+    id: 'timber',
+    name: '木料',
+    category: '常用物资',
+    unit: '方',
+    basePrice: 0.08,
+    monthlyStock: 100,
+    defaultQty: 10,
+    desc: '用于修缮房舍、车辆、仓场与简易工事。',
+  },
+  {
+    id: 'medicine',
+    name: '药材',
+    category: '常用物资',
+    unit: '份',
+    basePrice: 0.12,
+    monthlyStock: 100,
+    defaultQty: 10,
+    desc: '常用内外伤药材合包，适合药铺与军营储备。',
+  },
+  {
+    id: 'vegetable_oil',
+    name: '菜油',
+    category: '常用物资',
+    unit: '斤',
+    basePrice: 0.02,
+    monthlyStock: 300,
+    defaultQty: 20,
+    desc: '可供炊食、照明及部分作坊生产使用。',
+  },
 ];
 
 function buildTabs() {
@@ -237,7 +428,7 @@ const DIFFICULTIES = [
 ];
 
 const PORTRAIT_DATA = {
-  '白瑶': {
+  白瑶: {
     日常: 'https://i.postimg.cc/gkgxQf0L/bai-yao-ri-chang.png',
     情趣: 'https://i.postimg.cc/RVS3PMvK/bai-yao-qing-qu.png',
     裸体: 'https://i.postimg.cc/KvGK9ZmT/bai-yao-luo-ti.png',
@@ -246,7 +437,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/m2LcdbT1/bai-yao-hou-ru.png',
     足交: 'https://i.postimg.cc/nc3Xg6LG/bai-yao-zu-jiao.png',
   },
-  '翠儿': {
+  翠儿: {
     日常: 'https://i.postimg.cc/sD4YX6g2/cui-er-ri-chang.png',
     情趣: 'https://i.postimg.cc/020YQWyy/cui-er-qing-qu.png',
     裸体: 'https://i.postimg.cc/yYymdQ87/cui-er-luo-ti.png',
@@ -255,7 +446,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/qMTcpV4z/cui-er-hou-ru.png',
     足交: 'https://i.postimg.cc/ncG4zRhC/cui-er-zu-jiao.png',
   },
-  '方子衿': {
+  方子衿: {
     日常: 'https://i.postimg.cc/5NsXTZ0W/fang-zi-jin-ri-chang.png',
     情趣: 'https://i.postimg.cc/xT6XhWdw/fang-zi-jin-qing-qu.png',
     裸体: 'https://i.postimg.cc/CLcRXWKQ/fang-zi-jin-luo-ti.png',
@@ -264,7 +455,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/tCBswLgk/fang-zi-jin-hou-ru.png',
     足交: 'https://i.postimg.cc/nhMXJ0s6/fang-zi-jin-zu-jiao.png',
   },
-  '林知夏': {
+  林知夏: {
     日常: 'https://i.postimg.cc/L63tXC8B/lin-zhi-xia-ri-chang.png',
     情趣: 'https://i.postimg.cc/7Yn36sZ3/lin-zhi-xia-qing-qu.png',
     裸体: 'https://i.postimg.cc/7Yn36sZT/lin-zhi-xia-luo-ti.png',
@@ -273,7 +464,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/bN9xJCwG/lin-zhi-xia-hou-ru.png',
     足交: 'https://i.postimg.cc/m2yYDXgw/lin-zhi-xia-zu-jiao.png',
   },
-  '洪天妹': {
+  洪天妹: {
     日常: 'https://i.postimg.cc/Pq4n8N1n/hong-tian-mei-ri-chang.png',
     情趣: 'https://i.postimg.cc/q7LHCgy9/hong-tian-mei-qing-qu.png',
     裸体: 'https://i.postimg.cc/KYNhg4Bs/hong-tian-mei-luo-ti.png',
@@ -282,7 +473,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/Pq4n8NYS/hong-tian-mei-hou-ru.png',
     口交: 'https://i.postimg.cc/Pq4n8NYV/hong-tian-mei-kou-jiao.png',
   },
-  '柳如是': {
+  柳如是: {
     日常: 'https://i.postimg.cc/RZ8NVKKV/liu-ru-shi-ri-chang.png',
     情趣: 'https://i.postimg.cc/zG3yr0bL/liu-ru-shi-qing-qu.png',
     裸体: 'https://i.postimg.cc/dVDhY4kw/liu-ru-shi-luo-ti.png',
@@ -291,7 +482,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/52jXVnYc/liu-ru-shi-hou-ru.png',
     足交: 'https://i.postimg.cc/Z5gCKppv/liu-ru-shi-zu-jiao.png',
   },
-  '柳氏': {
+  柳氏: {
     日常: 'https://i.postimg.cc/nhVvQ4X1/liu-shi-ri-chang.png',
     情趣: 'https://i.postimg.cc/DwfqbrSQ/liu-shi-qing-qu.png',
     裸体: 'https://i.postimg.cc/zXFCBtGx/liu-shi-luo-ti.png',
@@ -300,7 +491,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/DyPrZjw6/liu-shi-hou-ru.png',
     足交: 'https://i.postimg.cc/jSqzJHD3/liu-shi-zu-jiao.png',
   },
-  '陆挽星': {
+  陆挽星: {
     日常: 'https://i.postimg.cc/g0ZrwjHy/lu-wan-xing-ri-chang.png',
     情趣: 'https://i.postimg.cc/Sx5JNCCg/lu-wan-xing-qing-qu.png',
     裸体: 'https://i.postimg.cc/P5cPrYYw/lu-wan-xing-(luo-ti).png',
@@ -309,7 +500,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/9QSrFZZ1/lu-wan-xing-hou-ru.png',
     足交: 'https://i.postimg.cc/VNC5SvW7/lu-wan-xing-zu-jiao.png',
   },
-  '栖月': {
+  栖月: {
     日常: 'https://i.postimg.cc/x1jKbvkn/qi-yue-ri-chang.png',
     情趣: 'https://i.postimg.cc/Vk7X9Jtx/qi-yue-qing-qu.png',
     裸体: 'https://i.postimg.cc/qvB8CsN9/qi-yue-luo-ti.png',
@@ -318,7 +509,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/9QXGqdDn/qi-yue-hou-ru.png',
     足交: 'https://i.postimg.cc/fRHY7VdF/qi-yue-zu-jiao.png',
   },
-  '栖云': {
+  栖云: {
     日常: 'https://i.postimg.cc/YCXQNvgq/qi-yun-ri-chang.png',
     情趣: 'https://i.postimg.cc/T3knjKmT/qi-yun-qing-qu.png',
     裸体: 'https://i.postimg.cc/dVWGRhdY/qi-yun-luo-ti.png',
@@ -327,7 +518,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/fRHY7VXQ/qi-yun-hou-ru.png',
     足交: 'https://i.postimg.cc/NjNR8KTL/qi-yun-zu-jiao.png',
   },
-  '沈清晏': {
+  沈清晏: {
     日常: 'https://i.postimg.cc/9frZLct0/shen-qing-yan-ri-chang.png',
     情趣: 'https://i.postimg.cc/hGfT2Kbj/shen-qing-yan-qing-qu.png',
     裸体: 'https://i.postimg.cc/YCXQNvgm/shen-qing-yan-luo-ti.png',
@@ -336,7 +527,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/W190mdrD/shen-qing-yan-hou-ru.png',
     足交: 'https://i.postimg.cc/jjLPMRQN/shen-qing-yan-zu-jiao.png',
   },
-  '苏晚棠': {
+  苏晚棠: {
     日常: 'https://i.postimg.cc/fbpXF1Bj/su-wan-tang-ri-chang.png',
     情趣: 'https://i.postimg.cc/FK73ThgW/su-wan-tang-qing-qu.png',
     裸体: 'https://i.postimg.cc/YShYdtf6/su-wan-tang-luo-ti.png',
@@ -345,7 +536,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/QMH1fjkc/su-wan-tang-hou-ru.png',
     足交: 'https://i.postimg.cc/wBZJPn02/su-wan-tang-zu-jiao.png',
   },
-  '苏晚月': {
+  苏晚月: {
     日常: 'https://i.postimg.cc/qvVV7Ncy/su-wan-yue-ri-chang.png',
     情趣: 'https://i.postimg.cc/hvvgVNhN/su-wan-yue-qing-qu.png',
     裸体: 'https://i.postimg.cc/2ytYGTZS/su-wan-yue-luo-ti.png',
@@ -354,7 +545,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/Bv5q3xdg/su-wan-yue-hou-ru.png',
     足交: 'https://i.postimg.cc/C5BXh0zm/su-wan-yue-zu-jiao.png',
   },
-  '周皇后': {
+  周皇后: {
     日常: 'https://i.postimg.cc/02yQYcCr/zhou-huang-hou-ri-chang.png',
     情趣: 'https://i.postimg.cc/bNwJx3Ry/zhou-huang-hou-qing-qu.png',
     裸体: 'https://i.postimg.cc/MZDHfh1n/zhou-huang-hou-luo-ti.png',
@@ -363,7 +554,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/tR5JnLF7/zhou-huang-hou-hou-ru.png',
     足交: 'https://i.postimg.cc/X7YJfQgy/zhou-huang-hou-zu-jiao.png',
   },
-  '安娜': {
+  安娜: {
     日常: 'https://i.postimg.cc/nr0L8DnB/an-na-ri-chang.png',
     情趣: 'https://i.postimg.cc/rsQp6rq4/an-na-qing-qu.png',
     裸体: 'https://i.postimg.cc/4yB3C9XK/an-na-luo-ti.png',
@@ -372,7 +563,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/VvDNyCzv/an-na-hou-ru.png',
     足交: 'https://i.postimg.cc/MZDHfhVL/an-na-zu-jiao.png',
   },
-  '朱徽媞': {
+  朱徽媞: {
     日常: 'https://i.postimg.cc/BQn6TMCB/zhu-hui-shi-ri-chang.png',
     情趣: 'https://i.postimg.cc/wTjvX0k5/zhu-hui-shi-qing-qu.png',
     裸体: 'https://i.postimg.cc/8Pz5Rtbh/zhu-hui-shi-luo-ti.png',
@@ -381,7 +572,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/kXg4Qfy8/zhu-hui-shi-hou-ru.png',
     足交: 'https://i.postimg.cc/Ghm2FqjK/zhu-hui-shi-zu-jiao.png',
   },
-  '陈圆圆': {
+  陈圆圆: {
     日常: 'https://i.postimg.cc/XN8qBT9b/chen-yuan-yuan-ri-chang.png',
     情趣: 'https://i.postimg.cc/7PVhJpSv/chen-yuan-yuan-qing-qu.png',
     裸体: 'https://i.postimg.cc/Dfg04tLt/chen-yuan-yuan-luo-ti.png',
@@ -390,7 +581,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/T2915ZgF/chen-yuan-yuan-hou-ru.png',
     足交: 'https://i.postimg.cc/3rBN0P2N/chen-yuan-yuan-zu-jiao.png',
   },
-  '周氏': {
+  周氏: {
     日常: 'https://i.postimg.cc/qvtvYqSn/zhou-shi-ri-chang.png',
     情趣: 'https://i.postimg.cc/GmBmNtVs/zhou-shi-qing-qu.png',
     裸体: 'https://i.postimg.cc/Mpcp4HNv/zhou-shi-luo-ti.png',
@@ -399,7 +590,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/XYZYhqmX/zhou-shi-hou-ru.png',
     足交: 'https://i.postimg.cc/t4L4HyGY/zhou-shi-zu-jiao.png',
   },
-  '张嫣': {
+  张嫣: {
     日常: 'https://i.postimg.cc/nhsh5rgF/zhang-yan-ri-chang.png',
     情趣: 'https://i.postimg.cc/QdBdPCwr/zhang-yan-qing-qu.png',
     裸体: 'https://i.postimg.cc/Mpcp4HNJ/zhang-yan-luo-ti.png',
@@ -408,7 +599,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/x1k178hr/zhang-yan-hou-ru.png',
     足交: 'https://i.postimg.cc/jSWS92md/zhang-yan-zu-jiao.png',
   },
-  '杨尔铭': {
+  杨尔铭: {
     日常: 'https://i.postimg.cc/rFZpQxn8/yang-er-ming-ri-chang.png',
     情趣: 'https://i.postimg.cc/157zJwCy/yang-er-ming-qing-qu.png',
     裸体: 'https://i.postimg.cc/fTqbBm2s/yang-er-ming-luo-ti.png',
@@ -417,7 +608,7 @@ const PORTRAIT_DATA = {
     后入: 'https://i.postimg.cc/c4kJXw9S/yang-er-ming-hou-ru.png',
     足交: 'https://i.postimg.cc/g2w25j5C/yang-er-ming-zu-jiao.png',
   },
-  '温素弦': {
+  温素弦: {
     日常: 'https://i.postimg.cc/c4kJXwDp/wen-su-xian-ri-chang.png',
     情趣: 'https://i.postimg.cc/bNVv3k64/wen-su-xian-qing-qu.png',
     裸体: 'https://i.postimg.cc/m2pr8Cdn/wen-su-xian-luo-ti.png',
@@ -432,49 +623,209 @@ const SHOP_CATEGORIES = [
   {
     name: '闺中秘器',
     items: [
-      { id: 'mianling', name: '缅铃', price: 5, desc: '缅甸货，空心银铃铛，里头灌了水银。给你家姑娘塞进去，走一步它就在里头滚一圈，你能听见声儿算我输。她白天戴着出门，晚上回来腿都夹不紧了。洗干净塞进去就成，然后你就等着验收成果吧。' },
-      { id: 'jiaoxiansheng', name: '角先生', price: 4, desc: '羊脂白玉的，你摸摸。你不在家的时候它就是代你值班的，温水泡热了跟活人似的。别嫌它比你秀气，它又不会喘气不会说情话，抢不走你的人。' },
-      { id: 'guangdongrenshi', name: '广东人事', price: 4, desc: '广东老师傅用黄杨木削的，比角先生粗一圈。木头有个好处，捂热了跟真人皮肤似的，越用越润。用法跟角先生一样，温水泡软了给你家姑娘，她用了就知道什么叫广东功夫。' },
-      { id: 'shuangtoulong', name: '双头龙', price: 5, desc: '两头都做成龟首的样子，中间牛筋连着。她俩可以一起用，你自个儿也可以一边一个。别拿那种眼神看我，来我这儿买这个的客官多了去了，你又不是第一个。' },
-      { id: 'yintuozi', name: '银托子', price: 4, desc: '精银圆环，套你根部的。箍着它你就没那么快交代，多撑一会儿她念你的好。勒太紧废了我可不赔，后半辈子你就只能天天来我这进货角先生了。' },
-      { id: 'xuanyuhuan', name: '悬玉环', price: 3, desc: '羊脂白玉的细环，系着绛色丝绦。行房的时候挂在腰上或者帐钩上，托着你那话儿，让你悠着点发力。说白了就是个温柔的银托子，好看还管用。' },
-      { id: 'liuhuangquan', name: '硫磺圈', price: 3, desc: '硫磺跟蜂蜡合炼的，套你根部的。跟银托子不一样，这个遇热会微微发烫，酸酸胀胀的，让你想交代又交代不了。喜欢被吊着的感觉就试这个。' },
-      { id: 'lujiao', name: '鹿角', price: 3, desc: '嫩鹿茸尖磨的，天然微弯，触体温润。用法我说了怕你不好意思，反正你拿着看两秒就懂了。比角先生野，适合胆子大的姑娘。' },
-      { id: 'xiangyachou', name: '象牙筹', price: 2, desc: '象牙磨的细长薄片，两头圆圆的。按穴位用的，从脖子一路划到腿根，轻轻重重的，她痒你就对了。下手重了也能当小鞭子使，看你会不会玩。' },
-      { id: 'yuruyi', name: '玉如意', price: 3, desc: '巴掌大的袖珍青玉如意。挠背可惜了，换个地方挠，你家姑娘叫起来的时候你就知道这钱没白花。' },
-      { id: 'muma', name: '木马', price: 5, desc: '木头的马架子，不是让你骑上去打仗的。姑娘趴上去，手脚刚好够着四个角，后面的事你自己琢磨。做工扎实，承重够，翻不下来。家里有地方的客官才买，住客栈的就别想了。' },
-      { id: 'yushi', name: '玉势', price: 2, desc: '角先生的小妹，比角先生小两圈，手指粗细。好处是小，姑娘出门塞包袱里都没人知道。翡翠的羊脂玉的都有，先到先挑。你家那位刚入门的拿这个试，不吓人。' },
-      { id: 'fuchen', name: '拂尘', price: 2, desc: '白麈尾毛扎的拂尘，道士手里那个见过吧？我这把不扫灰，扫人。从后颈一路拂到腰眼，轻一下重一下，她痒得扭成麻花你负责。比手好用，够不着的地方它够得着。' },
-    ]
+      {
+        id: 'mianling',
+        name: '缅铃',
+        price: 5,
+        desc: '缅甸货，空心银铃铛，里头灌了水银。给你家姑娘塞进去，走一步它就在里头滚一圈，你能听见声儿算我输。她白天戴着出门，晚上回来腿都夹不紧了。洗干净塞进去就成，然后你就等着验收成果吧。',
+      },
+      {
+        id: 'jiaoxiansheng',
+        name: '角先生',
+        price: 4,
+        desc: '羊脂白玉的，你摸摸。你不在家的时候它就是代你值班的，温水泡热了跟活人似的。别嫌它比你秀气，它又不会喘气不会说情话，抢不走你的人。',
+      },
+      {
+        id: 'guangdongrenshi',
+        name: '广东人事',
+        price: 4,
+        desc: '广东老师傅用黄杨木削的，比角先生粗一圈。木头有个好处，捂热了跟真人皮肤似的，越用越润。用法跟角先生一样，温水泡软了给你家姑娘，她用了就知道什么叫广东功夫。',
+      },
+      {
+        id: 'shuangtoulong',
+        name: '双头龙',
+        price: 5,
+        desc: '两头都做成龟首的样子，中间牛筋连着。她俩可以一起用，你自个儿也可以一边一个。别拿那种眼神看我，来我这儿买这个的客官多了去了，你又不是第一个。',
+      },
+      {
+        id: 'yintuozi',
+        name: '银托子',
+        price: 4,
+        desc: '精银圆环，套你根部的。箍着它你就没那么快交代，多撑一会儿她念你的好。勒太紧废了我可不赔，后半辈子你就只能天天来我这进货角先生了。',
+      },
+      {
+        id: 'xuanyuhuan',
+        name: '悬玉环',
+        price: 3,
+        desc: '羊脂白玉的细环，系着绛色丝绦。行房的时候挂在腰上或者帐钩上，托着你那话儿，让你悠着点发力。说白了就是个温柔的银托子，好看还管用。',
+      },
+      {
+        id: 'liuhuangquan',
+        name: '硫磺圈',
+        price: 3,
+        desc: '硫磺跟蜂蜡合炼的，套你根部的。跟银托子不一样，这个遇热会微微发烫，酸酸胀胀的，让你想交代又交代不了。喜欢被吊着的感觉就试这个。',
+      },
+      {
+        id: 'lujiao',
+        name: '鹿角',
+        price: 3,
+        desc: '嫩鹿茸尖磨的，天然微弯，触体温润。用法我说了怕你不好意思，反正你拿着看两秒就懂了。比角先生野，适合胆子大的姑娘。',
+      },
+      {
+        id: 'xiangyachou',
+        name: '象牙筹',
+        price: 2,
+        desc: '象牙磨的细长薄片，两头圆圆的。按穴位用的，从脖子一路划到腿根，轻轻重重的，她痒你就对了。下手重了也能当小鞭子使，看你会不会玩。',
+      },
+      {
+        id: 'yuruyi',
+        name: '玉如意',
+        price: 3,
+        desc: '巴掌大的袖珍青玉如意。挠背可惜了，换个地方挠，你家姑娘叫起来的时候你就知道这钱没白花。',
+      },
+      {
+        id: 'muma',
+        name: '木马',
+        price: 5,
+        desc: '木头的马架子，不是让你骑上去打仗的。姑娘趴上去，手脚刚好够着四个角，后面的事你自己琢磨。做工扎实，承重够，翻不下来。家里有地方的客官才买，住客栈的就别想了。',
+      },
+      {
+        id: 'yushi',
+        name: '玉势',
+        price: 2,
+        desc: '角先生的小妹，比角先生小两圈，手指粗细。好处是小，姑娘出门塞包袱里都没人知道。翡翠的羊脂玉的都有，先到先挑。你家那位刚入门的拿这个试，不吓人。',
+      },
+      {
+        id: 'fuchen',
+        name: '拂尘',
+        price: 2,
+        desc: '白麈尾毛扎的拂尘，道士手里那个见过吧？我这把不扫灰，扫人。从后颈一路拂到腰眼，轻一下重一下，她痒得扭成麻花你负责。比手好用，够不着的地方它够得着。',
+      },
+    ],
   },
   {
     name: '炉中秘药',
     items: [
-      { id: 'nuanqingxiang', name: '暖情香', price: 2, desc: '西域方子，点上之后满屋子那个味儿。闻着闻着她身子就热了，她热了你还能凉着？掰一小块搁香炉里就行，别整块丢进去，又不是烧柴火。' },
-      { id: 'chanshengjiao', name: '颤声娇', price: 4, desc: '西域秘药，绿豆大一颗含舌头底下。含完以后浑身酥酥麻麻的，跟有蚂蚁爬似的，碰哪儿都痒，叫出来的声儿比平时好听十倍。名字就是这么来的。' },
-      { id: 'fengqigao', name: '封脐膏', price: 3, desc: '肉桂丁香蛇床子炼的膏药。贴肚脐下面三指，热力顺着丹田往下走，用不了一盏茶她就主动往你身上蹭了。贴之前先把那儿的毛刮一刮，不然撕的时候别怪我。' },
-      { id: 'cuizhenzi', name: '催阵子', price: 3, desc: '黄豆大的药丸子，扔浴桶里化开。人泡进去浑身发烫，皮肤敏感得跟换了个人似的。泡完出来不用我教了吧？床就在那儿，水温刚好，人更刚好。' },
-      { id: 'xiangsidan', name: '相思丹', price: 4, desc: '朱红小药丸，绿豆大。吃下去一刻钟面颊生晕心跳加速，她自个儿就湿了，跟喝了酒似的但又没醉。给她吃还是自己吃都行，俩人一起吃更好。' },
-      { id: 'shenxujiao', name: '慎恤胶', price: 5, desc: '汉朝古方，鹿茸海马紫河车炼的，龙眼大一颗。黄酒送服，提前半个时辰吃。一颗下去今晚你想停她未必让你停。赵飞燕用过，她后来吃太多了，你比她惜命，一颗够了。第二天腿软别怨我，反正也不是天天用。' },
-      { id: 'dongqingsan', name: '动情散', price: 2, desc: '粉末状的，跟胡椒面似的。洒在酒里茶里都行，无色无味，一杯下去一盏茶的功夫她就往你身上贴。比药丸子快，比膏药隐蔽，饭桌上就能把事办了。一包三回的量，省着用。' },
-      { id: 'zhuqinghua', name: '助情花', price: 3, desc: '西域干花瓣，搁炭火上焙，不用明火。焙出来的味儿跟桂花有点像又不太像，反正闻着闻着裤子就紧了。比暖情香省事，不用香炉，炭火盆就成。一包能焙三四回。' },
-      { id: 'huangudan', name: '换骨丹', price: 5, desc: '道门里传出来的方子，名字听着唬人，其实就是让你家姑娘浑身酥得跟没骨头似的。吃下去以后你碰哪儿她都软，轻轻摸一下跟过电一样。一颗管一个时辰，提前一刻钟吃。别跟慎恤胶一块儿用，药性叠了别来找我。' },
-    ]
+      {
+        id: 'nuanqingxiang',
+        name: '暖情香',
+        price: 2,
+        desc: '西域方子，点上之后满屋子那个味儿。闻着闻着她身子就热了，她热了你还能凉着？掰一小块搁香炉里就行，别整块丢进去，又不是烧柴火。',
+      },
+      {
+        id: 'chanshengjiao',
+        name: '颤声娇',
+        price: 4,
+        desc: '西域秘药，绿豆大一颗含舌头底下。含完以后浑身酥酥麻麻的，跟有蚂蚁爬似的，碰哪儿都痒，叫出来的声儿比平时好听十倍。名字就是这么来的。',
+      },
+      {
+        id: 'fengqigao',
+        name: '封脐膏',
+        price: 3,
+        desc: '肉桂丁香蛇床子炼的膏药。贴肚脐下面三指，热力顺着丹田往下走，用不了一盏茶她就主动往你身上蹭了。贴之前先把那儿的毛刮一刮，不然撕的时候别怪我。',
+      },
+      {
+        id: 'cuizhenzi',
+        name: '催阵子',
+        price: 3,
+        desc: '黄豆大的药丸子，扔浴桶里化开。人泡进去浑身发烫，皮肤敏感得跟换了个人似的。泡完出来不用我教了吧？床就在那儿，水温刚好，人更刚好。',
+      },
+      {
+        id: 'xiangsidan',
+        name: '相思丹',
+        price: 4,
+        desc: '朱红小药丸，绿豆大。吃下去一刻钟面颊生晕心跳加速，她自个儿就湿了，跟喝了酒似的但又没醉。给她吃还是自己吃都行，俩人一起吃更好。',
+      },
+      {
+        id: 'shenxujiao',
+        name: '慎恤胶',
+        price: 5,
+        desc: '汉朝古方，鹿茸海马紫河车炼的，龙眼大一颗。黄酒送服，提前半个时辰吃。一颗下去今晚你想停她未必让你停。赵飞燕用过，她后来吃太多了，你比她惜命，一颗够了。第二天腿软别怨我，反正也不是天天用。',
+      },
+      {
+        id: 'dongqingsan',
+        name: '动情散',
+        price: 2,
+        desc: '粉末状的，跟胡椒面似的。洒在酒里茶里都行，无色无味，一杯下去一盏茶的功夫她就往你身上贴。比药丸子快，比膏药隐蔽，饭桌上就能把事办了。一包三回的量，省着用。',
+      },
+      {
+        id: 'zhuqinghua',
+        name: '助情花',
+        price: 3,
+        desc: '西域干花瓣，搁炭火上焙，不用明火。焙出来的味儿跟桂花有点像又不太像，反正闻着闻着裤子就紧了。比暖情香省事，不用香炉，炭火盆就成。一包能焙三四回。',
+      },
+      {
+        id: 'huangudan',
+        name: '换骨丹',
+        price: 5,
+        desc: '道门里传出来的方子，名字听着唬人，其实就是让你家姑娘浑身酥得跟没骨头似的。吃下去以后你碰哪儿她都软，轻轻摸一下跟过电一样。一颗管一个时辰，提前一刻钟吃。别跟慎恤胶一块儿用，药性叠了别来找我。',
+      },
+    ],
   },
   {
     name: '枕边小物',
     items: [
-      { id: 'hehuanling', name: '合欢铃', price: 3, desc: '小铜铃一对，系她脚踝上。你一动她就响，她一动也响，叮叮当当的跟给你俩打拍子似的。系手腕也行系哪儿都行，反正响起来你就知道使对地方了。' },
-      { id: 'bailingdai', name: '白绫带', price: 1, desc: '素白丝绫编的，又软又韧。绑手腕、束腰、蒙眼睛，怎么用全看你想象力。便宜，但玩好了花样最多。新手先拿这个练手，玩不坏。' },
-      { id: 'qinxian', name: '琴弦', price: 2, desc: '蚕丝绞的细弦，柔韧里带点涩。系在腕上腰上，你一动它就收紧，你一停它就松，跟弹琴似的，越动弹越有滋味。系松点，别勒出印子。' },
-      { id: 'jinlianbei', name: '金莲杯', price: 2, desc: '绣花弓鞋一双，崭新的。斟了酒从鞋里嘬着喝，你一口她一口，喝着喝着嘴就凑一块儿去了。文人管这叫风雅，我说就是换个花样摸腿，别装了。' },
-      { id: 'chungongtuce', name: '春宫图册', price: 2, desc: '唐寅真迹摹本，十二页，纸墨精良。画得讲究，姿势含蓄但有味道。跟你家姑娘一块儿翻着看，翻两页她自己就脸红了，脸红了你手就可以动了。' },
-      { id: 'bihuotu', name: '避火图', price: 1, desc: '民间刻版秘戏图谱，三十六页不重样，该露的全露。跟你家姑娘翻到哪页学哪页，学完了告诉我哪页最好使。挂床头避火，避的是哪种火你心里有数。' },
-      { id: 'xiangsitao', name: '相思套', price: 2, desc: '羊肠做的，薄得跟蝉翅膀似的。两个用处，避妊是一个，另一个嘛你用了就知道了，比不用舒服。用前温水泡软了套上，别干套，干套疼。' },
-      { id: 'yubiaotao', name: '鱼膘套', price: 1, desc: '黄河大鲤鱼的鱼鳔做的，比羊肠还薄还透。就一个毛病，尺寸偏小。你要是天生本钱大就别试了，勒得慌。普通身板的客官买这个比相思套划算。' },
-      { id: 'hongsheng', name: '红绳', price: 2, desc: '朱红丝绳，比白绫带细，比琴弦软，专门绑手腕脚踝的。颜色衬得皮肤白，比白绫带多了层闺房秀色的意思。系法有讲究，系松了挣得开，系紧了勒印子，回头买了我教你几个结。' },
-      { id: 'xiyangsiva', name: '西洋丝袜', price: 3, desc: '西洋舶来货，蚕丝织的，薄得透肉。顺着腿往上一拉，那个紧那个滑，你家姑娘穿上以后你眼睛就不想往别处看了。两条腿缠你腰上的时候跟没穿差不多，又比没穿强。就一双，省着穿，勾了丝别来找我。' },
-    ]
+      {
+        id: 'hehuanling',
+        name: '合欢铃',
+        price: 3,
+        desc: '小铜铃一对，系她脚踝上。你一动她就响，她一动也响，叮叮当当的跟给你俩打拍子似的。系手腕也行系哪儿都行，反正响起来你就知道使对地方了。',
+      },
+      {
+        id: 'bailingdai',
+        name: '白绫带',
+        price: 1,
+        desc: '素白丝绫编的，又软又韧。绑手腕、束腰、蒙眼睛，怎么用全看你想象力。便宜，但玩好了花样最多。新手先拿这个练手，玩不坏。',
+      },
+      {
+        id: 'qinxian',
+        name: '琴弦',
+        price: 2,
+        desc: '蚕丝绞的细弦，柔韧里带点涩。系在腕上腰上，你一动它就收紧，你一停它就松，跟弹琴似的，越动弹越有滋味。系松点，别勒出印子。',
+      },
+      {
+        id: 'jinlianbei',
+        name: '金莲杯',
+        price: 2,
+        desc: '绣花弓鞋一双，崭新的。斟了酒从鞋里嘬着喝，你一口她一口，喝着喝着嘴就凑一块儿去了。文人管这叫风雅，我说就是换个花样摸腿，别装了。',
+      },
+      {
+        id: 'chungongtuce',
+        name: '春宫图册',
+        price: 2,
+        desc: '唐寅真迹摹本，十二页，纸墨精良。画得讲究，姿势含蓄但有味道。跟你家姑娘一块儿翻着看，翻两页她自己就脸红了，脸红了你手就可以动了。',
+      },
+      {
+        id: 'bihuotu',
+        name: '避火图',
+        price: 1,
+        desc: '民间刻版秘戏图谱，三十六页不重样，该露的全露。跟你家姑娘翻到哪页学哪页，学完了告诉我哪页最好使。挂床头避火，避的是哪种火你心里有数。',
+      },
+      {
+        id: 'xiangsitao',
+        name: '相思套',
+        price: 2,
+        desc: '羊肠做的，薄得跟蝉翅膀似的。两个用处，避妊是一个，另一个嘛你用了就知道了，比不用舒服。用前温水泡软了套上，别干套，干套疼。',
+      },
+      {
+        id: 'yubiaotao',
+        name: '鱼膘套',
+        price: 1,
+        desc: '黄河大鲤鱼的鱼鳔做的，比羊肠还薄还透。就一个毛病，尺寸偏小。你要是天生本钱大就别试了，勒得慌。普通身板的客官买这个比相思套划算。',
+      },
+      {
+        id: 'hongsheng',
+        name: '红绳',
+        price: 2,
+        desc: '朱红丝绳，比白绫带细，比琴弦软，专门绑手腕脚踝的。颜色衬得皮肤白，比白绫带多了层闺房秀色的意思。系法有讲究，系松了挣得开，系紧了勒印子，回头买了我教你几个结。',
+      },
+      {
+        id: 'xiyangsiva',
+        name: '西洋丝袜',
+        price: 3,
+        desc: '西洋舶来货，蚕丝织的，薄得透肉。顺着腿往上一拉，那个紧那个滑，你家姑娘穿上以后你眼睛就不想往别处看了。两条腿缠你腰上的时候跟没穿差不多，又比没穿强。就一双，省着穿，勾了丝别来找我。',
+      },
+    ],
   },
 ];
 
@@ -498,139 +849,75 @@ function getShopItems() {
 // ============================================================
 // 人物谱系图 —— 硬编码数据（不读变量，固定关系）
 // ============================================================
-const GRAPH_CATEGORIES = [
-  { name: '和济堂', color: '#c04040', symbol: 'roundRect' },
-  { name: '桐城县衙', color: '#5a8fb5', symbol: 'diamond' },
-  { name: '林记米铺', color: '#c49750', symbol: 'roundRect' },
-  { name: '沈记肉铺', color: '#b5654b', symbol: 'roundRect' },
-  { name: '桐城方氏', color: '#7b6a9a', symbol: 'roundRect' },
-  { name: '游方', color: '#6f8a67', symbol: 'triangle' },
-  { name: '紫禁城', color: '#c08040', symbol: 'diamond' },
-  { name: '江南', color: '#b46a81', symbol: 'circle' },
-  { name: '安庆白莲', color: '#8b8b8b', symbol: 'triangle' },
-  { name: '流寇', color: '#c05040', symbol: 'triangle' },
-];
+function activeDlcStorage() {
+  try {
+    return window.parent?.localStorage ?? localStorage;
+  } catch {
+    return localStorage;
+  }
+}
+function readActiveDlcContext(characterName) {
+  if (!characterName) return null;
+  try {
+    const storage = activeDlcStorage();
+    const key = `${ACTIVE_DLC_STORAGE_PREFIX}${characterName}`;
+    const legacyKey = `${STORAGE_PREFIX}${key}`;
+    const raw = storage.getItem(key) || storage.getItem(legacyKey);
+    if (!raw) return null;
+    const context = JSON.parse(raw);
+    if (context && typeof context === 'object' && !storage.getItem(key)) storage.setItem(key, raw);
+    return context && typeof context === 'object' ? context : null;
+  } catch {
+    return null;
+  }
+}
+function writeActiveDlcContext(characterName, context) {
+  const storage = activeDlcStorage();
+  const key = `${ACTIVE_DLC_STORAGE_PREFIX}${characterName}`;
+  storage.setItem(key, JSON.stringify(context));
+  storage.removeItem(`${STORAGE_PREFIX}${key}`);
+}
+function removeActiveDlcContext(characterName) {
+  try {
+    const storage = activeDlcStorage();
+    const key = `${ACTIVE_DLC_STORAGE_PREFIX}${characterName}`;
+    storage.removeItem(key);
+    storage.removeItem(`${STORAGE_PREFIX}${key}`);
+  } catch {
+    /* ignore */
+  }
+}
 
-const GRAPH_NODES = [
-  // ---- 主角 ----
-  { id: '主角', name: '主角', category: 10, symbolSize: 64, symbol: 'circle',
-    desc: '桐城县衙皂吏出身，现任快班班头，和济堂药铺少东家。' },
+let ACTIVE_DLC_CONTEXT = (() => {
+  const runtimeContext = globalThis.__CMYJ_DLC_CONTEXT_V1__;
+  if (runtimeContext && typeof runtimeContext === 'object') return runtimeContext;
+  try {
+    const getCurrentName = globalThis.getCurrentCharacterName ?? window.parent?.getCurrentCharacterName;
+    const characterName = typeof getCurrentName === 'function' ? getCurrentName() : '';
+    return readActiveDlcContext(characterName);
+  } catch {
+    return null;
+  }
+})();
+const DLC_RELATIONSHIP_GRAPH = ACTIVE_DLC_CONTEXT?.ui?.relationshipGraph;
 
-  // ---- 和济堂 (0) ----
-  { id: '苏晚棠', name: '苏晚棠', category: 0, symbolSize: 54,
-    desc: '和济堂药铺主母，主角生母。丈夫失踪一年有余，独自撑持家业。' },
-  { id: '苏晚月', name: '苏晚月', category: 0, symbolSize: 42,
-    desc: '苏晚棠之妹，守寡归家。曾在北边宣府幕府十年，见惯边镇风沙与人心算计。如今在和济堂帮衬杂务，素衣荆钗，看似温顺怯弱，实则入鞘之刀。' },
-  { id: '栖云', name: '栖云', category: 0, symbolSize: 36,
-    desc: '主角义妹，和双胞胎妹妹栖月五年前被苏晚棠收养。性子活泼。' },
-  { id: '栖月', name: '栖月', category: 0, symbolSize: 36,
-    desc: '主角义妹，和双胞胎姐姐栖云五年前被苏晚棠收养。性子温静。' },
-  { id: '赵砚', name: '赵砚', category: 0, symbolSize: 36,
-    desc: '主角养弟，十年前被苏晚棠收养。沉默寡言，做事踏实。' },
-  { id: '翠儿', name: '翠儿', category: 0, symbolSize: 30,
-    desc: '苏家内宅粗使丫鬟，签了死契。嘴碎心热，干活麻利。' },
-
-  // ---- 桐城县衙 (1) ----
-  { id: '杨尔铭', name: '杨尔铭', category: 1, symbolSize: 54,
-    desc: '桐城知县，四川叙州府筠连县人，崇祯七年甲戌科进士。主角的上司。' },
-  { id: '常彪', name: '常彪', category: 1, symbolSize: 46,
-    desc: '桐城县衙快班捕役，主角的结拜大哥。仗义莽直。' },
-  { id: '顾明远', name: '顾明远', category: 1, symbolSize: 42,
-    desc: '桐城落魄秀才，以替人写状子为生，主角的结拜三弟。嘴毒心细。' },
-
-  // ---- 林记米铺 (2) ----
-  { id: '林知夏', name: '林知夏', category: 2, symbolSize: 54,
-    desc: '林记米铺独女，主角自幼定下婚约的未婚妻。性情温善，爱读诗词。' },
-  { id: '周氏', name: '周氏（林母）', category: 2, symbolSize: 40,
-    desc: '林知夏之母，米铺实际当家人，主角的准丈母娘。精明泼辣，嘴上不饶人。' },
-
-  // ---- 沈记肉铺 (3) ----
-  { id: '沈大柱', name: '沈大柱', category: 3, symbolSize: 40,
-    desc: '桐城西街沈记肉铺老板，屠户。为人憨直。' },
-  { id: '柳氏', name: '柳氏', category: 3, symbolSize: 40,
-    desc: '沈记肉铺老板娘，昔日江南书香门第千金，家道中落后嫁入沈家。' },
-  { id: '沈清晏', name: '沈清晏', category: 3, symbolSize: 42,
-    desc: '沈大柱与柳氏独女，市井才女。性情清冷，写得一手好字。' },
-
-  // ---- 桐城方氏 (4) ----
-  { id: '方孔炤', name: '方孔炤', category: 4, symbolSize: 46,
-    desc: '都察院右佥都御史，现闲居桐城。方氏长房。' },
-  { id: '方以智', name: '方以智', category: 4, symbolSize: 42,
-    desc: '方孔炤长子，字密之，复社名士。' },
-  { id: '方子衿', name: '方子衿', category: 4, symbolSize: 42,
-    desc: '方孔炤之女，方以智之妹。沉迷算理格致，常着男装出入工坊。' },
-
-  // ---- 游方 (5) ----
-  { id: '陆挽星', name: '陆挽星', category: 5, symbolSize: 42,
-    desc: '北直隶游方女武师，剑法高明。携长剑独行南下，暂落脚桐城。' },
-
-  // ---- 紫禁城 (6) ----
-  { id: '周皇后', name: '周皇后', category: 6, symbolSize: 48,
-    desc: '崇祯皇帝朱由检的皇后，苏州人。入宫十年，节俭治内。' },
-  { id: '朱徽媞', name: '朱徽媞', category: 6, symbolSize: 40,
-    desc: '明光宗朱常洛之女，崇祯皇帝同父异母妹，封乐安公主。冷傲矜贵。' },
-  { id: '张嫣', name: '张嫣', category: 6, symbolSize: 36,
-    desc: '明熹宗朱由校遗孀，崇祯皇嫂，尊懿安皇后。居慈庆宫，不问政事。' },
-
-  // ---- 江南 (7) ----
-  { id: '柳如是', name: '柳如是', category: 7, symbolSize: 42,
-    desc: '本名杨爱，别号河东君。秦淮乐籍才女，常着男装出入复社雅集。诗才锋利，性情刚烈。' },
-  { id: '陈圆圆', name: '陈圆圆', category: 7, symbolSize: 42,
-    desc: '本名邢沅，苏州人。梨园女乐，色艺双绝。如一枚被各方势力凝视的明珠。' },
-  { id: '安娜', name: '安娜', category: 7, symbolSize: 36,
-    desc: '荷兰东印度公司高级商务员之女，随父居南京。金发碧眼，能写汉字能算账目。' },
-
-  // ---- 安庆白莲 (8) ----
-  { id: '白瑶', name: '白瑶', category: 8, symbolSize: 46,
-    desc: '安庆府白莲教女教首，教内称"白莲圣女"。天生白发，隐居幕后操控信众。' },
-
-  // ---- 流寇 (9) ----
-  { id: '温素弦', name: '温素弦', category: 9, symbolSize: 42,
-    desc: '陕西更夫之女，曾为流寇掳去的战利品，后靠心计与手腕爬到高迎祥部下属分营头目。' },
-];
-
-const GRAPH_LINKS = [
-  // ---- 主角辐射关系 ----
-  { source: '主角', target: '苏晚棠', label: '母子', lineStyle: { width: 3 } },
-  { source: '主角', target: '栖云', label: '义兄妹' },
-  { source: '主角', target: '栖月', label: '义兄妹' },
-  { source: '主角', target: '赵砚', label: '养兄弟' },
-  { source: '主角', target: '翠儿', label: '主仆', lineStyle: { type: 'dashed' } },
-  { source: '主角', target: '苏晚月', label: '姨甥', lineStyle: { type: 'dashed' } },
-  { source: '主角', target: '杨尔铭', label: '上下属', lineStyle: { width: 2, type: 'dashed' } },
-  { source: '主角', target: '常彪', label: '结拜大哥', lineStyle: { width: 3 } },
-  { source: '主角', target: '顾明远', label: '结拜三弟', lineStyle: { width: 3 } },
-  { source: '主角', target: '林知夏', label: '未婚夫妻', lineStyle: { width: 3, color: '#c04040' } },
-  { source: '主角', target: '周氏', label: '准丈母娘', lineStyle: { type: 'dashed' } },
-
-  // ---- 苏家内部 ----
-  { source: '苏晚棠', target: '栖云', label: '收养' },
-  { source: '苏晚棠', target: '栖月', label: '收养' },
-  { source: '苏晚棠', target: '赵砚', label: '收养' },
-  { source: '苏晚棠', target: '翠儿', label: '主仆', lineStyle: { type: 'dashed' } },
-  { source: '苏晚棠', target: '苏晚月', label: '姐妹', lineStyle: { width: 2, color: '#b46a81' } },
-  { source: '栖云', target: '栖月', label: '双胞胎', lineStyle: { width: 2, color: '#b46a81' } },
-
-  // ---- 沈家内部 ----
-  { source: '沈大柱', target: '柳氏', label: '夫妻', lineStyle: { width: 2, color: '#c04040' } },
-  { source: '沈大柱', target: '沈清晏', label: '父女' },
-  { source: '柳氏', target: '沈清晏', label: '母女' },
-
-  // ---- 林家内部 ----
-  { source: '周氏', target: '林知夏', label: '母女', lineStyle: { width: 2 } },
-
-  // ---- 方家内部 ----
-  { source: '方孔炤', target: '方以智', label: '父子' },
-  { source: '方孔炤', target: '方子衿', label: '父女' },
-  { source: '方以智', target: '方子衿', label: '兄妹' },
-
-  // ---- 紫禁城 ----
-  { source: '周皇后', target: '朱徽媞', label: '姑嫂', lineStyle: { type: 'dashed' } },
-  { source: '周皇后', target: '张嫣', label: '妯娌', lineStyle: { type: 'dashed' } },
-
-  // ---- 江南诸人（同处江南，互有关联） ----
-  { source: '柳如是', target: '陈圆圆', label: '相识', lineStyle: { type: 'dotted' } },
-];
+const GRAPH_CATEGORIES = Array.isArray(DLC_RELATIONSHIP_GRAPH?.categories)
+  ? DLC_RELATIONSHIP_GRAPH.categories
+  : [{ name: '未安装身份DLC', color: '#8b8178', symbol: 'circle' }];
+const GRAPH_NODES =
+  Array.isArray(DLC_RELATIONSHIP_GRAPH?.nodes) && DLC_RELATIONSHIP_GRAPH.nodes.length > 0
+    ? DLC_RELATIONSHIP_GRAPH.nodes
+    : [
+        {
+          id: '主角',
+          name: '主角',
+          category: 0,
+          symbolSize: 64,
+          symbol: 'circle',
+          desc: '尚未安装身份 DLC；主角身份、关系与开场均未定义。',
+        },
+      ];
+const GRAPH_LINKS = Array.isArray(DLC_RELATIONSHIP_GRAPH?.links) ? DLC_RELATIONSHIP_GRAPH.links : [];
 
 const STAT_DATA_SHELL = {
   世界运转: {},
@@ -698,21 +985,46 @@ function buildEastAsiaGeo() {
   if (!W || !W.features) return { type: 'FeatureCollection', features: [] };
   const TARGETS = new Set([
     // 直接匹配（一一对应）
-    '北直隶', '山东布政使司', '山西布政使司', '河南布政使司',
-    '陕西布政使司', '陕西行都司', '四川布政使司', '江西布政使司',
-    '浙江布政使司', '福建布政使司', '广东布政使司', '广西布政使司',
-    '云南布政使司', '贵州布政使司',
-    '辽东都司', '宁夏卫',
-    '莫卧儿帝国', '阿瑜陀耶王朝(暹罗)',
-    '不丹竺巴', '尼泊尔马拉王朝', '西属菲律宾', '马打蓝苏丹国',
-    '藏巴汗', '叶尔羌汗国', '和硕特部', '康区土司', '澜沧·真腊',
+    '北直隶',
+    '山东布政使司',
+    '山西布政使司',
+    '河南布政使司',
+    '陕西布政使司',
+    '陕西行都司',
+    '四川布政使司',
+    '江西布政使司',
+    '浙江布政使司',
+    '福建布政使司',
+    '广东布政使司',
+    '广西布政使司',
+    '云南布政使司',
+    '贵州布政使司',
+    '辽东都司',
+    '宁夏卫',
+    '莫卧儿帝国',
+    '阿瑜陀耶王朝(暹罗)',
+    '不丹竺巴',
+    '尼泊尔马拉王朝',
+    '西属菲律宾',
+    '马打蓝苏丹国',
+    '藏巴汗',
+    '叶尔羌汗国',
+    '和硕特部',
+    '康区土司',
+    '澜沧·真腊',
     // 合并用（一个残明区域 = 多个 GeoJSON 特征）
-    '建州女真(后金)', '野人女真诸部',
-    '蒙古察哈尔部', '蒙古土默特部', '朵颜三卫',
+    '建州女真(后金)',
+    '野人女真诸部',
+    '蒙古察哈尔部',
+    '蒙古土默特部',
+    '朵颜三卫',
     '喀尔喀蒙古',
-    '南直隶(江南)', '南直隶(江北)',
-    '湖广布政使司(北)', '湖广布政使司(南)',
-    '后黎朝·郑主', '阮主(广南)',
+    '南直隶(江南)',
+    '南直隶(江北)',
+    '湖广布政使司(北)',
+    '湖广布政使司(南)',
+    '后黎朝·郑主',
+    '阮主(广南)',
     '澳大利亚(原住民)',
   ]);
 
@@ -740,17 +1052,17 @@ function buildEastAsiaGeo() {
     features.push({
       type: 'Feature',
       properties: { name: '朝鲜' },
-      geometry: { type: 'MultiPolygon', coordinates: koreaCoords }
+      geometry: { type: 'MultiPolygon', coordinates: koreaCoords },
     });
     features.push({
       type: 'Feature',
       properties: { name: '东番' },
-      geometry: { type: 'MultiPolygon', coordinates: taiwanCoords }
+      geometry: { type: 'MultiPolygon', coordinates: taiwanCoords },
     });
     features.push({
       type: 'Feature',
       properties: { name: '日本' },
-      geometry: { type: 'MultiPolygon', coordinates: japanCoords }
+      geometry: { type: 'MultiPolygon', coordinates: japanCoords },
     });
   }
 
@@ -759,61 +1071,82 @@ function buildEastAsiaGeo() {
 
 /** 残明区域名 → GeoJSON 特征名（支持多对一合并） */
 const REGION_GEO_MAP = {
-  '后金': ['后金', '野人女真'],
-  '北直隶': ['北直隶'],
-  '山东': ['山东'],
-  '山西': ['山西'],
-  '河南': ['河南'],
-  '陕西': ['陕西'],
-  '四川': ['四川'],
-  '江西': ['江西'],
-  '浙江': ['浙江'],
-  '福建': ['福建'],
-  '广东': ['广东'],
-  '广西': ['广西'],
-  '云南': ['云南'],
-  '贵州': ['贵州'],
-  '辽东': ['辽东'],
-  '宁夏': ['宁夏'],
-  '日本': ['日本'],
-  '朝鲜': ['朝鲜'],
-  '东番': ['东番'],
-  '莫卧儿': ['莫卧儿'],
-  '暹罗': ['暹罗'],
-  '不丹': ['不丹'],
-  '尼婆罗': ['尼婆罗'],
-  '吕宋': ['吕宋'],
-  '爪哇': ['爪哇'],
-  '乌思藏': ['乌思藏'],
-  '西域': ['西域'],
-  '青海': ['青海'],
-  '漠南蒙古': ['察哈尔', '土默特', '朵颜三卫'],
-  '漠北': ['喀尔喀'],
-  '南直隶': ['南直隶'],
-  '湖广': ['湖广'],
-  '安南': ['郑主', '广南'],
-  '澳洲': ['澳洲'],
+  后金: ['后金', '野人女真'],
+  北直隶: ['北直隶'],
+  山东: ['山东'],
+  山西: ['山西'],
+  河南: ['河南'],
+  陕西: ['陕西'],
+  四川: ['四川'],
+  江西: ['江西'],
+  浙江: ['浙江'],
+  福建: ['福建'],
+  广东: ['广东'],
+  广西: ['广西'],
+  云南: ['云南'],
+  贵州: ['贵州'],
+  辽东: ['辽东'],
+  宁夏: ['宁夏'],
+  日本: ['日本'],
+  朝鲜: ['朝鲜'],
+  东番: ['东番'],
+  莫卧儿: ['莫卧儿'],
+  暹罗: ['暹罗'],
+  不丹: ['不丹'],
+  尼婆罗: ['尼婆罗'],
+  吕宋: ['吕宋'],
+  爪哇: ['爪哇'],
+  乌思藏: ['乌思藏'],
+  西域: ['西域'],
+  青海: ['青海'],
+  漠南蒙古: ['察哈尔', '土默特', '朵颜三卫'],
+  漠北: ['喀尔喀'],
+  南直隶: ['南直隶'],
+  湖广: ['湖广'],
+  安南: ['郑主', '广南'],
+  澳洲: ['澳洲'],
   '澜沧·真腊': ['澜沧'],
 };
 
 /** GeoJSON 原名 → 显示名（ECharts nameMap） */
 const GEO_NAME_DISPLAY = {
-  '山东布政使司': '山东', '山西布政使司': '山西', '河南布政使司': '河南',
-  '陕西布政使司': '陕西', '陕西行都司': '陕西',
-  '四川布政使司': '四川', '江西布政使司': '江西', '浙江布政使司': '浙江',
-  '福建布政使司': '福建', '广东布政使司': '广东', '广西布政使司': '广西',
-  '云南布政使司': '云南', '贵州布政使司': '贵州',
-  '湖广布政使司(北)': '湖广', '湖广布政使司(南)': '湖广',
-  '南直隶(江南)': '南直隶', '南直隶(江北)': '南直隶',
-  '辽东都司': '辽东', '宁夏卫': '宁夏', '莫卧儿帝国': '莫卧儿',
-  '阿瑜陀耶王朝(暹罗)': '暹罗', '不丹竺巴': '不丹',
-  '尼泊尔马拉王朝': '尼婆罗', '西属菲律宾': '吕宋',
-  '马打蓝苏丹国': '爪哇',
-  '藏巴汗': '乌思藏', '康区土司': '乌思藏', '叶尔羌汗国': '西域', '和硕特部': '青海',
-  '建州女真(后金)': '后金', '野人女真诸部': '野人女真',
-  '蒙古察哈尔部': '察哈尔', '蒙古土默特部': '土默特',
-  '朵颜三卫': '朵颜三卫', '喀尔喀蒙古': '喀尔喀',
-  '后黎朝·郑主': '郑主', '阮主(广南)': '广南',
+  山东布政使司: '山东',
+  山西布政使司: '山西',
+  河南布政使司: '河南',
+  陕西布政使司: '陕西',
+  陕西行都司: '陕西',
+  四川布政使司: '四川',
+  江西布政使司: '江西',
+  浙江布政使司: '浙江',
+  福建布政使司: '福建',
+  广东布政使司: '广东',
+  广西布政使司: '广西',
+  云南布政使司: '云南',
+  贵州布政使司: '贵州',
+  '湖广布政使司(北)': '湖广',
+  '湖广布政使司(南)': '湖广',
+  '南直隶(江南)': '南直隶',
+  '南直隶(江北)': '南直隶',
+  辽东都司: '辽东',
+  宁夏卫: '宁夏',
+  莫卧儿帝国: '莫卧儿',
+  '阿瑜陀耶王朝(暹罗)': '暹罗',
+  不丹竺巴: '不丹',
+  尼泊尔马拉王朝: '尼婆罗',
+  西属菲律宾: '吕宋',
+  马打蓝苏丹国: '爪哇',
+  藏巴汗: '乌思藏',
+  康区土司: '乌思藏',
+  叶尔羌汗国: '西域',
+  和硕特部: '青海',
+  '建州女真(后金)': '后金',
+  野人女真诸部: '野人女真',
+  蒙古察哈尔部: '察哈尔',
+  蒙古土默特部: '土默特',
+  朵颜三卫: '朵颜三卫',
+  喀尔喀蒙古: '喀尔喀',
+  '后黎朝·郑主': '郑主',
+  '阮主(广南)': '广南',
   '澳大利亚(原住民)': '澳洲',
   '澜沧·真腊': '澜沧',
 };
@@ -839,21 +1172,21 @@ function normalizeOwner(raw) {
 }
 
 const OWNERSHIP_COLORS_DAY = {
-  '主角方': '#c04040',
-  '明廷': '#b5654b',
-  '后金': '#4a6fa5',
-  '流寇': '#b8953a',
-  '地方中立': '#9c9c9c',
-  '未知': '#d4c5a0',
+  主角方: '#c04040',
+  明廷: '#b5654b',
+  后金: '#4a6fa5',
+  流寇: '#b8953a',
+  地方中立: '#9c9c9c',
+  未知: '#d4c5a0',
 };
 
 const OWNERSHIP_COLORS_NIGHT = {
-  '主角方': '#d4604a',
-  '明廷': '#bf6f55',
-  '后金': '#5a7fb5',
-  '流寇': '#c8a53a',
-  '地方中立': '#6a6a6a',
-  '未知': '#4a3828',
+  主角方: '#d4604a',
+  明廷: '#bf6f55',
+  后金: '#5a7fb5',
+  流寇: '#c8a53a',
+  地方中立: '#6a6a6a',
+  未知: '#4a3828',
 };
 
 /** 构建 ECharts series data：按 mapMode 分发 */
@@ -868,16 +1201,16 @@ function buildRegionData() {
 
 function buildStatusData(regions, isNight) {
   const colorMap = {
-    '稳定': isNight ? '#6b8a58' : '#7b9b6a',
-    '动荡': isNight ? '#b88944' : '#c49750',
-    '争夺中': isNight ? '#b0543e' : '#bf5b46',
-    '沦陷': isNight ? '#35231d' : '#43312a',
-    '失控': isNight ? '#564465' : '#6a507a',
+    稳定: isNight ? '#6b8a58' : '#7b9b6a',
+    动荡: isNight ? '#b88944' : '#c49750',
+    争夺中: isNight ? '#b0543e' : '#bf5b46',
+    沦陷: isNight ? '#35231d' : '#43312a',
+    失控: isNight ? '#564465' : '#6a507a',
   };
   const result = [];
   for (const [regionName, geoNames] of Object.entries(REGION_GEO_MAP)) {
     const status = regions[regionName]?.争夺状态;
-    const color = status ? colorMap[status] : (isNight ? '#4a3828' : '#d4c5a0');
+    const color = status ? colorMap[status] : isNight ? '#4a3828' : '#d4c5a0';
     for (const geoName of geoNames) {
       result.push({ name: geoName, itemStyle: { areaColor: color } });
     }
@@ -926,35 +1259,37 @@ function initEChartsMap() {
   const isNight = theme === 'night' || theme === 'star';
   echartsInstance.setOption({
     backgroundColor: 'transparent',
-    series: [{
-      type: 'map',
-      map: 'east_asia_1629',
-      roam: true,
-      center: echartsGeoState?.center || [110, 35],
-      zoom: echartsGeoState?.zoom || 1.5,
-      scaleLimit: { min: 1, max: 8 },
-      label: { show: false },
-      itemStyle: {
-        areaColor: isNight ? 'rgba(42,36,32,0.85)' : 'rgba(175,148,115,0.82)',
-        borderColor: isNight ? 'rgba(227,193,147,0.45)' : 'rgba(130,90,40,0.5)',
-        borderWidth: 1
-      },
-      emphasis: {
+    series: [
+      {
+        type: 'map',
+        map: 'east_asia_1629',
+        roam: true,
+        center: echartsGeoState?.center || [110, 35],
+        zoom: echartsGeoState?.zoom || 1.5,
+        scaleLimit: { min: 1, max: 8 },
+        label: { show: false },
         itemStyle: {
-          areaColor: isNight ? 'rgba(60,50,44,0.95)' : 'rgba(155,125,90,0.92)',
-          borderColor: isNight ? 'rgba(227,193,147,0.8)' : 'rgba(110,70,30,0.75)',
-          borderWidth: 1.5
+          areaColor: isNight ? 'rgba(42,36,32,0.85)' : 'rgba(175,148,115,0.82)',
+          borderColor: isNight ? 'rgba(227,193,147,0.45)' : 'rgba(130,90,40,0.5)',
+          borderWidth: 1,
         },
-        label: { show: true, color: '#e3c193', fontSize: 11 }
+        emphasis: {
+          itemStyle: {
+            areaColor: isNight ? 'rgba(60,50,44,0.95)' : 'rgba(155,125,90,0.92)',
+            borderColor: isNight ? 'rgba(227,193,147,0.8)' : 'rgba(110,70,30,0.75)',
+            borderWidth: 1.5,
+          },
+          label: { show: true, color: '#e3c193', fontSize: 11 },
+        },
+        data: regionData,
+        selectedMode: false,
       },
-      data: regionData,
-      selectedMode: false,
-    }]
+    ],
   });
   echartsGeoState = null;
 
   // 点击事件：直接更新详情面板，不触发全量 render（避免销毁地图 DOM）
-  echartsInstance.on('click', 'series', (params) => {
+  echartsInstance.on('click', 'series', params => {
     const geoName = params.name;
     const regionName = findRegionByGeoName(geoName);
     if (regionName) {
@@ -971,11 +1306,15 @@ function initEChartsMap() {
   // 策略：在 body 层拦截，仅当事件源在地图区域内时取消滚动
   if (!frameDocument.body._wheelFixed) {
     frameDocument.body._wheelFixed = true;
-    frameDocument.body.addEventListener('wheel', (e) => {
-      if (e.target.closest('#echarts-map-wrapper') && !e.target.closest('.cm-map-overlay-card')) {
-        e.preventDefault();
-      }
-    }, { passive: false });
+    frameDocument.body.addEventListener(
+      'wheel',
+      e => {
+        if (e.target.closest('#echarts-map-wrapper') && !e.target.closest('.cm-map-overlay-card')) {
+          e.preventDefault();
+        }
+      },
+      { passive: false },
+    );
   }
 }
 
@@ -990,12 +1329,10 @@ function getGraphCategoryName(node) {
 }
 
 function getGraphRelations(id) {
-  return GRAPH_LINKS
-    .filter(l => l.source === id || l.target === id)
-    .map(l => ({
-      label: l.label,
-      other: l.source === id ? l.target : l.source,
-    }));
+  return GRAPH_LINKS.filter(l => l.source === id || l.target === id).map(l => ({
+    label: l.label,
+    other: l.source === id ? l.target : l.source,
+  }));
 }
 
 function centerGraphMatches(matchedIds = null) {
@@ -1003,9 +1340,9 @@ function centerGraphMatches(matchedIds = null) {
   const q = graphSearch.trim();
   let ids = matchedIds;
   if (!ids) {
-    ids = GRAPH_NODES
-      .filter(n => q && (n.name.includes(q) || n.id.includes(q) || n.desc.includes(q) || getGraphCategoryName(n).includes(q)))
-      .map(n => n.id);
+    ids = GRAPH_NODES.filter(
+      n => q && (n.name.includes(q) || n.id.includes(q) || n.desc.includes(q) || getGraphCategoryName(n).includes(q)),
+    ).map(n => n.id);
   }
   if (!ids.length) return;
 
@@ -1080,8 +1417,16 @@ function applyGraphSearch() {
       label: { show: true, fontSize: 12, color: textColor, distance: 16, opacity: dim ? 0.35 : 1 },
       itemStyle: {
         opacity: dim ? 0.22 : 1,
-        borderWidth: isSelected || isSearchHit ? 3 : (n.id === '主角' ? 2 : 0),
-        borderColor: isSelected ? '#f2d27a' : isSearchHit ? '#fff1b0' : (n.id === '主角' ? (isNight ? '#e8d090' : '#8a6a20') : undefined),
+        borderWidth: isSelected || isSearchHit ? 3 : n.id === '主角' ? 2 : 0,
+        borderColor: isSelected
+          ? '#f2d27a'
+          : isSearchHit
+            ? '#fff1b0'
+            : n.id === '主角'
+              ? isNight
+                ? '#e8d090'
+                : '#8a6a20'
+              : undefined,
         color: n.id === '主角' ? '#d4a040' : undefined,
       },
     };
@@ -1097,7 +1442,7 @@ function applyGraphSearch() {
       label: { show: true, formatter: l.label, fontSize: 11, color: textColor, opacity: dim ? 0.08 : 1 },
       lineStyle: {
         color: l.lineStyle?.color || (isNight ? '#6a5a40' : '#c0b090'),
-        width: connected || searchConnected ? 3 : (l.lineStyle?.width || 1),
+        width: connected || searchConnected ? 3 : l.lineStyle?.width || 1,
         type: l.lineStyle?.type || 'solid',
         curveness: 0.15,
         opacity: dim ? 0.16 : 0.9,
@@ -1138,7 +1483,9 @@ function initGraphChart() {
 
   // 构建节点 lookup map
   const nodeMap = {};
-  GRAPH_NODES.forEach(n => { nodeMap[n.id] = n; });
+  GRAPH_NODES.forEach(n => {
+    nodeMap[n.id] = n;
+  });
 
   const nodes = GRAPH_NODES.map(n => ({
     id: n.id,
@@ -1148,7 +1495,8 @@ function initGraphChart() {
     symbol: n.symbol,
     desc: n.desc,
     label: { show: true, fontSize: 12, color: textColor, distance: 16 },
-    itemStyle: n.id === '主角' ? { color: '#d4a040', borderColor: isNight ? '#e8d090' : '#8a6a20', borderWidth: 2 } : {},
+    itemStyle:
+      n.id === '主角' ? { color: '#d4a040', borderColor: isNight ? '#e8d090' : '#8a6a20', borderWidth: 2 } : {},
   }));
 
   const links = GRAPH_LINKS.map(l => ({
@@ -1166,38 +1514,41 @@ function initGraphChart() {
   echartsGraphInstance.setOption({
     backgroundColor: bgColor,
     tooltip: {
-      formatter: params => params.dataType === 'node'
-        ? `<b>${params.name}</b><br/><span style="font-size:12px;color:#999">${nodeMap[params.data.id]?.desc || ''}</span>`
-        : (params.data.label?.formatter || params.data.label || ''),
+      formatter: params =>
+        params.dataType === 'node'
+          ? `<b>${params.name}</b><br/><span style="font-size:12px;color:#999">${nodeMap[params.data.id]?.desc || ''}</span>`
+          : params.data.label?.formatter || params.data.label || '',
       backgroundColor: isNight ? 'rgba(30,22,16,.94)' : 'rgba(255,248,226,.94)',
       borderColor: isNight ? 'rgba(180,140,100,.3)' : 'rgba(150,120,80,.3)',
       textStyle: { color: textColor },
     },
     legend: { show: false },
-    series: [{
-      type: 'graph',
-      layout: 'force',
-      roam: true,
-      draggable: true,
-      categories,
-      nodes,
-      links,
-      force: {
-        repulsion: 1200,
-        edgeLength: [120, 350],
-        gravity: 0.12,
-        friction: 0.6,
+    series: [
+      {
+        type: 'graph',
+        layout: 'force',
+        roam: true,
+        draggable: true,
+        categories,
+        nodes,
+        links,
+        force: {
+          repulsion: 1200,
+          edgeLength: [120, 350],
+          gravity: 0.12,
+          friction: 0.6,
+        },
+        emphasis: {
+          focus: 'adjacency',
+          lineStyle: { width: 3 },
+        },
+        scaleLimit: { min: 0.4, max: 4 },
+        lineStyle: {
+          color: 'source',
+          curveness: 0.15,
+        },
       },
-      emphasis: {
-        focus: 'adjacency',
-        lineStyle: { width: 3 },
-      },
-      scaleLimit: { min: 0.4, max: 4 },
-      lineStyle: {
-        color: 'source',
-        curveness: 0.15,
-      },
-    }],
+    ],
   });
 
   // 点击节点：更新右侧人物详情
@@ -1252,8 +1603,12 @@ function renderMap() {
           <button class="cm-map-mode-btn${mapMode === 'status' ? ' active' : ''}" data-action="map-mode" data-mode="status">态势</button>
           <button class="cm-map-mode-btn${mapMode === 'ownership' ? ' active' : ''}" data-action="map-mode" data-mode="ownership">归属</button>
         </span>
-        <span class="cm-map-legend">${(mapMode === 'ownership' ? OWNERSHIP_LEGEND : MAP_LEGEND).map(([color, label, nightColor]) => `
-          <span class="cm-map-legend-item"><i style="background:${isNight && nightColor ? nightColor : color}"></i>${html(label)}</span>`).join('')}</span>
+        <span class="cm-map-legend">${(mapMode === 'ownership' ? OWNERSHIP_LEGEND : MAP_LEGEND)
+          .map(
+            ([color, label, nightColor]) => `
+          <span class="cm-map-legend-item"><i style="background:${isNight && nightColor ? nightColor : color}"></i>${html(label)}</span>`,
+          )
+          .join('')}</span>
       </div>
       <div id="echarts-map-wrapper">
         <div id="echarts-map"></div>
@@ -1280,15 +1635,23 @@ function renderMapDetail() {
           ${meta('争夺状态', region.争夺状态 || '未载')}
         </div>
         <p>${html(region.最近大事 || '暂无最近大事。')}</p>
-        ${entries(powers).length ? `
+        ${
+          entries(powers).length
+            ? `
           <h4>主要势力</h4>
-          <div class="cm-map-powers">${entries(powers).map(([name, power]) => `
+          <div class="cm-map-powers">${entries(powers)
+            .map(
+              ([name, power]) => `
             <div class="cm-map-power">
               <div class="cm-meta"><span>${html(name)}</span><b>影响力 ${power.影响力 ?? 0}</b></div>
               <div class="cm-bar"><i class="mid" style="width:${clamp(power.影响力 ?? 0, 0, 100)}%"></i></div>
               <p class="cm-line">${html(power.军事存在 || '军事存在未知')}</p>
               <p class="cm-heart">${html(power.描述 || '暂无描述')}</p>
-            </div>`).join('')}</div>` : ''}
+            </div>`,
+            )
+            .join('')}</div>`
+            : ''
+        }
         ${region.军事态势 ? `<p><small>军事态势：${html(region.军事态势)}</small></p>` : ''}
         ${region.经济态势 ? `<p><small>经济态势：${html(region.经济态势)}</small></p>` : ''}
       </div>
@@ -1308,8 +1671,12 @@ function renderGraph() {
         </label>
         <button class="cm-mini-action" data-action="graph-search">搜索</button>
       </div>
-      <div class="cm-graph-legend">${legendNames.map((name, i) => `
-        <span class="cm-graph-legend-item"><i style="background:${legendColorsAll[i]}"></i>${html(name)}</span>`).join('')}</span>
+      <div class="cm-graph-legend">${legendNames
+        .map(
+          (name, i) => `
+        <span class="cm-graph-legend-item"><i style="background:${legendColorsAll[i]}"></i>${html(name)}</span>`,
+        )
+        .join('')}</span>
       </div>
       <div class="cm-graph-stage">
         <div id="echarts-graph-wrapper">
@@ -1331,12 +1698,20 @@ function renderGraphDetail() {
       <h3>${html(node.name)}</h3>
       <div class="cm-graph-detail-cat">${html(category)}</div>
       <p class="cm-heart">${html(node.desc || '暂无记载。')}</p>
-      ${relations.length ? `
+      ${
+        relations.length
+          ? `
         <h4>关联人物</h4>
-        <div class="cm-graph-relations">${relations.map(r => `
+        <div class="cm-graph-relations">${relations
+          .map(
+            r => `
           <button class="cm-graph-relation" data-action="graph-select" data-node-id="${html(r.other)}">
             <b>${html(r.other)}</b><span>${html(r.label)}</span>
-          </button>`).join('')}</div>` : ''}
+          </button>`,
+          )
+          .join('')}</div>`
+          : ''
+      }
     </div>`;
 }
 
@@ -1408,7 +1783,16 @@ function isPortraitUrl(value) {
 function createDefaultPortraitLibrary() {
   const entries = {};
   for (const [name, portraits] of Object.entries(PORTRAIT_DATA)) {
-    entries[name] = { name, aliases: [], title: '内置角色', summary: '', enabled: true, gallery: 'beauties', source: 'builtin', portraits: { ...portraits } };
+    entries[name] = {
+      name,
+      aliases: [],
+      title: '内置角色',
+      summary: '',
+      enabled: false,
+      gallery: 'beauties',
+      source: 'builtin',
+      portraits: { ...portraits },
+    };
   }
   return { version: 1, entries };
 }
@@ -1439,19 +1823,82 @@ function normalizePortraitLibrary(library) {
   return changed;
 }
 
+function applyActiveDlcPortraits(library, context = ACTIVE_DLC_CONTEXT) {
+  const profiles = Array.isArray(context?.portraitProfiles) ? context.portraitProfiles : [];
+  const scenarioPortraitNames = new Set(
+    profiles
+      .filter(profile => profile?.portraits && typeof profile.portraits === 'object')
+      .map(profile => profile.name),
+  );
+  let changed = false;
+  for (const [name, portraits] of Object.entries(PORTRAIT_DATA)) {
+    const entry = library.entries[name] || {
+      name,
+      aliases: [],
+      title: '内置角色',
+      summary: '',
+      gallery: 'beauties',
+      source: 'builtin',
+      portraits: { ...portraits },
+    };
+    const enabled = true;
+    if (!library.entries[name] || entry.enabled !== enabled) changed = true;
+    entry.enabled = enabled;
+    if (entry.source !== 'custom') entry.source = 'builtin';
+    library.entries[name] = entry;
+  }
+  for (const [name, entry] of Object.entries(library.entries)) {
+    if (entry?.source === 'scenario' && !scenarioPortraitNames.has(name)) {
+      delete library.entries[name];
+      changed = true;
+    }
+  }
+  for (const profile of profiles) {
+    if (!profile?.name || !profile.portraits || typeof profile.portraits !== 'object') continue;
+    const previous = library.entries[profile.name] || {};
+    const next = {
+      ...previous,
+      name: profile.name,
+      aliases: Array.isArray(profile.aliases) ? profile.aliases : [],
+      title: profile.title || '',
+      summary: profile.summary || '',
+      enabled: true,
+      gallery: normalizePortraitGallery(profile.gallery, 'scenario'),
+      source: Object.hasOwn(PORTRAIT_DATA, profile.name) ? 'builtin' : 'scenario',
+      scenarioId: context?.id || '',
+      worldbookEntries: Array.isArray(profile.worldbookEntries) ? profile.worldbookEntries : [],
+      portraits: { ...profile.portraits },
+    };
+    if (JSON.stringify(previous) !== JSON.stringify(next)) changed = true;
+    library.entries[profile.name] = next;
+  }
+  return changed;
+}
+
 function getPortraitLibrary() {
   const stored = readJsonStorage(PORTRAIT_LIBRARY_STORAGE_KEY, null);
   if (stored?.version === 1 && stored.entries && typeof stored.entries === 'object') {
     let changed = normalizePortraitLibrary(stored);
     for (const [name, portraits] of Object.entries(PORTRAIT_DATA)) {
       if (stored.entries[name]) continue;
-      stored.entries[name] = { name, aliases: [], title: '内置角色', summary: '', enabled: true, gallery: 'beauties', source: 'builtin', portraits: { ...portraits } };
+      stored.entries[name] = {
+        name,
+        aliases: [],
+        title: '内置角色',
+        summary: '',
+        enabled: false,
+        gallery: 'beauties',
+        source: 'builtin',
+        portraits: { ...portraits },
+      };
       changed = true;
     }
+    changed = applyActiveDlcPortraits(stored) || changed;
     if (changed) saveStorage(PORTRAIT_LIBRARY_STORAGE_KEY, JSON.stringify(stored));
     return stored;
   }
   const library = createDefaultPortraitLibrary();
+  applyActiveDlcPortraits(library);
   saveStorage(PORTRAIT_LIBRARY_STORAGE_KEY, JSON.stringify(library));
   return library;
 }
@@ -1466,9 +1913,10 @@ function getPortraitEntries() {
   return getPortraitLibrary().entries;
 }
 
-function getPortraitData() {
+function collectPortraitData({ includeDisabled = false } = {}) {
   const data = {};
   for (const [name, entry] of Object.entries(getPortraitEntries())) {
+    if (!includeDisabled && entry?.enabled === false) continue;
     if (!entry?.portraits || typeof entry.portraits !== 'object') continue;
     const portraits = Object.fromEntries(Object.entries(entry.portraits).filter(([, source]) => isPortraitUrl(source)));
     if (!Object.keys(portraits).length) continue;
@@ -1478,6 +1926,14 @@ function getPortraitData() {
     }
   }
   return data;
+}
+
+function getPortraitData() {
+  return collectPortraitData();
+}
+
+function getAllPortraitData() {
+  return collectPortraitData({ includeDisabled: true });
 }
 
 function get(source, path, fallback = '') {
@@ -1542,10 +1998,12 @@ function getMergedLatestVariables(mvu) {
 }
 
 function sumMoneyRecord(record, filter = null) {
-  return Math.round(entries(record).reduce((sum, [key, item]) => {
-    if (filter && !filter(key, item)) return sum;
-    return sum + number(item?.银两, 0);
-  }, 0));
+  return Math.round(
+    entries(record).reduce((sum, [key, item]) => {
+      if (filter && !filter(key, item)) return sum;
+      return sum + number(item?.银两, 0);
+    }, 0),
+  );
 }
 
 function reconcileEconomy(data) {
@@ -1609,7 +2067,9 @@ function ensureMarketState(data, currentYM = '') {
   } else {
     for (const item of MARKET_ITEMS) {
       if (market._剩余库存[item.id] == null) market._剩余库存[item.id] = item.monthlyStock;
-      market._剩余库存[item.id] = Math.round(clamp(number(market._剩余库存[item.id], item.monthlyStock), 0, item.monthlyStock));
+      market._剩余库存[item.id] = Math.round(
+        clamp(number(market._剩余库存[item.id], item.monthlyStock), 0, item.monthlyStock),
+      );
     }
     if (currentYM && !market._库存月份) market._库存月份 = currentYM;
   }
@@ -1850,7 +2310,15 @@ function doSettlementInPlace(variables, options = {}) {
   }
 
   // 军粮 & 惩罚：仅自动结算
-  let grainResult = { required: 0, consumed: 0, grainConsumed: 0, silverSpent: 0, silverCovered: 0, shortage: 0, ratio: 1 };
+  let grainResult = {
+    required: 0,
+    consumed: 0,
+    grainConsumed: 0,
+    silverSpent: 0,
+    silverCovered: 0,
+    shortage: 0,
+    ratio: 1,
+  };
   let supplyEffect = { moraleDelta: 0, logisticsDelta: 0, affected: 0 };
   if (applyArmy && armySupply && armySupply.grain > 0) {
     grainResult = consumeArmyGrain(data, armySupply.grain);
@@ -1935,8 +2403,12 @@ async function manualSettle() {
     lastError = '';
     lastRefreshAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
     if (currentYM) saveStorage('last_settled_ym', currentYM);
-    const armyHint = result?.armyExpense ? ` · 本月养军预估 ${result.armyExpense} 两 / ${result.grain?.required || 0} 石（跨月时自动扣除）` : '';
-    const detail = result ? `流水轧差 ${result.totalTransfer >= 0 ? '+' : ''}${result.totalTransfer} 两${armyHint}` : '';
+    const armyHint = result?.armyExpense
+      ? ` · 本月养军预估 ${result.armyExpense} 两 / ${result.grain?.required || 0} 石（跨月时自动扣除）`
+      : '';
+    const detail = result
+      ? `流水轧差 ${result.totalTransfer >= 0 ? '+' : ''}${result.totalTransfer} 两${armyHint}`
+      : '';
     showToast(`✓ 月度结算完成${detail ? '（' + detail + '）' : ''}`, 'ok');
   } catch (error) {
     showToast(`✗ 结算失败：${error?.message || '未知错误'}`, 'err');
@@ -1949,13 +2421,16 @@ function computeShichen(hour, minute) {
   const NAMES = ['子时', '丑时', '寅时', '卯时', '辰时', '巳时', '午时', '未时', '申时', '酉时', '戌时', '亥时'];
   // 每个时辰2小时：子=23/0, 丑=1/2, 寅=3/4, ...
   let idx;
-  if (hour === 23 || hour === 0) { idx = 0; }
-  else { idx = Math.floor((hour + 1) / 2); }
+  if (hour === 23 || hour === 0) {
+    idx = 0;
+  } else {
+    idx = Math.floor((hour + 1) / 2);
+  }
   const 时辰 = NAMES[idx];
 
   // 每时辰120分钟，分八刻
-  const isFirstHour = (hour === 23) || (hour % 2 === 1);
-  const posIn120 = isFirstHour ? minute : (60 + minute);
+  const isFirstHour = hour === 23 || hour % 2 === 1;
+  const posIn120 = isFirstHour ? minute : 60 + minute;
 
   let 刻;
   if (posIn120 < 15) 刻 = '初刻';
@@ -2004,7 +2479,7 @@ function advanceReproductiveSystem(variables, days, oldDay) {
   if (!data || days <= 0) return;
 
   const women = _.get(data, '人际网络.私帷', {});
-  const startDayIdx = Number(oldDay ?? (Number(_.get(data, '世界运转.世界运转天数', 0)) - days)) || 0;
+  const startDayIdx = Number(oldDay ?? Number(_.get(data, '世界运转.世界运转天数', 0)) - days) || 0;
 
   for (let d = 0; d < days; d++) {
     const dayIdx = startDayIdx + d + 1;
@@ -2238,18 +2713,30 @@ function renderOverview() {
       </div>
     </div>
     <div class="cm-grid two">
-      ${card('此身', `
+      ${card(
+        '此身',
+        `
         ${meta('官职', get(statData, '主角.官职', '未载'))}
         ${meta('声望', `${get(statData, '主角.声望', 0)} · ${get(statData, '主角.声望阶段', '默默无闻')}`)}
         <div class="cm-mini-bars">
           ${['生命', '武力', '统率', '智谋', '政治'].map(key => bar(key, 五维[key] ?? 0)).join('')}
-        </div>`)}
-      ${card('当前事务', tasks.length ? `<div class="cm-list">${tasks.map(([name, task]) => `
+        </div>`,
+      )}
+      ${card(
+        '当前事务',
+        tasks.length
+          ? `<div class="cm-list">${tasks
+              .map(
+                ([name, task]) => `
         <article class="cm-item">
           <div class="cm-item-title"><b>${html(name)}</b>${tag(task.类型 || '未分类')}</div>
           <p>${html(task.说明 || '无说明')}</p>
           ${task.进度 ? meta('进度', task.进度) : ''}
-        </article>`).join('')}</div>` : emptyLine('眼下暂无明记之事。'))}
+        </article>`,
+              )
+              .join('')}</div>`
+          : emptyLine('眼下暂无明记之事。'),
+      )}
     </div>`;
 }
 
@@ -2258,21 +2745,31 @@ function renderSelf() {
   const items = get(statData, '主角.私库.重要物品', {});
   return `
     <div class="cm-grid two">
-      ${card('履历', `
+      ${card(
+        '履历',
+        `
         ${meta('官职', get(statData, '主角.官职', '未载'))}
         ${meta('声望', get(statData, '主角.声望', 0))}
-        ${meta('声望阶段', get(statData, '主角.声望阶段', '默默无闻'))}`)}
+        ${meta('声望阶段', get(statData, '主角.声望阶段', '默默无闻'))}`,
+      )}
       ${card('五维', ['生命', '武力', '统率', '智谋', '政治'].map(key => bar(key, 五维[key] ?? 0)).join(''))}
     </div>
-    ${card('随身要物', recordList(items, (name, item) => `
+    ${card(
+      '随身要物',
+      recordList(
+        items,
+        (name, item) => `
       <article class="cm-item">
         <div class="cm-item-title"><b>${html(name)}</b><span class="cm-title-actions">${tag(`×${item.数量 ?? 1}`)}${actionButton('丢弃', 'remove-variable', `主角.私库.重要物品.${name}`)}</span></div>
         <p>${html(item.简介 || '无简介')}</p>
-      </article>`, '暂无重要物品。'))}`;
+      </article>`,
+        '暂无重要物品。',
+      ),
+    )}`;
 }
 
 function renderSettleSnapshot(s) {
-  const sign = (n) => n > 0 ? '+' : '';
+  const sign = n => (n > 0 ? '+' : '');
   const lines = [
     `${s.类型 || '结算'} · ${s.日期 || ''}`,
     `资产月入 ${s.资产月入 || 0} 两 · 月入合计 ${s.月入合计 || 0} 两`,
@@ -2286,7 +2783,9 @@ function renderSettleSnapshot(s) {
     lines.push(parts.join(' · '));
   }
   if (s.士气变动 || s.后勤变动) {
-    lines.push(`士气 ${sign(s.士气变动)}${s.士气变动} · 后勤 ${sign(s.后勤变动)}${s.后勤变动}（${s.受影响的营 || 0} 营）`);
+    lines.push(
+      `士气 ${sign(s.士气变动)}${s.士气变动} · 后勤 ${sign(s.后勤变动)}${s.后勤变动}（${s.受影响的营 || 0} 营）`,
+    );
   }
   lines.push(`私库 ${sign(s.私库变动)}${s.私库变动} 两 → 余额 ${s.私库余额 || 0} 两`);
   return `<div class="cm-settle-snapshot">${lines.map(l => `<p>${html(l)}</p>`).join('')}</div>`;
@@ -2344,7 +2843,14 @@ function renderMarket() {
       <div>${MARKET_CATEGORIES.map(([key, label]) => `<span><b>${html(label)}</b>${number(market.价格指数?.[key], 100)}%</span>`).join('')}</div>
       <label>支付钱币<select data-market-payment>${['白银', '铜钱', '黄金'].map(currency => `<option value="${currency}"${marketPaymentCurrency === currency ? ' selected' : ''}>${currency}</option>`).join('')}</select></label>
     </div>
-    ${MARKET_CATEGORIES.map(([category, label]) => foldGroup(label, `<div class="cm-market-grid">${MARKET_ITEMS.filter(item => item.category === category).map(item => renderMarketItem(item, market)).join('')}</div>`)).join('')}
+    ${MARKET_CATEGORIES.map(([category, label]) =>
+      foldGroup(
+        label,
+        `<div class="cm-market-grid">${MARKET_ITEMS.filter(item => item.category === category)
+          .map(item => renderMarketItem(item, market))
+          .join('')}</div>`,
+      ),
+    ).join('')}
     <section class="cm-exchange-board">
       <div class="cm-exchange-head"><div><p class="cm-kicker">钱庄水牌</p><h3>金银兑钱</h3></div><span>双向折价 ${feePercent}%</span></div>
       <p class="cm-exchange-note">市价一两金兑 ${goldRate} 两银，一两银兑 ${copperRate} 文。兑入与兑出均按钱庄折价成交。</p>
@@ -2373,19 +2879,27 @@ function renderMoney() {
   const armySupply = estimateArmyMonthlySupply(statData);
   const lastSettle = get(statData, '经济.上次结算', null);
   return `${renderMoneyViewSwitch()}
-    ${foldGroup('经济规则', `
+    ${foldGroup(
+      '经济规则',
+      `
       <p><b>私库</b>——你的钱袋子。日常小额开销（几文到几钱银子，如喝茶、剃头、打赏下人）AI 直接从私库扣除，不记流水。</p>
       <p><b>流水</b>——本月账本。大额收支（≥1两或具剧情重要性，如赏赐、修葺、军械采购、犒赏等）AI 写入月入/月出，<em>不动私库</em>。结算时脚本统一轧差入库，<em>结算后流水清空</em>，下月重新记账。</p>
       <p><b>资产</b>——田庄、铺面、作坊等，每月自动产生月入。买卖资产的本金直接从私库走，不记流水（一次性资本支出）。</p>
       <p><b>手动结算</b>（点击按钮）：仅处理流水账目 + 资产月入。<br>私库余额 + 资产月入 + 流水月入 − 流水月出 → 新私库余额。<em>军费不动</em>，流水清空。</p>
       <p><b>跨月自动结算</b>（日期跨月时自动触发）：在手动结算的基础上，额外扣除养军军费、消耗仓储军粮。钱粮不足时按 1石=2两 折银补粮，并压低各营士气与后勤。<br>私库余额 + 资产月入 + 流水月入 − 流水月出 − 军费 − 折银补粮 → 新私库余额</p>
-      <p><b>一句话</b>：日常走私库，大事记流水，手动结流水，跨月扣军费。</p>`)}
+      <p><b>一句话</b>：日常走私库，大事记流水，手动结流水，跨月扣军费。</p>`,
+    )}
     <div class="cm-grid three">
-      ${card('私库', `
+      ${card(
+        '私库',
+        `
         ${meta('黄金', `${coins.黄金 ?? 0} 两`)}
         ${meta('白银', `${coins.白银 ?? 0} 两`)}
-        ${meta('铜钱', `${coins.铜钱 ?? 0} 文`)}`)}
-      ${card('流水', `
+        ${meta('铜钱', `${coins.铜钱 ?? 0} 文`)}`,
+      )}
+      ${card(
+        '流水',
+        `
         ${meta('本月结余', `${get(statData, '经济.流水.本月结余', 0)} 两`)}
         ${meta('月入', `${sumMoneyRecord(income)} 两`)}
         ${meta('月出', `${sumMoneyRecord(outcome)} 两`)}
@@ -2394,26 +2908,45 @@ function renderMoney() {
         <div style="margin-top:10px;display:flex;gap:8px">
           <button class="cm-mini-action cm-mini-settle" data-action="manual-settle">月度结算</button>
         </div>
-        ${lastSettle ? renderSettleSnapshot(lastSettle) : ''}`)}
-      ${card('仓储概览', compactObject(storage, (name, item) => `
-        <span class="cm-pill"><b>${html(name)}</b>${html(item.数量 ?? 0)}${html(item.单位 || '')}</span>`))}
+        ${lastSettle ? renderSettleSnapshot(lastSettle) : ''}`,
+      )}
+      ${card(
+        '仓储概览',
+        compactObject(
+          storage,
+          (name, item) => `
+        <span class="cm-pill"><b>${html(name)}</b>${html(item.数量 ?? 0)}${html(item.单位 || '')}</span>`,
+        ),
+      )}
     </div>
     <div class="cm-grid two">
-      ${card('资产', recordList(assets, (name, asset) => `
+      ${card(
+        '资产',
+        recordList(
+          assets,
+          (name, asset) => `
         <article class="cm-item">
           <div class="cm-item-title"><b>${html(name)}</b>${tag(`${asset.月入 ?? 0} 两/月`)}</div>
           <p>${html(asset.说明 || '无说明')}</p>
-        </article>`, '暂无资产。'))}
-      ${card('收支明细', `<button class="cm-mini-action cm-mini-clear" data-action="clear-money" style="margin-bottom:10px">一键清空</button>
+        </article>`,
+          '暂无资产。',
+        ),
+      )}
+      ${card(
+        '收支明细',
+        `<button class="cm-mini-action cm-mini-clear" data-action="clear-money" style="margin-bottom:10px">一键清空</button>
         <h4>月入</h4>${recordList(income, (name, item) => `<article class="cm-item"><div class="cm-item-title"><b>${html(name)}</b>${tag(`${item.银两 ?? 0} 两`)}</div>${item.说明 ? `<p>说明：${html(item.说明)}</p>` : ''}</article>`, '暂无月入。')}
-        <h4>月出</h4>${recordList(outcome, (name, item) => `<article class="cm-item"><div class="cm-item-title"><b>${html(name)}</b>${tag(`${item.银两 ?? 0} 两`)}</div>${item.说明 ? `<p>说明：${html(item.说明)}</p>` : ''}</article>`, '暂无月出。')}`)}
+        <h4>月出</h4>${recordList(outcome, (name, item) => `<article class="cm-item"><div class="cm-item-title"><b>${html(name)}</b>${tag(`${item.银两 ?? 0} 两`)}</div>${item.说明 ? `<p>说明：${html(item.说明)}</p>` : ''}</article>`, '暂无月出。')}`,
+      )}
     </div>`;
 }
 
 function personCard(name, person, options = {}) {
   const scoreName = options.enemy ? '仇恨度' : '好感度';
   const score = options.enemy ? person.仇恨度 : person.好感度;
-  const range = options.enemy ? { min: 0, max: 100, tone: 'danger' } : { min: -100, max: 100, tone: number(score) < 0 ? 'danger' : 'high' };
+  const range = options.enemy
+    ? { min: 0, max: 100, tone: 'danger' }
+    : { min: -100, max: 100, tone: number(score) < 0 ? 'danger' : 'high' };
   return `
     <article class="cm-item ${options.private ? 'private' : ''}">
       <div class="cm-item-title"><b>${html(name)}</b><span>${person.是否在场 ? tag('在场', 'safe') : tag('不在场')}${portraitButton(name)}${options.path ? actionButton('遗忘', 'remove-variable', options.path) : ''}</span></div>
@@ -2435,10 +2968,14 @@ function renderPeople() {
     ['恩怨仇雠', '仇敌', get(statData, '人际网络.仇敌', {}), { enemy: true }],
     ['血脉亲族', '亲属', get(statData, '人际网络.亲属', {})],
   ];
-  return groups.map(([title, key, record, options]) => {
-    const body = recordList(record, (name, person) => personCard(name, person, { ...(options || {}), path: `人际网络.${key}.${name}` }));
-    return foldGroup(title, body);
-  }).join('');
+  return groups
+    .map(([title, key, record, options]) => {
+      const body = recordList(record, (name, person) =>
+        personCard(name, person, { ...(options || {}), path: `人际网络.${key}.${name}` }),
+      );
+      return foldGroup(title, body);
+    })
+    .join('');
 }
 
 function renderBirth(data) {
@@ -2480,12 +3017,17 @@ function renderMilitary() {
   const generals = get(statData, '军事.将领', {});
   const battles = get(statData, '军事.战斗记录', {});
   const armySupply = estimateArmyMonthlySupply(statData);
-  const supplyHint = armySupply.cost > 0
-    ? `本月养军预估需银 ${armySupply.cost} 两、军粮 ${armySupply.grain} 石。跨月时脚本会自动结算军费、扣除仓储粮食；钱粮不足会压低士气与后勤。`
-    : '暂无成建制营伍；招募部队后，脚本会按人数、兵种、等级自动估算每月军费与军粮。';
+  const supplyHint =
+    armySupply.cost > 0
+      ? `本月养军预估需银 ${armySupply.cost} 两、军粮 ${armySupply.grain} 石。跨月时脚本会自动结算军费、扣除仓储粮食；钱粮不足会压低士气与后勤。`
+      : '暂无成建制营伍；招募部队后，脚本会按人数、兵种、等级自动估算每月军费与军粮。';
   return `
     ${card('养军提示', `<p class="cm-empty" style="text-align:left;margin:0;font-size:12px">${html(supplyHint)}</p>`)}
-    ${foldGroup('营伍名册', recordList(camps, (name, camp) => `
+    ${foldGroup(
+      '营伍名册',
+      recordList(
+        camps,
+        (name, camp) => `
       <article class="cm-item">
         <div class="cm-item-title"><b>${html(name)}</b>${tag(`${camp.人数 ?? 0} 人`)}</div>
         <div class="cm-info-grid">
@@ -2497,16 +3039,32 @@ function renderMilitary() {
           ${meta('等级', camp.等级 || '未载')}
         </div>
         ${bar('士气', camp.士气 ?? 0)}${bar('训练', camp.训练 ?? 0)}${bar('后勤', camp.后勤 ?? 0)}
-      </article>`, '暂无营伍。'), '暂无营伍。')}
-    ${foldGroup('将领名册', recordList(generals, (name, general) => `
+      </article>`,
+        '暂无营伍。',
+      ),
+      '暂无营伍。',
+    )}
+    ${foldGroup(
+      '将领名册',
+      recordList(
+        generals,
+        (name, general) => `
       <article class="cm-item">
         <div class="cm-item-title"><b>${html(name)}</b></div>
         <div class="cm-mini-bars">${['统率', '武力', '智谋', '政治', '威望'].map(key => bar(key, general[key] ?? 0)).join('')}${bar('忠心', findInterpersonalPerson(statData, name)?.person?.忠心 ?? 0)}</div>
-      </article>`, '暂无将领。'), '暂无将领。')}
-    ${foldGroup('战斗记录', recordList(battles, (name, battle) => {
-      const knownFields = ['日期', '对手', '结果', '战利品', '摘要'];
-      const extraFields = Object.keys(battle || {}).filter(k => !knownFields.includes(k));
-      return `
+      </article>`,
+        '暂无将领。',
+      ),
+      '暂无将领。',
+    )}
+    ${foldGroup(
+      '战斗记录',
+      recordList(
+        battles,
+        (name, battle) => {
+          const knownFields = ['日期', '对手', '结果', '战利品', '摘要'];
+          const extraFields = Object.keys(battle || {}).filter(k => !knownFields.includes(k));
+          return `
       <article class="cm-item">
         <div class="cm-item-title"><b>${html(name)}</b>${tag(battle.日期 || '未载日期')}</div>
         <div class="cm-info-grid">
@@ -2516,18 +3074,25 @@ function renderMilitary() {
           ${extraFields.map(k => meta(k, battle[k])).join('')}
         </div>
         ${battle.摘要 ? `<p class="cm-heart">${html(battle.摘要)}</p>` : ''}
-      </article>`;}, '暂无战斗记录。'), '暂无战斗记录。')}`;
+      </article>`;
+        },
+        '暂无战斗记录。',
+      ),
+      '暂无战斗记录。',
+    )}`;
 }
 
 function renderSituation() {
   const powers = entries(get(statData, '时局与任务.势力关系', {}));
   const tasks = get(statData, '时局与任务.当前任务', {});
-  const powersBody = powers.length ? `<div class="cm-row-list">${powers.map(([name, power]) => {
-    const 好感 = power.好感度 ?? 0;
-    const 兵力 = get(power, '军事.总兵力', 0);
-    const 兵种 = get(power, '军事.主力兵种', '');
-    const tone = 好感 < 0 ? 'danger' : 好感 > 30 ? 'high' : 'mid';
-    return `
+  const powersBody = powers.length
+    ? `<div class="cm-row-list">${powers
+        .map(([name, power]) => {
+          const 好感 = power.好感度 ?? 0;
+          const 兵力 = get(power, '军事.总兵力', 0);
+          const 兵种 = get(power, '军事.主力兵种', '');
+          const tone = 好感 < 0 ? 'danger' : 好感 > 30 ? 'high' : 'mid';
+          return `
     <button class="cm-power-row" data-power-name="${html(name)}">
       <span class="cm-power-avatar">${html(name[0])}</span>
       <span class="cm-power-body">
@@ -2543,27 +3108,43 @@ function renderSituation() {
         </span>
       </span>
       <span class="cm-power-chevron">›</span>
-    </button>`;}).join('')}</div>` : emptyLine('暂无势力档案。');
+    </button>`;
+        })
+        .join('')}</div>`
+    : emptyLine('暂无势力档案。');
   return `
-    ${foldGroup('当前任务', recordList(tasks, (name, task) => `
+    ${foldGroup(
+      '当前任务',
+      recordList(
+        tasks,
+        (name, task) => `
       <article class="cm-item">
         <div class="cm-item-title"><b>${html(name)}</b><span class="cm-title-actions">${tag(task.类型 || '未分类')}${actionButton('放弃', 'remove-variable', `时局与任务.当前任务.${name}`)}</span></div>
         <p>${html(task.说明 || '无说明')}</p>
         ${task.进度 ? meta('进度', task.进度) : ''}
-      </article>`, '暂无任务。'), '暂无任务。')}
+      </article>`,
+        '暂无任务。',
+      ),
+      '暂无任务。',
+    )}
     ${foldGroup('势力关系', powersBody, '暂无势力档案。')}`;
 }
 
 function renderTech() {
   const record = get(statData, '科技', {});
-  return rowList(record, (name, tech) => foldItem(
-    name,
-    `${tag(tech.进度 || '未开始')}`,
-    `<article class="cm-item">
+  return rowList(
+    record,
+    (name, tech) =>
+      foldItem(
+        name,
+        `${tag(tech.进度 || '未开始')}`,
+        `<article class="cm-item">
       <p>效果：${html(tech.效果 || '未载')}</p>
       <small>${html(tech.描述 || '')}</small>
-    </article>`
-  ), '暂无技术条目。');
+    </article>`,
+      ),
+    '暂无技术条目。',
+  );
 }
 
 function renderHistory() {
@@ -2587,16 +3168,27 @@ function renderHistory() {
     acc[type].push({ name, event });
     return acc;
   }, {});
-  return entries(grouped).map(([type, items]) => foldGroup(type,
-    `<div class="cm-list">${items.map(({ name, event }) => `
+  return (
+    entries(grouped)
+      .map(([type, items]) =>
+        foldGroup(
+          type,
+          `<div class="cm-list">${items
+            .map(
+              ({ name, event }) => `
       <article class="cm-item">
         <div class="cm-item-title"><b>${html(name)}</b><span class="cm-title-actions">${tag(event.日期 || '未载日期')}${actionButton('勾销', 'remove-variable', `个人史记.大事记.${name}`)}</span></div>
         ${event.地点 ? meta('地点', event.地点) : ''}
         <p>${html(event.事迹 || '无事迹')}</p>
         ${event.影响 ? `<p class="cm-heart">${html(event.影响)}</p>` : ''}
-      </article>`).join('')}</div>`,
-    '尚无大事入志。'
-  )).join('') || emptyLine('尚无大事入志。');
+      </article>`,
+            )
+            .join('')}</div>`,
+          '尚无大事入志。',
+        ),
+      )
+      .join('') || emptyLine('尚无大事入志。')
+  );
 }
 
 /** 从中文日期字符串中提取年份数字，用于排序 */
@@ -2616,7 +3208,7 @@ function extractYearNumber(dateStr) {
 
 /** 中文数字转阿拉伯数字（仅用于年份） */
 function chineseToNumber(str) {
-  const map = { '一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10 };
+  const map = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
   // 处理如"二十"、"三十"等
   if (str.length === 2 && str[1] === '十') {
     return (map[str[0]] || 0) * 10;
@@ -2640,35 +3232,53 @@ function renderTabContent() {
     return `<div class="cm-error"><h2>暂未读得变量数据</h2><p>${html(lastError)}</p><p class="cm-empty">请先生成至少一轮剧情，或刷新后重试</p></div>`;
   }
   switch (activeTab) {
-    case 'self': return renderSelf();
-    case 'money': return renderMoney();
-    case 'people': return renderPeople();
-    case 'private': return renderPrivate();
-    case 'military': return renderMilitary();
-    case 'situation': return renderSituation();
-    case 'tech': return renderTech();
-    case 'history': return renderHistory();
-    case 'map': return renderMap();
-    case 'graph': return renderGraph();
-    case 'portraits': return renderPortraits();
+    case 'self':
+      return renderSelf();
+    case 'money':
+      return renderMoney();
+    case 'people':
+      return renderPeople();
+    case 'private':
+      return renderPrivate();
+    case 'military':
+      return renderMilitary();
+    case 'situation':
+      return renderSituation();
+    case 'tech':
+      return renderTech();
+    case 'history':
+      return renderHistory();
+    case 'map':
+      return renderMap();
+    case 'graph':
+      return renderGraph();
+    case 'portraits':
+      return renderPortraits();
     case 'fengyue':
-      if (!shopEnabled) { activeTab = 'overview'; return renderOverview(); }
+      if (!shopEnabled) {
+        activeTab = 'overview';
+        return renderOverview();
+      }
       return renderShop();
-    default: return renderOverview();
+    default:
+      return renderOverview();
   }
 }
 
 function renderPortraits() {
   const entries = getPortraitEntries();
   const filters = [['all', '全部'], ...PORTRAIT_GALLERY_OPTIONS.filter(([key]) => key !== 'none')];
-  const counts = Object.values(entries).reduce((result, entry) => {
-    const gallery = normalizePortraitGallery(entry?.gallery, entry?.source);
-    if (gallery !== 'none') {
-      result.all += 1;
-      result[gallery] = (result[gallery] || 0) + 1;
-    }
-    return result;
-  }, { all: 0, beauties: 0, heroes: 0, beings: 0 });
+  const counts = Object.values(entries).reduce(
+    (result, entry) => {
+      const gallery = normalizePortraitGallery(entry?.gallery, entry?.source);
+      if (gallery !== 'none') {
+        result.all += 1;
+        result[gallery] = (result[gallery] || 0) + 1;
+      }
+      return result;
+    },
+    { all: 0, beauties: 0, heroes: 0, beings: 0 },
+  );
   const names = Object.keys(entries).filter(name => {
     const gallery = normalizePortraitGallery(entries[name]?.gallery, entries[name]?.source);
     return gallery !== 'none' && (portraitGalleryFilter === 'all' || gallery === portraitGalleryFilter);
@@ -2688,35 +3298,41 @@ function renderPortraits() {
       </div>
     </div>
     <div class="cm-portrait-grid">
-      ${names.map(name => {
-        const imgs = getPortraitData()[name] || {};
-        const cover = imgs.日常 || Object.values(imgs)[0] || '';
-        return `
+      ${names
+        .map(name => {
+          const imgs = getAllPortraitData()[name] || {};
+          const cover = imgs.日常 || Object.values(imgs)[0] || '';
+          return `
         <button class="cm-portrait-card" data-portrait-name="${html(name)}">
           <div class="cm-portrait-img-wrap">
             ${cover ? `<img src="${html(cover)}" alt="${html(name)}" loading="lazy" />` : ''}
           </div>
           <span class="cm-portrait-label">${html(name)}</span>
         </button>`;
-      }).join('')}
+        })
+        .join('')}
     </div>
     ${names.length ? '' : '<p class="cm-empty">此分类暂未收录人物。</p>'}
-    <p class="cm-personage-note">未加入人物志的角色仍会保留角色档案、立绘与正文插图能力。可在角色管理器中随时调整归属。</p>`;
+    <p class="cm-personage-note">内置人物立绘始终保留在人物志中；身份 DLC 只决定正文插图当前可以调用哪些人物，不再删减这里的收藏。</p>`;
 }
 
 function renderPortraitDetail() {
-  const imgs = getPortraitData()[portraitSelected];
+  const imgs = getAllPortraitData()[portraitSelected];
   if (!imgs) return '';
   const categories = Object.entries(imgs);
   return `
     <div class="cm-portrait-detail">
       <h3>${html(portraitSelected)} · 全部分类</h3>
       <div class="cm-portrait-detail-grid">
-        ${categories.map(([cat, url]) => `
+        ${categories
+          .map(
+            ([cat, url]) => `
           <figure class="cm-portrait-figure">
             <img src="${html(url)}" alt="${html(portraitSelected)}-${html(cat)}" loading="lazy" />
             <figcaption>${html(cat)}</figcaption>
-          </figure>`).join('')}
+          </figure>`,
+          )
+          .join('')}
       </div>
     </div>`;
 }
@@ -2724,10 +3340,12 @@ function renderPortraitDetail() {
 function renderShop() {
   const 点数 = number(get(statData, '风月阁.同房点数', 0));
   const 絮语 = get(statData, '风月阁.掌柜絮语', '');
-  const 已拥有 = get(statData, '风月阁.器物', { });
+  const 已拥有 = get(statData, '风月阁.器物', {});
   return `
     <div class="cm-shop">
-      ${card('掌柜·云儿', `
+      ${card(
+        '掌柜·云儿',
+        `
         <div class="cm-shop-keeper">
           <p class="cm-heart" style="margin:0;font-style:italic">${html(絮语 || '哟，客官来了～今儿个有好东西，进来瞧瞧？')}</p>
         </div>
@@ -2735,18 +3353,23 @@ function renderShop() {
           <span class="cm-shop-coin">⿓</span>
           <span>同房点数：<b>${点数}</b></span>
         </div>
-      `)}
+      `,
+      )}
       <div class="cm-grid two">
         <div>
           <h3 style="color:var(--accent);margin:0 0 12px">货架</h3>
-          ${getShopCategories().map(cat => {
-            if (!cat.items.length) return '';
-            return foldGroup(cat.name, `
-              <div class="cm-shop-grid">${cat.items.map(item => {
-            const owned = 已拥有[item.name];
-            const count = owned ? (owned.数量 ?? 0) : 0;
-            const canBuy = 点数 >= item.price;
-            return `
+          ${getShopCategories()
+            .map(cat => {
+              if (!cat.items.length) return '';
+              return foldGroup(
+                cat.name,
+                `
+              <div class="cm-shop-grid">${cat.items
+                .map(item => {
+                  const owned = 已拥有[item.name];
+                  const count = owned ? (owned.数量 ?? 0) : 0;
+                  const canBuy = 点数 >= item.price;
+                  return `
               <div class="cm-shop-item">
                 <div class="cm-shop-item-body">
                   <div class="cm-item-title">
@@ -2762,19 +3385,28 @@ function renderShop() {
                   ${count > 0 ? '再买' : '购买'}
                 </button>
               </div>`;
-              }).join('')}</div>
-            `);
-          }).join('')}
+                })
+                .join('')}</div>
+            `,
+              );
+            })
+            .join('')}
         </div>
         <div>
           <h3 style="color:var(--accent);margin:0 0 12px">我的器物</h3>
-          ${entries(已拥有).length ? `<div class="cm-list">${entries(已拥有).map(([name, item]) => {
-            return `
+          ${
+            entries(已拥有).length
+              ? `<div class="cm-list">${entries(已拥有)
+                  .map(([name, item]) => {
+                    return `
             <article class="cm-item">
               <div class="cm-item-title"><b>${html(name)}</b>${tag(`×${item.数量 ?? 1}`)}</div>
               <p class="cm-shop-desc">${html(item.简介 || '')}</p>
             </article>`;
-          }).join('')}</div>` : emptyLine('尚未购买任何器物。来都来了，不看看？')}
+                  })
+                  .join('')}</div>`
+              : emptyLine('尚未购买任何器物。来都来了，不看看？')
+          }
         </div>
       </div>
     </div>`;
@@ -2816,16 +3448,33 @@ function renderPowerModal() {
           </div>
           ${get(power, '军事.描述') ? `<p class="cm-heart">${html(get(power, '军事.描述'))}</p>` : ''}
 
-          ${将领.length ? foldGroup('下属将领', `<div class="cm-list">${将领.map(([gName, g]) => `
+          ${
+            将领.length
+              ? foldGroup(
+                  '下属将领',
+                  `<div class="cm-list">${将领
+                    .map(
+                      ([gName, g]) => `
             <article class="cm-item">
               <div class="cm-item-title"><b>${html(gName)}</b>${tag(g.职位 || '')}</div>
               <div class="cm-mini-bars">
                 ${bar('统率', g.统率 ?? 0)}${bar('武力', g.武力 ?? 0)}${bar('智谋', g.智谋 ?? 0)}${bar('忠诚', g.忠诚 ?? 0)}
               </div>
               <p class="cm-line">兵 ${(g.兵力 ?? 0).toLocaleString()} · ${g.驻地 || '驻地未明'}${g.简介 ? ` · ${html(g.简介)}` : ''}</p>
-            </article>`).join('')}</div>`) : ''}
+            </article>`,
+                    )
+                    .join('')}</div>`,
+                )
+              : ''
+          }
 
-          ${军队.length ? foldGroup('军队', `<div class="cm-list">${军队.map(([aName, a]) => `
+          ${
+            军队.length
+              ? foldGroup(
+                  '军队',
+                  `<div class="cm-list">${军队
+                    .map(
+                      ([aName, a]) => `
             <article class="cm-item">
               <div class="cm-item-title"><b>${html(aName)}</b>${tag(`${a.人数 ?? 0} 人`)}</div>
               <div class="cm-info-grid">
@@ -2837,7 +3486,12 @@ function renderPowerModal() {
                 ${meta('状态', a.状态 || '—')}
               </div>
               ${bar('士气', a.士气 ?? 0)}${bar('训练', a.训练 ?? 0)}${bar('后勤', a.后勤 ?? 0)}
-            </article>`).join('')}</div>`) : ''}
+            </article>`,
+                    )
+                    .join('')}</div>`,
+                )
+              : ''
+          }
         </div>
       </section>
     </div>`;
@@ -2874,12 +3528,16 @@ function renderModal() {
             ${meta('时期', person.生育?.时期 || '安全期')}
             ${meta('状态', person.生育?.状态 || '未孕')}
           </div>
-          ${person.生育?.末次同房?.日期 ? `
+          ${
+            person.生育?.末次同房?.日期
+              ? `
           <h3>上次同房</h3>
           <div class="cm-info-grid">
             ${meta('日期', person.生育.末次同房.日期)}
             ${meta('受孕概率', `${person.生育.末次同房.判定概率 ?? 0}%`)}
-          </div>` : ''}
+          </div>`
+              : ''
+          }
           ${person.生育?.预产期 ? meta('预产期', person.生育.预产期) : ''}
         </div>
       </section>
@@ -2887,9 +3545,12 @@ function renderModal() {
 }
 
 function themeIcon() {
-  if (theme === 'day') return '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
-  if (theme === 'night') return '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.05 8.05 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05z"/></svg>';
-  if (theme === 'star') return '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2l1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5z"/></svg>';
+  if (theme === 'day')
+    return '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
+  if (theme === 'night')
+    return '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.05 8.05 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05z"/></svg>';
+  if (theme === 'star')
+    return '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2l1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5z"/></svg>';
   return '<svg class="cm-mountain-icon" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18.5c3.2-4.7 5.2-7.7 6-9 .5-.7 1.1-.7 1.6 0l2.3 3.5"/><path d="M10.5 18.5c2.5-3.5 4.3-6 5.3-7.4.5-.7 1.1-.7 1.6.1l3.6 7.3"/><path d="M5 18.5h15"/><path d="M8.8 10.1c.9.6 1.8.6 2.7 0"/><path d="M14.8 12.3c.8.5 1.5.5 2.3 0"/></svg>';
 }
 
@@ -2904,7 +3565,6 @@ function toolIcon() {
 function editIcon() {
   return '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
 }
-
 
 function portraitAddIcon() {
   return '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
@@ -2953,7 +3613,7 @@ function loadCharacterGeneratorScript() {
 
 async function openCharacterGenerator() {
   try {
-    const generator = getCharacterGenerator() ?? await loadCharacterGeneratorScript();
+    const generator = getCharacterGenerator() ?? (await loadCharacterGeneratorScript());
     if (!generator?.open) throw new Error('万象生成器接口未注册。');
     generator.open({
       mountDocument: frameDocument,
@@ -2966,6 +3626,72 @@ async function openCharacterGenerator() {
   }
 }
 
+function scenarioGeneratorIcon() {
+  return '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5z"/><path d="M16 3v4h4M8 11h8M8 15h5"/><path d="m15.5 18.5 3-3"/></svg>';
+}
+
+function getScenarioGenerator() {
+  return globalThis.CanmingScenarioGenerator ?? window.parent?.CanmingScenarioGenerator;
+}
+
+function loadScenarioGeneratorScript() {
+  if (getScenarioGenerator()) return Promise.resolve(getScenarioGenerator());
+  if (window._canmingScenarioGeneratorLoading) return window._canmingScenarioGeneratorLoading;
+  const remoteRuntime = getRemoteScriptRuntime();
+  if (typeof remoteRuntime?.boot === 'function') {
+    window._canmingScenarioGeneratorLoading = remoteRuntime.boot('scenario-generator').then(() => {
+      const generator = getScenarioGenerator();
+      if (!generator?.open) throw new Error('开局生成器远程脚本已加载，但接口未注册。');
+      return generator;
+    });
+    return window._canmingScenarioGeneratorLoading;
+  }
+  window._canmingScenarioGeneratorLoading = new Promise((resolve, reject) => {
+    if (!STATUSBAR_SCRIPT_SRC) {
+      reject(new Error('无法定位状态栏脚本地址，请确认开局生成器脚本已被加载。'));
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = new URL(SCENARIO_GENERATOR_FILE, STATUSBAR_SCRIPT_SRC).href;
+    script.onload = () => resolve(getScenarioGenerator());
+    script.onerror = () => reject(new Error(`无法加载 ${SCENARIO_GENERATOR_FILE}`));
+    document.head.appendChild(script);
+  });
+  return window._canmingScenarioGeneratorLoading;
+}
+
+async function openScenarioGenerator() {
+  try {
+    if (!isOpen) {
+      isOpen = true;
+      applyFrameLayout();
+      render();
+    }
+    const generator = getScenarioGenerator() ?? (await loadScenarioGeneratorScript());
+    if (!generator?.open) throw new Error('开局生成器接口未注册。');
+    return generator.open({
+      mountDocument: frameDocument,
+      theme,
+      showToast,
+      openWorkshop: workshopOptions => openCanmingWorkshop(workshopOptions),
+      installScenarioPackage: bundle => importScenarioWorkshopPackage(bundle),
+    });
+  } catch (error) {
+    showToast(`✗ 打开开局生成器失败：${error?.message || '未知错误'}`, 'err');
+  }
+}
+
+function exposeStatusbarActions() {
+  const hostWindow = window.parent ?? window;
+  hostWindow.CanmingStatusbarActions = {
+    ...(hostWindow.CanmingStatusbarActions || {}),
+    _owner: STATUSBAR_ACTIONS_OWNER,
+    openScenarioGenerator: () => openScenarioGenerator(),
+    installOriginalScenario: () => installBuiltinTongchengScenario(),
+    uninstallCurrentScenario: () => uninstallCurrentScenario(),
+    getInstalledScenario: () => getInstalledScenarioInfo(),
+  };
+}
 
 function getCanmingWorkshop() {
   return globalThis.CanmingWorkshop ?? window.parent?.CanmingWorkshop;
@@ -2975,9 +3701,15 @@ function loadCanmingWorkshopScript() {
   const loadedWorkshop = getCanmingWorkshop();
   if (loadedWorkshop?.open && Number(loadedWorkshop.apiVersion || 1) === 1) return Promise.resolve(loadedWorkshop);
   if (loadedWorkshop) {
-    try { loadedWorkshop.destroy?.(); } catch {}
-    try { delete globalThis.CanmingWorkshop; } catch {}
-    try { if (window.parent) delete window.parent.CanmingWorkshop; } catch {}
+    try {
+      loadedWorkshop.destroy?.();
+    } catch {}
+    try {
+      delete globalThis.CanmingWorkshop;
+    } catch {}
+    try {
+      if (window.parent) delete window.parent.CanmingWorkshop;
+    } catch {}
     window._canmingWorkshopLoading = null;
   }
   if (window._canmingWorkshopLoading) return window._canmingWorkshopLoading;
@@ -2995,7 +3727,7 @@ function loadCanmingWorkshopScript() {
     try {
       const getTrees = globalThis.getScriptTrees ?? window.parent?.getScriptTrees;
       const trees = typeof getTrees === 'function' ? getTrees({ type: 'character' }) : [];
-      const scripts = trees.flatMap(item => item?.type === 'folder' ? item.scripts || [] : [item]);
+      const scripts = trees.flatMap(item => (item?.type === 'folder' ? item.scripts || [] : [item]));
       const expectedName = WORKSHOP_FILE.replace(/\.js$/i, '');
       const moduleScript = scripts.find(item => item?.name === expectedName || item?.name === WORKSHOP_FILE);
       if (moduleScript?.content) {
@@ -3032,25 +3764,38 @@ async function buildCharacterWorkshopPackage(profileId, metadata = {}) {
   if (!profile) throw new Error('找不到所选角色档案。');
   const allEntries = await readCharacterWorldbookEntries();
   const linked = new Set(profile.worldbookEntries || []);
-  const worldbookEntries = allEntries.filter(entry => linked.has(entry.name)).map(entry => JSON.parse(JSON.stringify(entry)));
+  const worldbookEntries = allEntries
+    .filter(entry => linked.has(entry.name))
+    .map(entry => JSON.parse(JSON.stringify(entry)));
   const portraits = {};
   for (const [category, source] of Object.entries(getPortraitEntries()[profile.name]?.portraits || {})) {
     if (!isPortraitUrl(source)) throw new Error(`立绘「${category}」不是 HTTP/HTTPS 链接`);
     portraits[category] = { type: 'url', value: source };
   }
   return {
-    format: WORKSHOP_PACKAGE_FORMAT, version: 2, kind: 'character', createdAt: new Date().toISOString(),
+    format: WORKSHOP_PACKAGE_FORMAT,
+    version: 2,
+    kind: 'character',
+    createdAt: new Date().toISOString(),
     metadata: workshopPackageMetadata(metadata, profile.name),
-    resources: [{
-      id: `character-${profile.id || Date.now()}`, kind: 'character', name: profile.name,
-      character: { ...JSON.parse(JSON.stringify(profile)), worldbookEntries: worldbookEntries.map(entry => entry.name) },
-      portraits, worldbookEntries,
-    }],
+    resources: [
+      {
+        id: `character-${profile.id || Date.now()}`,
+        kind: 'character',
+        name: profile.name,
+        character: {
+          ...JSON.parse(JSON.stringify(profile)),
+          worldbookEntries: worldbookEntries.map(entry => entry.name),
+        },
+        portraits,
+        worldbookEntries,
+      },
+    ],
   };
 }
 
 async function buildGeneratorWorkshopPackage(metadata = {}) {
-  const generator = getCharacterGenerator() ?? await loadCharacterGeneratorScript();
+  const generator = getCharacterGenerator() ?? (await loadCharacterGeneratorScript());
   if (typeof generator?.getCurrentWork !== 'function') throw new Error('万象生成器版本过旧，缺少作品读取接口。');
   const work = generator.getCurrentWork();
   if (!work?.entries?.length) throw new Error('请先在万象生成器完成一次生成。');
@@ -3061,18 +3806,44 @@ async function buildGeneratorWorkshopPackage(metadata = {}) {
       id: `generated-${Date.now()}`,
       name: String(result.name || work.title || '未命名角色').trim(),
       aliases: Array.isArray(result.alias) ? result.alias.map(String).filter(Boolean) : [],
-      title: '', summary: String(metadata.summary || ''), worldbookEntries: entries.map(entry => entry.name),
+      title: '',
+      summary: String(metadata.summary || ''),
+      worldbookEntries: entries.map(entry => entry.name),
     };
     return {
-      format: WORKSHOP_PACKAGE_FORMAT, version: 2, kind: 'character', createdAt: new Date().toISOString(),
+      format: WORKSHOP_PACKAGE_FORMAT,
+      version: 2,
+      kind: 'character',
+      createdAt: new Date().toISOString(),
       metadata: workshopPackageMetadata(metadata, metadata.title || character.name),
-      resources: [{ id: `generator-character-${Date.now()}`, kind: 'character', name: character.name, character, portraits: {}, worldbookEntries: entries, source: 'canming-generator' }],
+      resources: [
+        {
+          id: `generator-character-${Date.now()}`,
+          kind: 'character',
+          name: character.name,
+          character,
+          portraits: {},
+          worldbookEntries: entries,
+          source: 'canming-generator',
+        },
+      ],
     };
   }
   return {
-    format: WORKSHOP_PACKAGE_FORMAT, version: 2, kind: 'worldbook', createdAt: new Date().toISOString(),
+    format: WORKSHOP_PACKAGE_FORMAT,
+    version: 2,
+    kind: 'worldbook',
+    createdAt: new Date().toISOString(),
     metadata: workshopPackageMetadata(metadata, metadata.title || work.title || entries[0].name),
-    resources: [{ id: `generator-worldbook-${Date.now()}`, kind: 'worldbook', name: String(work.title || entries[0].name), entries, source: 'canming-generator' }],
+    resources: [
+      {
+        id: `generator-worldbook-${Date.now()}`,
+        kind: 'worldbook',
+        name: String(work.title || entries[0].name),
+        entries,
+        source: 'canming-generator',
+      },
+    ],
   };
 }
 
@@ -3083,16 +3854,34 @@ function listWorkshopGenerators() {
 
 function buildGeneratorDefinitionWorkshopPackage(ids, metadata = {}) {
   const generator = getCharacterGenerator();
-  if (typeof generator?.exportGeneratorDefinition !== 'function') throw new Error('万象生成器版本过旧，缺少生成器共享接口。');
+  if (typeof generator?.exportGeneratorDefinition !== 'function')
+    throw new Error('万象生成器版本过旧，缺少生成器共享接口。');
   const selected = new Set(Array.isArray(ids) ? ids : []);
-  const definitions = listWorkshopGenerators().filter(item => selected.has(item.id)).map(item => generator.exportGeneratorDefinition(item.id));
+  const definitions = listWorkshopGenerators()
+    .filter(item => selected.has(item.id))
+    .map(item => generator.exportGeneratorDefinition(item.id));
   if (!definitions.length) throw new Error('请至少选择一个生成器。');
-  return { format: WORKSHOP_PACKAGE_FORMAT, version: 2, kind: 'generator', createdAt: new Date().toISOString(), metadata: workshopPackageMetadata(metadata, metadata.title || definitions[0].name || definitions[0].tag), resources: [{ id: `generator-${Date.now()}`, kind: 'generator', name: metadata.resourceName || definitions[0].name || definitions[0].tag, definitions }] };
+  return {
+    format: WORKSHOP_PACKAGE_FORMAT,
+    version: 2,
+    kind: 'generator',
+    createdAt: new Date().toISOString(),
+    metadata: workshopPackageMetadata(metadata, metadata.title || definitions[0].name || definitions[0].tag),
+    resources: [
+      {
+        id: `generator-${Date.now()}`,
+        kind: 'generator',
+        name: metadata.resourceName || definitions[0].name || definitions[0].tag,
+        definitions,
+      },
+    ],
+  };
 }
 
 function importWorkshopGenerators(definitions) {
   const generator = getCharacterGenerator();
-  if (typeof generator?.importGeneratorDefinition !== 'function') throw new Error('万象生成器版本过旧，缺少生成器共享接口。');
+  if (typeof generator?.importGeneratorDefinition !== 'function')
+    throw new Error('万象生成器版本过旧，缺少生成器共享接口。');
   return (definitions || []).map(definition => generator.importGeneratorDefinition(definition)).length;
 }
 
@@ -3100,7 +3889,12 @@ function workshopPackageMetadata(metadata, fallbackTitle = '', fallbackSummary =
   const base = workshopMetadata(metadata, fallbackTitle, fallbackSummary);
   return {
     ...base,
-    categories: Array.isArray(metadata?.categories) ? metadata.categories.map(value => String(value).trim()).filter(Boolean).slice(0, 3) : [],
+    categories: Array.isArray(metadata?.categories)
+      ? metadata.categories
+          .map(value => String(value).trim())
+          .filter(Boolean)
+          .slice(0, 3)
+      : [],
     coverUrl: metadata?.coverUrl ? normalizeBackgroundUrl(metadata.coverUrl) : '',
   };
 }
@@ -3124,9 +3918,15 @@ async function listWorkshopWorldbookEntries(worldbookName = '') {
   const result = [];
   for (const name of selected) {
     try {
-      const entries = await worldbook(name) || [];
-      result.push(...entries.filter(entry => entry?.name && typeof entry.content === 'string').map(entry => ({ ...JSON.parse(JSON.stringify(entry)), __worldbook: name })));
-    } catch { /* 跳过无权读取或不存在的世界书 */ }
+      const entries = (await worldbook(name)) || [];
+      result.push(
+        ...entries
+          .filter(entry => entry?.name && typeof entry.content === 'string')
+          .map(entry => ({ ...JSON.parse(JSON.stringify(entry)), __worldbook: name })),
+      );
+    } catch {
+      /* 跳过无权读取或不存在的世界书 */
+    }
   }
   return result;
 }
@@ -3134,22 +3934,45 @@ async function listWorkshopWorldbookEntries(worldbookName = '') {
 async function buildWorldbookWorkshopPackage(entryNames, metadata = {}) {
   const requested = Array.isArray(entryNames) ? entryNames : [];
   const selected = new Set(requested.filter(entry => typeof entry === 'string'));
-  const supplied = requested.filter(entry => entry && typeof entry === 'object').map(entry => { const copy = JSON.parse(JSON.stringify(entry)); delete copy.__worldbook; return copy; });
-  const entries = supplied.length ? supplied : (await listWorkshopWorldbookEntries()).filter(entry => selected.has(entry.name));
+  const supplied = requested
+    .filter(entry => entry && typeof entry === 'object')
+    .map(entry => {
+      const copy = JSON.parse(JSON.stringify(entry));
+      delete copy.__worldbook;
+      return copy;
+    });
+  const entries = supplied.length
+    ? supplied
+    : (await listWorkshopWorldbookEntries()).filter(entry => selected.has(entry.name));
   if (!entries.length) throw new Error('请至少选择一条世界书条目。');
   return {
-    format: WORKSHOP_PACKAGE_FORMAT, version: 2, kind: 'worldbook', createdAt: new Date().toISOString(),
+    format: WORKSHOP_PACKAGE_FORMAT,
+    version: 2,
+    kind: 'worldbook',
+    createdAt: new Date().toISOString(),
     metadata: workshopPackageMetadata(metadata, metadata.title || entries[0].name),
-    resources: [{ id: `worldbook-${Date.now()}`, kind: 'worldbook', name: metadata.resourceName || entries[0].name, entries }],
+    resources: [
+      { id: `worldbook-${Date.now()}`, kind: 'worldbook', name: metadata.resourceName || entries[0].name, entries },
+    ],
   };
 }
 
 function buildCustomWorldbookWorkshopPackage(entry, metadata = {}) {
   if (!entry?.name || !entry?.content) throw new Error('自定义世界书需要填写条目名称与正文。');
   return {
-    format: WORKSHOP_PACKAGE_FORMAT, version: 2, kind: 'worldbook', createdAt: new Date().toISOString(),
+    format: WORKSHOP_PACKAGE_FORMAT,
+    version: 2,
+    kind: 'worldbook',
+    createdAt: new Date().toISOString(),
     metadata: workshopPackageMetadata(metadata, metadata.title || entry.name),
-    resources: [{ id: `worldbook-${Date.now()}`, kind: 'worldbook', name: entry.name, entries: [JSON.parse(JSON.stringify(entry))] }],
+    resources: [
+      {
+        id: `worldbook-${Date.now()}`,
+        kind: 'worldbook',
+        name: entry.name,
+        entries: [JSON.parse(JSON.stringify(entry))],
+      },
+    ],
   };
 }
 
@@ -3160,7 +3983,11 @@ function getWorkshopApi(name) {
 function listWorkshopRegexes() {
   const getter = getWorkshopApi('getTavernRegexes');
   if (typeof getter !== 'function') return [];
-  try { return JSON.parse(JSON.stringify(getter({ type: 'character', name: 'current' }) || [])); } catch { return []; }
+  try {
+    return JSON.parse(JSON.stringify(getter({ type: 'character', name: 'current' }) || []));
+  } catch {
+    return [];
+  }
 }
 
 function buildRegexWorkshopPackage(regexIds, metadata = {}) {
@@ -3168,9 +3995,14 @@ function buildRegexWorkshopPackage(regexIds, metadata = {}) {
   const regexes = listWorkshopRegexes().filter(regex => selected.has(regex.id));
   if (!regexes.length) throw new Error('请至少选择一条正则。');
   return {
-    format: WORKSHOP_PACKAGE_FORMAT, version: 2, kind: 'regex', createdAt: new Date().toISOString(),
+    format: WORKSHOP_PACKAGE_FORMAT,
+    version: 2,
+    kind: 'regex',
+    createdAt: new Date().toISOString(),
     metadata: workshopPackageMetadata(metadata, metadata.title || regexes[0].script_name),
-    resources: [{ id: `regex-${Date.now()}`, kind: 'regex', name: metadata.resourceName || regexes[0].script_name, regexes }],
+    resources: [
+      { id: `regex-${Date.now()}`, kind: 'regex', name: metadata.resourceName || regexes[0].script_name, regexes },
+    ],
   };
 }
 
@@ -3178,21 +4010,39 @@ function listWorkshopScripts() {
   const getter = getWorkshopApi('getScriptTrees');
   if (typeof getter !== 'function') return [];
   try {
-    return (getter({ type: 'character' }) || []).flatMap(node => node?.type === 'folder' ? (node.scripts || []).map(script => ({ ...script, folder: node.name })) : [node])
+    return (getter({ type: 'character' }) || [])
+      .flatMap(node =>
+        node?.type === 'folder' ? (node.scripts || []).map(script => ({ ...script, folder: node.name })) : [node],
+      )
       .filter(script => script?.type === 'script' && script.name && typeof script.content === 'string')
       .filter(script => !CORE_REMOTE_SCRIPT_NAMES.has(String(script.name).replace(/\.js$/i, '')))
       .map(script => JSON.parse(JSON.stringify(script)));
-  } catch { return []; }
+  } catch {
+    return [];
+  }
 }
 
 function buildScriptWorkshopPackage(scriptIds, metadata = {}) {
   const selected = new Set(Array.isArray(scriptIds) ? scriptIds : []);
-  const scripts = listWorkshopScripts().filter(script => selected.has(script.id)).map(script => ({ ...script, enabled: false, button: { ...(script.button || {}), enabled: false } }));
+  const scripts = listWorkshopScripts()
+    .filter(script => selected.has(script.id))
+    .map(script => ({ ...script, enabled: false, button: { ...(script.button || {}), enabled: false } }));
   if (!scripts.length) throw new Error('请至少选择一段角色卡脚本。');
   return {
-    format: WORKSHOP_PACKAGE_FORMAT, version: 2, kind: 'script', createdAt: new Date().toISOString(),
+    format: WORKSHOP_PACKAGE_FORMAT,
+    version: 2,
+    kind: 'script',
+    createdAt: new Date().toISOString(),
     metadata: workshopPackageMetadata(metadata, metadata.title || scripts[0].name),
-    resources: [{ id: `script-${Date.now()}`, kind: 'script', name: metadata.resourceName || scripts[0].name, scripts, disabledByDefault: true }],
+    resources: [
+      {
+        id: `script-${Date.now()}`,
+        kind: 'script',
+        name: metadata.resourceName || scripts[0].name,
+        scripts,
+        disabledByDefault: true,
+      },
+    ],
   };
 }
 
@@ -3205,9 +4055,14 @@ function buildCustomFengyueWorkshopPackage(rawItem, metadata = {}) {
   };
   if (!item.name || !item.desc) throw new Error('请填写风月阁物品名称与说明。');
   return {
-    format: WORKSHOP_PACKAGE_FORMAT, version: 2, kind: 'fengyue-item', createdAt: new Date().toISOString(),
+    format: WORKSHOP_PACKAGE_FORMAT,
+    version: 2,
+    kind: 'fengyue-item',
+    createdAt: new Date().toISOString(),
     metadata: workshopPackageMetadata(metadata, metadata.title || item.name),
-    resources: [{ id: `fengyue-${Date.now()}`, kind: 'fengyue-item', name: metadata.resourceName || item.name, items: [item] }],
+    resources: [
+      { id: `fengyue-${Date.now()}`, kind: 'fengyue-item', name: metadata.resourceName || item.name, items: [item] },
+    ],
   };
 }
 
@@ -3234,11 +4089,14 @@ function importWorkshopScripts(scripts, options = {}) {
   const replacer = getWorkshopApi('replaceScriptTrees');
   if (typeof getter !== 'function' || typeof replacer !== 'function') throw new Error('角色卡脚本接口不可用。');
   const current = JSON.parse(JSON.stringify(getter({ type: 'character' }) || []));
-  const existing = new Set(current.flatMap(node => node?.type === 'folder' ? (node.scripts || []) : [node]).map(script => script?.name));
+  const existing = new Set(
+    current.flatMap(node => (node?.type === 'folder' ? node.scripts || [] : [node])).map(script => script?.name),
+  );
   const additions = (scripts || []).map(raw => {
     const script = JSON.parse(JSON.stringify(raw));
     while (existing.has(script.name)) script.name = `${script.name}（导入）`;
-    existing.add(script.name); script.id = `cmw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    existing.add(script.name);
+    script.id = `cmw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     script.enabled = options.enabled === true;
     script.button = { ...(script.button || {}), enabled: options.enabled === true };
     return script;
@@ -3251,10 +4109,16 @@ function importWorkshopFengyueItems(items) {
   const current = getWorkshopFengyueItems();
   const ids = new Set(getShopItems().map(item => item.id));
   const additions = (items || []).map(raw => {
-    const item = { id: String(raw.id || '').trim(), name: String(raw.name || '').trim(), price: Math.max(0, Number(raw.price || 0)), desc: String(raw.desc || '').trim() };
+    const item = {
+      id: String(raw.id || '').trim(),
+      name: String(raw.name || '').trim(),
+      price: Math.max(0, Number(raw.price || 0)),
+      desc: String(raw.desc || '').trim(),
+    };
     if (!item.id || !item.name || !item.desc) throw new Error('风月阁物品数据不完整。');
     while (ids.has(item.id)) item.id = `${item.id}-imported`;
-    ids.add(item.id); return item;
+    ids.add(item.id);
+    return item;
   });
   saveStorage(WORKSHOP_FENGYUE_STORAGE_KEY, JSON.stringify([...current, ...additions]));
   return additions.length;
@@ -3280,16 +4144,29 @@ async function importWorldbookWorkshopPackage(bundle) {
   const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
   const replaceWorldbook = globalThis.replaceWorldbook ?? window.parent?.replaceWorldbook;
   const createEntries = globalThis.createWorldbookEntries ?? window.parent?.createWorldbookEntries;
-  if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function' || typeof createEntries !== 'function') throw new Error('世界书接口不可用。');
+  if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function' || typeof createEntries !== 'function')
+    throw new Error('世界书接口不可用。');
   const worldbookName = getWorldbookName();
-  const current = [...(await worldbook(worldbookName) || [])];
+  const current = [...((await worldbook(worldbookName)) || [])];
   const conflicts = entries.filter(entry => current.some(item => item.name === entry.name));
   let mode = 'append';
   if (conflicts.length) {
     const names = conflicts.map(entry => entry.name).join('、');
-    if (await canmingUiDialog(`世界书中已存在：${names}\n\n是否覆盖同名条目？`, { title: '导入世界书作品', confirmText: '覆盖', cancelText: '其他选项' })) {
+    if (
+      await canmingUiDialog(`世界书中已存在：${names}\n\n是否覆盖同名条目？`, {
+        title: '导入世界书作品',
+        confirmText: '覆盖',
+        cancelText: '其他选项',
+      })
+    ) {
       mode = 'overwrite';
-    } else if (await canmingUiDialog('是否将冲突条目自动重命名后导入？', { title: '导入世界书作品', confirmText: '重命名并导入', cancelText: '取消' })) {
+    } else if (
+      await canmingUiDialog('是否将冲突条目自动重命名后导入？', {
+        title: '导入世界书作品',
+        confirmText: '重命名并导入',
+        cancelText: '取消',
+      })
+    ) {
       mode = 'rename';
     } else {
       throw new Error('已取消导入。');
@@ -3305,39 +4182,618 @@ async function importWorldbookWorkshopPackage(bundle) {
       entry.uid = current[index].uid;
       current[index] = entry;
       replaced = true;
-    }
-    else {
+    } else {
       if (index >= 0) entry.name = nextImportedName(entry.name, names);
       delete entry.uid;
       additions.push(entry);
     }
   }
-  if (replaced) await replaceWorldbook(worldbookName, current, { render: additions.length ? 'debounced' : 'immediate' });
+  if (replaced)
+    await replaceWorldbook(worldbookName, current, { render: additions.length ? 'debounced' : 'immediate' });
   if (additions.length) await createEntries(worldbookName, additions, { render: 'immediate' });
   showToast(`✓ 已导入 ${entries.length} 条世界书作品`, 'ok');
   return { worldbookName, count: entries.length, mode };
 }
 
+const CHARACTER_ADAPTATION_PATTERN =
+  /(<!-- CANMING_CHARACTER_ADAPTATION_START -->)([\s\S]*?)(<!-- CANMING_CHARACTER_ADAPTATION_END -->)/;
+
+function normalizeUserReference(value) {
+  const sentinel = '\u0000CMYJ_USER_TOKEN\u0000';
+  return String(value || '')
+    .replace(/<\s*user\s*>/gi, sentinel)
+    .replace(/\{\{\s*user\s*\}\}/gi, sentinel)
+    .replace(/\buser\b/gi, sentinel)
+    .replaceAll(sentinel, '<user>');
+}
+
+function characterAdaptationBody(adaptation, version = 2) {
+  const scalar = value => JSON.stringify(normalizeUserReference(value));
+  const isV3 = Number(version) >= 3;
+  // v2 mixed long-term positioning with an opening snapshot. Keep accepting old
+  // packages, but deliberately map only information that remains useful after
+  // the first scene; current goals, knowledge, presence and similar fields are
+  // initialized through MVU and must never be written into a persistent persona.
+  const identityPosition = isV3 ? adaptation.identityPosition || adaptation.identity : adaptation.identity;
+  const activityRange = isV3 ? adaptation.activityRange || adaptation.activityArea : '';
+  const factionAlignment = isV3 ? adaptation.factionAlignment || adaptation.faction : adaptation.faction;
+  const userRelationshipOrigin = isV3
+    ? adaptation.userRelationshipOrigin || adaptation.relationshipOrigin || adaptation.userRelation
+    : /尚未相识|当前|当期|开场/.test(String(adaptation.userRelation || ''))
+      ? ''
+      : adaptation.userRelation;
+  const relationshipPattern = isV3
+    ? adaptation.relationshipPattern
+    : /尚未相识|初始|当前|当期|开场/.test(String(adaptation.relationshipTone || ''))
+      ? ''
+      : adaptation.relationshipTone;
+  const addressPrinciples = isV3 ? adaptation.addressPrinciples : '';
+  const characterToUser =
+    adaptation.characterToUser ||
+    (addressPrinciples && typeof addressPrinciples === 'object' ? addressPrinciples.characterToUser : '');
+  const userToCharacter =
+    adaptation.userToCharacter ||
+    (addressPrinciples && typeof addressPrinciples === 'object' ? addressPrinciples.userToCharacter : '');
+  const rules = isV3 ? adaptation.adaptationPrinciples : adaptation.interactionRules;
+  const adaptationPrinciples = Array.isArray(rules) ? rules.filter(Boolean) : [];
+  const persistentPrinciples = isV3
+    ? adaptationPrinciples
+    : adaptationPrinciples.filter(rule => !/开场|当期|当前|此刻|正在|出场/.test(String(rule)));
+  const relationships = Array.isArray(adaptation.nonFixedRelationships)
+    ? adaptation.nonFixedRelationships.filter(item => item?.character && item?.relation)
+    : [];
+  const lines = ['', '身份与关系:'];
+  if (identityPosition) lines.push(`  身份: ${scalar(identityPosition)}`);
+  if (activityRange) lines.push(`  活动范围: ${scalar(activityRange)}`);
+  if (factionAlignment) lines.push(`  势力归属: ${scalar(factionAlignment)}`);
+  if (userRelationshipOrigin) lines.push(`  与<user>的过往: ${scalar(userRelationshipOrigin)}`);
+  if (relationshipPattern) lines.push(`  相处方式: ${scalar(relationshipPattern)}`);
+  if (isV3 && adaptation.longTermSituation) lines.push(`  长期处境: ${scalar(adaptation.longTermSituation)}`);
+  if (typeof addressPrinciples === 'string' && addressPrinciples)
+    lines.push(`  称呼原则: ${scalar(addressPrinciples)}`);
+  else if (characterToUser || userToCharacter) {
+    lines.push(
+      '  彼此称呼:',
+      `    角色称呼<user>: ${scalar(characterToUser)}`,
+      `    <user>称呼角色: ${scalar(userToCharacter)}`,
+    );
+  }
+  if (relationships.length) {
+    lines.push('  与其他人物:');
+    for (const relationship of relationships) {
+      lines.push(`    - 角色: ${scalar(relationship.character)}`, `      关系: ${scalar(relationship.relation)}`);
+    }
+  }
+  lines.push(
+    '  演绎要点:',
+    ...(persistentPrinciples.length
+      ? persistentPrinciples.map(rule => `    - ${scalar(rule)}`)
+      : ['    - "不得改变原始人设的性格核心、重要经历与人物关系。"']),
+    '',
+  );
+  return lines.join('\n');
+}
+
+async function applyScenarioCharacterAdaptations(adaptations, version = 2) {
+  if (!Array.isArray(adaptations) || !adaptations.length) return [];
+  const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
+  const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
+  if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function')
+    throw new Error('角色适配需要世界书读写接口。');
+  const worldbookName = getWorldbookName();
+  const current = (await worldbook(worldbookName)) || [];
+  const updates = new Map();
+  const backups = [];
+  for (const adaptation of adaptations) {
+    const candidates = [`${adaptation.character}_SFW`, adaptation.character];
+    const index = current.findIndex(entry => candidates.includes(entry?.name));
+    if (index < 0) throw new Error(`基础卡缺少角色条目「${adaptation.character}」。`);
+    const content = String(current[index].content || '');
+    const match = content.match(CHARACTER_ADAPTATION_PATTERN);
+    if (!match) throw new Error(`角色「${adaptation.character}」缺少动态人设标记，请更新基础卡。`);
+    backups.push({ entryName: current[index].name, previousBlock: match[2] });
+    updates.set(index, {
+      ...current[index],
+      content: content.replace(
+        CHARACTER_ADAPTATION_PATTERN,
+        (_match, start, _previous, end) => `${start}${characterAdaptationBody(adaptation, version)}${end}`,
+      ),
+    });
+  }
+  const next = current.map((entry, index) => updates.get(index) || entry);
+  await replaceWorldbook(worldbookName, next, { render: 'immediate' });
+  return backups;
+}
+
+async function restoreScenarioCharacterAdaptations(backups) {
+  if (!Array.isArray(backups) || !backups.length) return;
+  const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
+  const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
+  if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function')
+    throw new Error('角色适配恢复需要世界书读写接口。');
+  const worldbookName = getWorldbookName();
+  const current = (await worldbook(worldbookName)) || [];
+  const backupMap = new Map(backups.map(item => [item.entryName, item.previousBlock]));
+  const missing = backups.filter(
+    item =>
+      !current.some(
+        entry => entry?.name === item.entryName && CHARACTER_ADAPTATION_PATTERN.test(String(entry.content || '')),
+      ),
+  );
+  if (missing.length)
+    throw new Error(`无法恢复角色适配：${missing.map(item => item.entryName).join('、')} 缺少条目或标记。`);
+  const next = current.map(entry => {
+    if (!backupMap.has(entry?.name)) return entry;
+    return {
+      ...entry,
+      content: String(entry.content || '').replace(
+        CHARACTER_ADAPTATION_PATTERN,
+        (_match, start, _previous, end) => `${start}${backupMap.get(entry.name)}${end}`,
+      ),
+    };
+  });
+  await replaceWorldbook(worldbookName, next, { render: 'immediate' });
+}
+
+function builtinTongchengOverviewEntry(overviews) {
+  const data = JSON.stringify(overviews, null, 2);
+  return {
+    name: '人物概览',
+    enabled: true,
+    content: `@@preprocessing
+<%_
+var characterOverviews = ${data};
+var openingId = getvar('stat_data.世界运转._开场标识', { defaults: '' });
+var people = characterOverviews[openingId] || [];
+if (people.length > 0) {
+_%>
+<人物概览>
+<%_ for (var i = 0; i < people.length; i++) { _%>
+- <%- people[i].name %>：<%- people[i].summary %>
+<%_ } _%>
+</人物概览>
+<%_ } _%>`,
+    strategy: { type: 'constant', keys: [], keys_secondary: { logic: 'and_any', keys: [] } },
+    position: { type: 'after_character_definition', role: 'system', depth: 0, order: 0 },
+    recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
+    probability: 100,
+    effect: { sticky: null, cooldown: null, delay: null },
+  };
+}
+
+async function getInstalledScenarioInfo() {
+  const getCurrentName = getWorkshopApi('getCurrentCharacterName');
+  const getCharacter = getWorkshopApi('getCharacter');
+  const characterName = typeof getCurrentName === 'function' ? getCurrentName() : '';
+  if (!characterName || typeof getCharacter !== 'function') return null;
+  const character = await getCharacter(characterName);
+  const installed = character?.extensions?.canming_dlc;
+  if (!installed?.id) return null;
+  return {
+    id: installed.id,
+    name: installed.name || installed.id,
+    version: installed.version || '',
+    context: installed.context || readActiveDlcContext(characterName) || null,
+  };
+}
+
+async function repairBuiltinTongchengCharacterAdaptations() {
+  const getCurrentName = getWorkshopApi('getCurrentCharacterName');
+  const getCharacter = getWorkshopApi('getCharacter');
+  const replaceCharacter = getWorkshopApi('replaceCharacter');
+  if (
+    typeof getCurrentName !== 'function' ||
+    typeof getCharacter !== 'function' ||
+    typeof replaceCharacter !== 'function'
+  )
+    throw new Error('角色卡更新接口不可用。');
+  const characterName = getCurrentName();
+  if (!characterName) throw new Error('请先打开《残明余烬》基础卡。');
+  const character = await getCharacter(characterName);
+  const extension = character?.extensions?.canming_dlc;
+  if (extension?.id !== 'cmyj.original.tongcheng') throw new Error('当前安装的不是原版桐城开局。');
+
+  if (extension.characterAdaptationBackups?.length)
+    await restoreScenarioCharacterAdaptations(extension.characterAdaptationBackups);
+  const characterAdaptationBackups = await applyScenarioCharacterAdaptations(
+    ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS,
+    3,
+  );
+  const context = {
+    ...(extension.context || {}),
+    characterAdaptationVersion: 3,
+    characterAdaptations: JSON.parse(JSON.stringify(ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS)),
+  };
+  extension.characterAdaptationBackups = characterAdaptationBackups;
+  extension.context = context;
+  character.extensions.canming_dlc = extension;
+  await replaceCharacter(characterName, character, { render: 'immediate' });
+  const verifiedCharacter = await getCharacter(characterName);
+  if (
+    !Array.isArray(verifiedCharacter?.extensions?.canming_dlc?.context?.characterAdaptations) ||
+    verifiedCharacter.extensions.canming_dlc.context.characterAdaptations.length <
+      ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS.length
+  )
+    throw new Error('原版桐城角色人设写入后校验失败，请重试。');
+  writeActiveDlcContext(characterName, context);
+  globalThis.__CMYJ_DLC_CONTEXT_V1__ = context;
+  ACTIVE_DLC_CONTEXT = context;
+  await syncPortraitIllustrationRule();
+  return {
+    scenarioId: extension.id,
+    repaired: true,
+    characterAdaptationCount: ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS.length,
+  };
+}
+
+async function installBuiltinTongchengScenario() {
+  try {
+    const installed = await getInstalledScenarioInfo();
+    const originalAdaptationCount = ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS.length;
+    const installedAdaptationCount = Array.isArray(installed?.context?.characterAdaptations)
+      ? installed.context.characterAdaptations.length
+      : 0;
+    if (
+      installed?.id === 'cmyj.original.tongcheng' &&
+      installedAdaptationCount >= originalAdaptationCount
+    ) {
+      showToast('原版桐城开局已经安装，无需重复安装。', 'ok');
+      return { scenarioId: installed.id, alreadyInstalled: true };
+    }
+    if (installed?.id === 'cmyj.original.tongcheng') {
+      const repaired = await repairBuiltinTongchengCharacterAdaptations();
+      showToast(`✓ 已补全原版桐城开局的 ${repaired.characterAdaptationCount} 名角色人设`, 'ok');
+      return repaired;
+    }
+    const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
+    if (typeof worldbook !== 'function') throw new Error('世界书读取接口不可用。');
+    const entries = (await worldbook(getWorldbookName())) || [];
+    const openings = BUILTIN_TONGCHENG_OPENINGS.map(definition => {
+      const entry = entries.find(item => item?.name === definition.entry);
+      if (!entry?.content) throw new Error(`基础卡缺少内置资源「${definition.entry}」，请重新同步角色卡。`);
+      const content = String(entry.content).replace(
+        /(<initvar>\s*\n世界运转:\s*\n)/,
+        `$1  _开场标识: ${definition.id}\n`,
+      );
+      return { id: definition.id, name: definition.name, subtitle: definition.subtitle, content };
+    });
+    const peopleByName = Object.fromEntries(
+      [
+        ['苏晚棠', '和济堂当家妇人，栖云、栖月与赵砚的养母。'],
+        ['栖云', '苏晚棠养女、栖月的双胞胎姐姐，沉稳护家。'],
+        ['栖月', '苏晚棠养女、栖云的双胞胎妹妹，心细寡言。'],
+        ['赵砚', '苏晚棠养子，机灵沉默而重情。'],
+        ['苏元庆', '苏家长辈，在桐城经营家业与人情往来。'],
+        ['苏晚月', '苏晚棠之妹，嘴利手稳的边镇遗孀。'],
+        ['林知夏', '林记米铺独女，活泼温善。'],
+        ['翠儿', '贫家出身的年轻丫鬟，嘴碎心热。'],
+        ['常彪', '桐城快班捕役，莽直仗义。'],
+        ['顾明远', '落魄秀才，言辞刻薄而心思缜密。'],
+        ['沈清晏', '沈家独女，嘴利心细，擅长识字记账。'],
+        ['沈大柱', '沈记肉铺屠户，沈清晏之父。'],
+        ['柳氏', '沈大柱之妻、沈清晏之母。'],
+        ['周氏', '林记米铺女掌柜，林知夏之母。'],
+        ['陈茂林', '桐城市井人物，熟悉本地门路与消息。'],
+        ['方仲嘉', '桐城方氏子弟，牵涉地方士绅事务。'],
+        ['杨尔铭', '年少谨慎的桐城知县。'],
+        ['方孔炤', '桐城方氏仕宦，方子衿之父。'],
+        ['周拥田', '桐城地方人物，与城中差役事务有关。'],
+        ['赵老六', '桐城基层差役，熟悉衙门与街面。'],
+        ['马会', '桐城基层差役，参与城中巡捕事务。'],
+        ['方应乾', '桐城方氏人物，卷入凤阳惊变前后的地方局势。'],
+      ].map(([name, summary]) => [name, { name, summary }]),
+    );
+    const overviewNames = {
+      'tongcheng-rebirth': [
+        '苏晚棠',
+        '栖云',
+        '栖月',
+        '赵砚',
+        '苏元庆',
+        '苏晚月',
+        '林知夏',
+        '翠儿',
+        '常彪',
+        '顾明远',
+        '沈清晏',
+        '沈大柱',
+        '柳氏',
+        '周氏',
+        '陈茂林',
+      ],
+      'tongcheng-yunjisi': [
+        '苏晚棠',
+        '栖云',
+        '栖月',
+        '赵砚',
+        '苏元庆',
+        '苏晚月',
+        '林知夏',
+        '翠儿',
+        '常彪',
+        '顾明远',
+        '沈清晏',
+        '沈大柱',
+        '柳氏',
+        '周氏',
+        '陈茂林',
+        '方仲嘉',
+        '杨尔铭',
+        '方孔炤',
+      ],
+      'tongcheng-fengyang': [
+        '杨尔铭',
+        '苏晚棠',
+        '苏元庆',
+        '栖云',
+        '栖月',
+        '赵砚',
+        '林知夏',
+        '翠儿',
+        '常彪',
+        '顾明远',
+        '周拥田',
+        '赵老六',
+        '马会',
+        '沈清晏',
+        '方仲嘉',
+        '方应乾',
+      ],
+    };
+    const overviews = Object.fromEntries(
+      openings.map(opening => [opening.id, (overviewNames[opening.id] || []).map(name => peopleByName[name])]),
+    );
+    const resource = {
+      id: 'cmyj.original.tongcheng',
+      kind: 'scenario',
+      name: '原版·桐城皂隶篇',
+      scenario: {
+        id: 'cmyj.original.tongcheng',
+        version: '1.0.1',
+        baseCard: 'cmyj.base',
+        minBaseVersion: STATUSBAR_VERSION,
+        exclusiveGroup: 'player-origin',
+        allowMidChatSwitch: false,
+        newChatRequired: true,
+      },
+      openings,
+      worldbookEntries: [builtinTongchengOverviewEntry(overviews)],
+      initialRelationships: [],
+      portraitProfiles: [],
+      characterOverviewVersion: 1,
+      characterOverviews: overviews,
+      characterAdaptationVersion: 3,
+      characterAdaptations: ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS,
+      ui: {},
+    };
+    const bundle = {
+      format: WORKSHOP_PACKAGE_FORMAT,
+      version: 2,
+      kind: 'scenario',
+      createdAt: new Date().toISOString(),
+      metadata: {
+        title: resource.name,
+        summary: '内置原版桐城身份与三条经典开场。',
+        tags: ['残明余烬', '桐城', '原版开局'],
+        categories: ['剧情扩展'],
+        coverUrl: '',
+      },
+      resources: [resource],
+    };
+    if (installed?.id) {
+      const hostWindow = window.parent ?? window;
+      const confirmed = hostWindow.confirm(
+        `角色卡中仍记录着身份 DLC「${installed.name}」。\n\n是否先彻底卸载它，再安装原版桐城开局？当前聊天不会回滚，完成后必须新建聊天。`,
+      );
+      if (!confirmed) {
+        const cancelled = new Error('已取消替换当前身份 DLC。');
+        cancelled.code = 'SCENARIO_REPLACE_CANCELLED';
+        throw cancelled;
+      }
+      await uninstallWorkshopInstall({ scenarios: [installed.id] });
+      await getCanmingWorkshop()?.forgetScenarioInstall?.(installed.id, {
+        cleanup: true,
+        bridge: createWorkshopBridge(),
+      });
+    }
+    return await importScenarioWorkshopPackage(bundle);
+  } catch (error) {
+    if (error?.code !== 'SCENARIO_REPLACE_CANCELLED')
+      showToast(`✗ 原版桐城开局安装失败：${error?.message || '未知错误'}`, 'err');
+    throw error;
+  }
+}
+
+async function importScenarioWorkshopPackage(bundle) {
+  const workshop = getCanmingWorkshop();
+  const checked = typeof workshop?.validatePackage === 'function' ? workshop.validatePackage(bundle) : bundle;
+  const resource = checked?.version === 2 ? checked.resources?.find(item => item.kind === 'scenario') : null;
+  if (!resource?.scenario || !Array.isArray(resource.openings) || !resource.openings.length)
+    throw new Error('作品包没有有效的身份 DLC。');
+  if (resource.scenario.exclusiveGroup !== 'player-origin' || resource.scenario.allowMidChatSwitch)
+    throw new Error('身份 DLC 必须互斥且禁止中途切换。');
+
+  const getCurrentName = getWorkshopApi('getCurrentCharacterName');
+  const getCharacter = getWorkshopApi('getCharacter');
+  const replaceCharacter = getWorkshopApi('replaceCharacter');
+  if (
+    typeof getCurrentName !== 'function' ||
+    typeof getCharacter !== 'function' ||
+    typeof replaceCharacter !== 'function'
+  )
+    throw new Error('角色卡更新接口不可用。');
+  const characterName = getCurrentName();
+  if (!characterName) throw new Error('请先打开《残明余烬》基础卡。');
+  let character = await getCharacter(characterName);
+  character.extensions = character.extensions && typeof character.extensions === 'object' ? character.extensions : {};
+  let previous = character.extensions.canming_dlc;
+  if (previous?.id && previous.id !== resource.scenario.id) {
+    const confirmed = (window.parent ?? window).confirm(
+      `检测到尚未卸载的身份 DLC「${previous.name || previous.id}」。\n\n每张基础卡只能启用一个身份 DLC。是否先卸载旧 DLC，再安装「${resource.name}」？完成后必须新建聊天。`,
+    );
+    if (!confirmed) {
+      const cancelled = new Error('已取消替换当前身份 DLC。');
+      cancelled.code = 'SCENARIO_REPLACE_CANCELLED';
+      throw cancelled;
+    }
+    await uninstallWorkshopInstall({ scenarios: [previous.id] });
+    await workshop?.forgetScenarioInstall?.(previous.id, {
+      cleanup: true,
+      bridge: createWorkshopBridge(),
+    });
+    character = await getCharacter(characterName);
+    character.extensions =
+      character.extensions && typeof character.extensions === 'object' ? character.extensions : {};
+    previous = character.extensions.canming_dlc;
+  }
+
+  const scenarioWorldbookNames = new Set((resource.worldbookEntries || []).map(entry => entry?.name).filter(Boolean));
+  const getWorldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
+  const replaceWorldbook = globalThis.replaceWorldbook ?? window.parent?.replaceWorldbook;
+  const staleInstalledWorldbookNames = new Set(
+    previous?.id === resource.scenario.id
+      ? (previous.worldbookEntries || []).filter(name => name && !scenarioWorldbookNames.has(name))
+      : [],
+  );
+  const worldbookEntryBackups = previous?.id
+    ? Array.isArray(previous.worldbookEntryBackups)
+      ? JSON.parse(JSON.stringify(previous.worldbookEntryBackups))
+      : []
+    : typeof getWorldbook === 'function'
+      ? ((await getWorldbook(getWorldbookName())) || [])
+          .map((entry, index) => ({ entry, index }))
+          .filter(item => scenarioWorldbookNames.has(item.entry?.name))
+          .map(item => JSON.parse(JSON.stringify(item)))
+      : [];
+
+  const worldbookBundle = {
+    format: WORKSHOP_PACKAGE_FORMAT,
+    version: 2,
+    kind: 'worldbook',
+    metadata: checked.metadata,
+    resources: [
+      {
+        id: `${resource.id}-worldbook`,
+        kind: 'worldbook',
+        name: resource.name,
+        entries: resource.worldbookEntries || [],
+      },
+    ],
+  };
+  await importWorldbookWorkshopPackage(worldbookBundle);
+  if (
+    staleInstalledWorldbookNames.size &&
+    typeof getWorldbook === 'function' &&
+    typeof replaceWorldbook === 'function'
+  ) {
+    const current = (await getWorldbook(getWorldbookName())) || [];
+    await replaceWorldbook(
+      getWorldbookName(),
+      current.filter(entry => !staleInstalledWorldbookNames.has(entry?.name)),
+      { render: 'immediate' },
+    );
+  }
+  if (previous?.characterAdaptationBackups?.length)
+    await restoreScenarioCharacterAdaptations(previous.characterAdaptationBackups);
+  const characterAdaptationBackups = await applyScenarioCharacterAdaptations(
+    resource.characterAdaptations || [],
+    resource.characterAdaptationVersion || 2,
+  );
+
+  const originalFirstMessages =
+    previous?.originalFirstMessages || JSON.parse(JSON.stringify(character.first_messages || []));
+  const baseIntroduction = originalFirstMessages[0] || character.first_messages?.[0] || '';
+  character.first_messages = [baseIntroduction, ...resource.openings.map(opening => opening.content)];
+  const context = {
+    id: resource.scenario.id,
+    name: resource.name,
+    version: resource.scenario.version,
+    scenario: resource.scenario,
+    openings: resource.openings.map(({ id, name, subtitle }) => ({ id, name, subtitle })),
+    initialRelationships: resource.initialRelationships || [],
+    portraitProfiles: resource.portraitProfiles || [],
+    characterOverviewVersion: resource.characterOverviewVersion || 0,
+    characterOverviews: resource.characterOverviews || {},
+    characterAdaptations: resource.characterAdaptations || [],
+    ui: resource.ui || {},
+  };
+  character.extensions.canming_dlc = {
+    id: resource.scenario.id,
+    name: resource.name,
+    version: resource.scenario.version,
+    exclusiveGroup: resource.scenario.exclusiveGroup,
+    originalFirstMessages,
+    worldbookEntries: (resource.worldbookEntries || []).map(entry => entry.name),
+    worldbookEntryBackups,
+    characterAdaptationBackups,
+    context,
+  };
+  await replaceCharacter(characterName, character, { render: 'immediate' });
+  writeActiveDlcContext(characterName, context);
+  globalThis.__CMYJ_DLC_CONTEXT_V1__ = context;
+  ACTIVE_DLC_CONTEXT = context;
+  getPortraitLibrary();
+  getCharacterProfiles();
+  await syncPortraitIllustrationRule();
+  showToast(`✓ 已安装身份 DLC「${resource.name}」；请新建聊天后选择开场`, 'ok');
+  return { scenarioId: resource.scenario.id, characterName, openingCount: resource.openings.length };
+}
+
 async function snapshotWorkshopInstallState() {
   const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
   let worldbookEntries = [];
-  try { worldbookEntries = typeof worldbook === 'function' ? await worldbook(getWorldbookName()) || [] : []; } catch { /* ignore */ }
+  try {
+    worldbookEntries = typeof worldbook === 'function' ? (await worldbook(getWorldbookName())) || [] : [];
+  } catch {
+    /* ignore */
+  }
   const generator = getCharacterGenerator();
+  let activeScenario = null;
+  try {
+    const getCurrentName = getWorkshopApi('getCurrentCharacterName');
+    const getCharacter = getWorkshopApi('getCharacter');
+    const characterName = typeof getCurrentName === 'function' ? getCurrentName() : '';
+    const character = characterName && typeof getCharacter === 'function' ? await getCharacter(characterName) : null;
+    activeScenario = character?.extensions?.canming_dlc?.id || null;
+  } catch {
+    /* ignore */
+  }
   return {
-    characters: getCharacterProfiles().profiles.map(item => item.id).filter(Boolean),
+    characters: getCharacterProfiles()
+      .profiles.map(item => item.id)
+      .filter(Boolean),
     worldbooks: worldbookEntries.map(item => item.name).filter(Boolean),
-    worldbookSignatures: Object.fromEntries(worldbookEntries.filter(item => item?.name).map(item => [item.name, workshopWorldbookSignature(item)])),
-    regexes: listWorkshopRegexes().map(item => item.id).filter(Boolean),
-    scripts: listWorkshopScripts().map(item => item.id).filter(Boolean),
-    fengyue: getWorkshopFengyueItems().map(item => item.id).filter(Boolean),
-    generators: generator?.listShareableGenerators?.().map(item => item.id).filter(Boolean) || [],
+    worldbookSignatures: Object.fromEntries(
+      worldbookEntries.filter(item => item?.name).map(item => [item.name, workshopWorldbookSignature(item)]),
+    ),
+    regexes: listWorkshopRegexes()
+      .map(item => item.id)
+      .filter(Boolean),
+    scripts: listWorkshopScripts()
+      .map(item => item.id)
+      .filter(Boolean),
+    fengyue: getWorkshopFengyueItems()
+      .map(item => item.id)
+      .filter(Boolean),
+    generators:
+      generator
+        ?.listShareableGenerators?.()
+        .map(item => item.id)
+        .filter(Boolean) || [],
+    scenarios: activeScenario ? [activeScenario] : [],
   };
 }
 
 function workshopWorldbookSignature(entry) {
   const normalize = value => {
     if (Array.isArray(value)) return value.map(normalize);
-    if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).filter(key => key !== 'uid').sort().map(key => [key, normalize(value[key])]));
+    if (value && typeof value === 'object')
+      return Object.fromEntries(
+        Object.keys(value)
+          .filter(key => key !== 'uid')
+          .sort()
+          .map(key => [key, normalize(value[key])]),
+      );
     return value;
   };
   return JSON.stringify(normalize(entry));
@@ -3367,7 +4823,9 @@ async function uninstallWorkshopInstall(delta = {}) {
     registry.profiles = registry.profiles.filter(item => !characterIds.has(item.id));
     saveCharacterProfiles(registry);
     const library = getPortraitLibrary();
-    removed.forEach(profile => { delete library.entries[profile.name]; });
+    removed.forEach(profile => {
+      delete library.entries[profile.name];
+    });
     savePortraitLibrary(library);
   }
 
@@ -3376,8 +4834,12 @@ async function uninstallWorkshopInstall(delta = {}) {
     const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
     const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
     if (typeof worldbook === 'function' && typeof replaceWorldbook === 'function') {
-      const current = await worldbook(getWorldbookName()) || [];
-      await replaceWorldbook(getWorldbookName(), current.filter(entry => !worldbookNames.has(entry.name)), { render: 'immediate' });
+      const current = (await worldbook(getWorldbookName())) || [];
+      await replaceWorldbook(
+        getWorldbookName(),
+        current.filter(entry => !worldbookNames.has(entry.name)),
+        { render: 'immediate' },
+      );
     }
   }
 
@@ -3387,7 +4849,10 @@ async function uninstallWorkshopInstall(delta = {}) {
     const replacer = getWorkshopApi('replaceTavernRegexes');
     if (typeof getter === 'function' && typeof replacer === 'function') {
       const current = getter({ type: 'character', name: 'current' }) || [];
-      await replacer(current.filter(item => !regexIds.has(item.id)), { type: 'character', name: 'current' });
+      await replacer(
+        current.filter(item => !regexIds.has(item.id)),
+        { type: 'character', name: 'current' },
+      );
     }
   }
 
@@ -3396,22 +4861,99 @@ async function uninstallWorkshopInstall(delta = {}) {
     const getter = getWorkshopApi('getScriptTrees');
     const replacer = getWorkshopApi('replaceScriptTrees');
     if (typeof getter === 'function' && typeof replacer === 'function') {
-      const prune = nodes => (nodes || []).map(node => node?.type === 'folder' ? { ...node, scripts: prune(node.scripts) } : node).filter(node => node?.type === 'folder' ? node.scripts.length : !scriptIds.has(node?.id));
+      const prune = nodes =>
+        (nodes || [])
+          .map(node => (node?.type === 'folder' ? { ...node, scripts: prune(node.scripts) } : node))
+          .filter(node => (node?.type === 'folder' ? node.scripts.length : !scriptIds.has(node?.id)));
       await replacer(prune(JSON.parse(JSON.stringify(getter({ type: 'character' }) || []))), { type: 'character' });
     }
   }
 
   const fengyueIds = ids('fengyue');
-  if (fengyueIds.size) saveStorage(WORKSHOP_FENGYUE_STORAGE_KEY, JSON.stringify(getWorkshopFengyueItems().filter(item => !fengyueIds.has(item.id))));
+  if (fengyueIds.size)
+    saveStorage(
+      WORKSHOP_FENGYUE_STORAGE_KEY,
+      JSON.stringify(getWorkshopFengyueItems().filter(item => !fengyueIds.has(item.id))),
+    );
 
   const generatorIds = ids('generators');
   if (generatorIds.size) generatorIds.forEach(id => getCharacterGenerator()?.removeGeneratorDefinition?.(id));
-  if (characterIds.size) {
+
+  const scenarioIds = ids('scenarios');
+  if (scenarioIds.size) {
+    const getCurrentName = getWorkshopApi('getCurrentCharacterName');
+    const getCharacter = getWorkshopApi('getCharacter');
+    const replaceCharacter = getWorkshopApi('replaceCharacter');
+    const characterName = typeof getCurrentName === 'function' ? getCurrentName() : '';
+    if (characterName && typeof getCharacter === 'function' && typeof replaceCharacter === 'function') {
+      const character = await getCharacter(characterName);
+      const installed = character?.extensions?.canming_dlc;
+      if (installed?.id && scenarioIds.has(installed.id)) {
+        await restoreScenarioCharacterAdaptations(installed.characterAdaptationBackups || []);
+        const installedWorldbookNames = new Set((installed.worldbookEntries || []).filter(Boolean));
+        const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
+        const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
+        if (installedWorldbookNames.size && typeof worldbook === 'function' && typeof replaceWorldbook === 'function') {
+          const current = (await worldbook(getWorldbookName())) || [];
+          const restored = current.filter(entry => !installedWorldbookNames.has(entry?.name));
+          for (const backup of [...(installed.worldbookEntryBackups || [])].sort(
+            (left, right) => Number(left?.index || 0) - Number(right?.index || 0),
+          )) {
+            if (!backup?.entry?.name) continue;
+            restored.splice(Math.min(Math.max(Number(backup.index) || 0, 0), restored.length), 0, backup.entry);
+          }
+          await replaceWorldbook(getWorldbookName(), restored, { render: 'immediate' });
+        }
+        character.first_messages = JSON.parse(
+          JSON.stringify(installed.originalFirstMessages || character.first_messages || []),
+        );
+        // 酒馆助手在写回角色卡时会合并 extensions；直接 delete 只会让本次
+        // 请求缺少该字段，服务端原有的 canming_dlc 反而会被保留下来。
+        // 用 null 作为明确的清除值，之后安装新 DLC 时会正常覆盖它。
+        character.extensions.canming_dlc = null;
+        await replaceCharacter(characterName, character, { render: 'immediate' });
+        const verifiedCharacter = await getCharacter(characterName);
+        if (verifiedCharacter?.extensions?.canming_dlc?.id)
+          throw new Error('角色卡中的身份 DLC 安装标记未能清除，请重试。');
+        removeActiveDlcContext(characterName);
+        try {
+          delete globalThis.__CMYJ_DLC_CONTEXT_V1__;
+        } catch {}
+        ACTIVE_DLC_CONTEXT = null;
+        getPortraitLibrary();
+        getCharacterProfiles();
+      }
+    }
+  }
+  if (characterIds.size || scenarioIds.size) {
     await syncPortraitIllustrationRule();
     await syncExtensionCharacterIndex();
   }
   renderStatusbarBehindWorkshop();
   return true;
+}
+
+async function uninstallCurrentScenario() {
+  try {
+    const getCurrentName = getWorkshopApi('getCurrentCharacterName');
+    const getCharacter = getWorkshopApi('getCharacter');
+    const characterName = typeof getCurrentName === 'function' ? getCurrentName() : '';
+    if (!characterName || typeof getCharacter !== 'function') throw new Error('请先打开《残明余烬》基础卡。');
+    const character = await getCharacter(characterName);
+    const installed = character?.extensions?.canming_dlc;
+    if (!installed?.id) throw new Error('当前没有已安装的身份 DLC。');
+    const name = installed.name || installed.id;
+    await uninstallWorkshopInstall({ scenarios: [installed.id] });
+    await getCanmingWorkshop()?.forgetScenarioInstall?.(installed.id, {
+      cleanup: true,
+      bridge: createWorkshopBridge(),
+    });
+    showToast(`✓ 已卸载身份 DLC「${name}」，基础卡开场已经恢复`, 'ok');
+    return { scenarioId: installed.id, name };
+  } catch (error) {
+    showToast(`✗ 身份 DLC 卸载失败：${error?.message || '未知错误'}`, 'err');
+    throw error;
+  }
 }
 
 function createWorkshopBridge() {
@@ -3439,6 +4981,12 @@ function createWorkshopBridge() {
     importRegexes: importWorkshopRegexes,
     importScripts: importWorkshopScripts,
     importFengyueItems: importWorkshopFengyueItems,
+    importScenarioPackage: importScenarioWorkshopPackage,
+    openScenarioGenerator: () => {
+      getCanmingWorkshop()?.close?.();
+      return openScenarioGenerator();
+    },
+    reloadAfterScenarioInstall: () => window.location.reload(),
     snapshotInstallState: snapshotWorkshopInstallState,
     uninstallInstall: uninstallWorkshopInstall,
   };
@@ -3446,9 +4994,16 @@ function createWorkshopBridge() {
 
 async function openCanmingWorkshop(workshopOptions = {}) {
   try {
-    const workshop = getCanmingWorkshop() ?? await loadCanmingWorkshopScript();
+    const workshop = getCanmingWorkshop() ?? (await loadCanmingWorkshopScript());
     if (!workshop?.open) throw new Error('创意工坊接口未注册。');
-    const opening = workshop.open({ mountDocument: frameDocument, theme, toast: showToast, dialog: canmingUiDialog, bridge: createWorkshopBridge(), ...workshopOptions });
+    const opening = workshop.open({
+      mountDocument: frameDocument,
+      theme,
+      toast: showToast,
+      dialog: canmingUiDialog,
+      bridge: createWorkshopBridge(),
+      ...workshopOptions,
+    });
     const workshopRoot = frameDocument.getElementById('canming-workshop-root');
     if (workshopRoot) workshopRoot.style.zIndex = '60';
     await opening;
@@ -3505,7 +5060,7 @@ function loadVariableEditorScript() {
 
 async function openVariableEditor() {
   try {
-    const editor = getVariableEditor() ?? await loadVariableEditorScript();
+    const editor = getVariableEditor() ?? (await loadVariableEditorScript());
     if (!editor?.open) throw new Error('变量修改器接口未注册。');
     editor.open({
       mountDocument: frameDocument,
@@ -3538,6 +5093,7 @@ function renderPanel() {
             <span class="cm-tools-dropdown">
               <button data-action="workshop" class="cm-tools-item">☁ 云端创意工坊</button>
               <button data-action="character-generator" class="cm-tools-item">${characterGeneratorIcon()} 万象生成器</button>
+              <button data-action="scenario-generator" class="cm-tools-item">${scenarioGeneratorIcon()} 开局生成器</button>
               <button data-action="variable-editor" class="cm-tools-item">${editIcon()} 变量修改器</button>
               <button data-action="character-manager" class="cm-tools-item">${characterManagerIcon()} 角色与立绘管理</button>
             </span>
@@ -3549,7 +5105,12 @@ function renderPanel() {
       </header>
       <div class="cm-shell">
         <nav class="cm-tabs">
-          ${buildTabs().map(([id, label]) => `<button class="${activeTab === id ? 'active' : ''}" data-tab="${id}">${html(label)}</button>`).join('')}
+          ${buildTabs()
+            .map(
+              ([id, label]) =>
+                `<button class="${activeTab === id ? 'active' : ''}" data-tab="${id}">${html(label)}</button>`,
+            )
+            .join('')}
         </nav>
         <section class="cm-content">${renderTabContent()}</section>
       </div>
@@ -3592,7 +5153,7 @@ function styleText() {
     .cm-shell{position:relative;z-index:1;display:grid;grid-template-columns:120px 1fr;min-height:0;flex:1}.cm-tabs{padding:14px 10px;border-right:1px solid var(--line);overflow:auto}.cm-tabs button{width:100%;margin:3px 0;padding:10px 12px;border:0;border-radius:12px;background:transparent;text-align:left;cursor:pointer;color:var(--muted)}.cm-tabs button:hover{background:rgba(0,0,0,.05);color:var(--ink)}.cm-tabs button.active{background:var(--accent);color:#fff;box-shadow:0 8px 18px var(--glow)}.cm-content{padding:18px;overflow:auto}.cm-grid{display:grid;gap:14px}.cm-grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}.cm-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}.cm-card,.cm-item{border:1px solid var(--line);border-radius:16px;background:var(--card);box-shadow:0 10px 22px rgba(0,0,0,.06)}.cm-card{padding:14px;margin-bottom:14px}.cm-card h3{margin:0 0 12px;color:var(--accent)}.cm-card h4{margin:14px 0 8px}.cm-item{padding:12px;margin:9px 0}.cm-item.private{border-color:rgba(190,105,105,.34);background:linear-gradient(135deg,var(--card),rgba(170,83,83,.12))}.cm-item-title{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px}.cm-item p,.cm-item small,.cm-empty,.cm-heart,.cm-line{color:var(--muted);line-height:1.7}.cm-empty{margin:0;text-align:center}.cm-empty:before{content:'';display:block;margin:12px auto;width:40px;height:1px;background:var(--line)}.cm-power-card{margin-bottom:12px}.cm-power-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.cm-power-head h3{margin:0}.cm-heart{border-left:3px solid var(--line);padding-left:10px}.cm-meta{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px dashed var(--line)}.cm-meta span{color:var(--muted)}.cm-tag,.cm-pill{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:999px;padding:2px 8px;font-size:12px;color:var(--muted);background:rgba(0,0,0,.06)}.cm-tag.safe{color:var(--accent2)}.cm-tag.war{color:#b7522e}.cm-tag.private{color:#b46a81}.cm-pill{margin:3px 4px 3px 0}.cm-hero,.cm-private-head{border:1px solid var(--line);border-radius:20px;padding:18px;margin-bottom:14px;background:linear-gradient(135deg,var(--card),transparent);display:flex;justify-content:space-between;gap:12px}.cm-place{color:var(--muted)}.cm-seal{width:72px;height:72px;border:2px solid var(--accent);border-radius:50%;display:grid;place-items:center;color:var(--accent);transform:rotate(-12deg);opacity:.74}.cm-bar-row{margin:8px 0}.cm-bar-head{display:flex;justify-content:space-between;font-size:13px;color:var(--muted)}.cm-bar{height:8px;border-radius:999px;background:var(--bar-track);overflow:hidden}.cm-bar i{display:block;height:100%;border-radius:inherit;background:var(--accent2)}.cm-bar i.high{background:var(--bar-high)}.cm-bar i.mid{background:var(--bar-mid)}.cm-bar i.low,.cm-bar i.danger{background:var(--bar-low)}.cm-mini-bars{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 12px}.cm-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}.cm-compact-list{line-height:2}.cm-subgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.cm-birth{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0}.cm-fold{border:1px solid var(--line);border-radius:16px;background:var(--card);margin:0 0 12px;overflow:hidden;box-shadow:0 8px 18px rgba(0,0,0,.045)}.cm-fold summary{list-style:none;cursor:pointer;padding:14px 16px;color:var(--accent);font-weight:700;letter-spacing:.08em;display:flex;align-items:center;justify-content:space-between}.cm-fold summary::-webkit-details-marker{display:none}.cm-fold summary:after{content:'›';font-size:20px;font-weight:400;line-height:1;color:var(--muted);transition:transform .18s ease}.cm-fold[open] summary{border-bottom:1px solid var(--line);background:rgba(255,255,255,.08)}.cm-fold[open] summary:after{transform:rotate(90deg)}.cm-fold-body{padding:12px}.cm-row-list{display:flex;flex-direction:column;gap:8px}.cm-row-item{display:grid;grid-template-columns:minmax(180px,1fr) auto;gap:12px;align-items:center;border:1px solid var(--line);border-radius:14px;background:var(--card);padding:11px 12px}.cm-row-main{min-width:0}.cm-row-main b{display:block;color:var(--ink);margin-bottom:4px}.cm-row-main span{display:block;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cm-row-tags{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px}.cm-title-actions{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}.cm-mini-action{border:1px solid rgba(180,50,35,.45);border-radius:999px;background:transparent;color:rgba(180,50,35,.7);font-size:12px;padding:3px 10px;cursor:pointer;transition:all .15s}.cm-mini-action:hover{background:#b84835;color:#fff;border-color:#b84835}.cm-mini-portrait{border-color:rgba(110,80,140,.55);color:rgba(110,80,140,.75)}.cm-mini-portrait:hover{background:#7b5ea7;color:#fff;border-color:#7b5ea7}.cm-mini-clear{border-color:rgba(180,130,40,.55);color:rgba(180,130,40,.75)}.cm-mini-clear:hover{background:#b8903a;color:#fff;border-color:#b8903a}.cm-mini-settle{border-color:rgba(111,138,103,.55);color:rgba(111,138,103,.75)}.cm-mini-settle:hover{background:#6f8a67;color:#fff;border-color:#6f8a67}.cm-settle-snapshot{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)}.cm-settle-snapshot p{margin:3px 0;font-size:12px;color:var(--muted);line-height:1.6}.cm-info-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 14px;margin:8px 0}.cm-private-row{width:100%;display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;padding:10px 14px;border:1px solid var(--line);border-radius:14px;background:var(--card);text-align:left;cursor:pointer;transition:all .15s}.cm-private-row:hover{border-color:var(--accent);box-shadow:0 8px 18px rgba(0,0,0,.06)}.cm-private-avatar{width:44px;height:44px;border-radius:50%;overflow:hidden;border:2px solid var(--line);flex-shrink:0}.cm-private-avatar img{width:100%;height:100%;object-fit:cover;display:block}.cm-private-avatar-empty{background:var(--bar-track)}.cm-private-body{display:flex;flex-direction:column;gap:3px;min-width:0}.cm-private-name{font-weight:700;color:var(--ink)}.cm-private-tags{display:flex;gap:5px;flex-wrap:wrap}.cm-private-heart{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}.cm-private-chevron{font-size:20px;color:var(--muted);line-height:1;transition:transform .15s}.cm-private-row:hover .cm-private-chevron{transform:translateX(3px);color:var(--accent)}.cm-power-row{width:100%;display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;padding:10px 14px;border:1px solid var(--line);border-radius:14px;background:var(--card);text-align:left;cursor:pointer;transition:all .15s}.cm-power-row:hover{border-color:var(--accent);box-shadow:0 8px 18px rgba(0,0,0,.06)}.cm-power-avatar{width:44px;height:44px;border-radius:10px;display:grid;place-items:center;background:var(--accent);color:#fff;font-weight:700;font-size:20px;flex-shrink:0;letter-spacing:.04em}.cm-power-body{display:flex;flex-direction:column;gap:3px;min-width:0}.cm-power-name{font-weight:700;color:var(--ink);display:flex;align-items:center;gap:8px;flex-wrap:wrap}.cm-power-tags{display:flex;gap:5px;flex-wrap:wrap}.cm-power-summary{color:var(--muted);font-size:12px}.cm-power-chevron{font-size:20px;color:var(--muted);line-height:1;transition:transform .15s}.cm-power-row:hover .cm-power-chevron{transform:translateX(3px);color:var(--accent)}.cm-modal-mask{position:absolute;inset:0;z-index:5;background:rgba(20,12,7,.45);display:grid;place-items:center;padding:18px}.cm-modal{width:min(620px,96%);max-height:86%;overflow:auto;border:1px solid var(--line);border-radius:20px;background:linear-gradient(135deg,var(--paper),var(--paper2));box-shadow:0 22px 70px var(--shadow)}.cm-modal-head{display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid var(--line)}.cm-modal-head h2{margin:0}.cm-modal-head button{border:1px solid var(--line);border-radius:999px;background:var(--card);padding:5px 11px;cursor:pointer}.cm-modal-body{padding:16px}.cm-modal-body h3{color:var(--accent);margin:16px 0 8px}.cm-modal-power{width:min(680px,96%)} .cm-modal-power .cm-list{grid-template-columns:1fr}.cm-map-wrap{display:flex;flex-direction:column;gap:12px}.cm-map-mode-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px}.cm-map-mode-toggles{display:flex}.cm-map-mode-btn{border:1px solid var(--line);border-radius:0;background:var(--card);color:var(--muted);padding:5px 16px;cursor:pointer;font-size:13px;letter-spacing:.06em;transition:all .15s}.cm-map-mode-btn:first-child{border-radius:8px 0 0 8px}.cm-map-mode-btn:last-child{border-radius:0 8px 8px 0}.cm-map-mode-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);box-shadow:0 4px 10px var(--glow)}#echarts-map-wrapper{position:relative;width:100%;height:0;padding-top:50%;border:1px solid var(--line);border-radius:14px;background:var(--paper2);overflow:hidden;overscroll-behavior:contain;touch-action:manipulation}#echarts-map{position:absolute;top:0;left:0;width:100%;height:100%}.cm-map-overlay{position:absolute;inset:0;display:none;pointer-events:none;z-index:5}.cm-map-overlay.active{display:flex;align-items:center;justify-content:center;padding:12px;pointer-events:auto}.cm-map-overlay-card{position:relative;width:min(420px,92%);max-height:70%;overflow-y:auto;border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:0 0 40px var(--shadow);padding:16px;pointer-events:auto}.cm-map-overlay-close{position:absolute;top:10px;right:14px;border:0;background:none;cursor:pointer;color:var(--muted);font-size:20px;line-height:1}.cm-map-legend{display:flex;flex-wrap:wrap;gap:10px}.cm-map-legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}.cm-map-legend-item i{width:18px;height:14px;border-radius:6px;border:1px solid var(--line)}.cm-map-detail-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.cm-map-detail-head h3{margin:0;color:var(--accent)}.cm-map-overlay-body{position:relative}.cm-map-powers{display:flex;flex-direction:column;gap:10px;margin-top:6px}.cm-map-power{padding:10px 0;border-bottom:1px dashed var(--line)}.cm-map-power:last-child{border-bottom:0}.cm-map-power .cm-bar{height:4px;margin:3px 0 6px}.cm-map-power .cm-line{margin:3px 0;font-size:13px;color:var(--muted)}.cm-map-power .cm-heart{margin:3px 0 0;font-size:13px;line-height:1.6}.cm-error{height:100%;display:grid;place-content:center;text-align:center;color:var(--muted)}.cm-diff-options{display:flex;flex-direction:column;gap:8px}.cm-diff-btn{display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card);cursor:pointer;text-align:left;transition:all .15s}.cm-diff-btn:hover{border-color:var(--accent);box-shadow:0 4px 12px rgba(0,0,0,.08)}.cm-diff-btn.active{border-color:var(--accent);background:rgba(164,61,45,.08);box-shadow:0 0 0 1px var(--accent)}.cm-diff-name{font-weight:700;color:var(--ink);font-size:15px;min-width:48px}.cm-diff-desc{flex:1;color:var(--muted);font-size:12px}.cm-diff-check{color:var(--accent);font-weight:700;font-size:16px}.cm-toast{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;padding:14px 28px;border-radius:14px;font-size:14px;font-weight:700;letter-spacing:.05em;pointer-events:none;animation:cm-toast-in .3s ease;border:1px solid var(--line);box-shadow:0 10px 36px var(--shadow)}.cm-toast.ok{background:var(--card);color:var(--accent2)}.cm-toast.ok::before{content:"✓ ";color:var(--accent2)}.cm-toast.err{background:var(--card);color:var(--bar-low)}.cm-toast.err::before{content:"✗ ";color:var(--bar-low)}@keyframes cm-toast-in{from{opacity:0;transform:translate(-50%,-50%) scale(.9)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
     .cm-modal-portrait{width:min(720px,96%)}.cm-portrait-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}.cm-portrait-card{border:1px solid var(--line);border-radius:16px;background:var(--card);padding:8px 8px 6px;cursor:pointer;transition:all .2s;display:flex;flex-direction:column;align-items:center;gap:6px;box-shadow:0 8px 18px rgba(0,0,0,.04)}.cm-portrait-card:hover{border-color:var(--accent);box-shadow:0 12px 28px var(--glow);transform:translateY(-3px)}.cm-portrait-img-wrap{width:100%;aspect-ratio:3/4;overflow:hidden;border-radius:10px;background:var(--bar-track)}.cm-portrait-img-wrap img{width:100%;height:100%;object-fit:cover;display:block}.cm-portrait-label{font-weight:700;color:var(--ink);font-size:14px;letter-spacing:.05em}.cm-portrait-detail h3{color:var(--accent);margin:0 0 14px;font-size:16px}.cm-portrait-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.cm-portrait-figure{margin:0;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card);box-shadow:0 8px 18px rgba(0,0,0,.04)}.cm-portrait-figure img{width:100%;display:block}.cm-portrait-figure figcaption{padding:8px 12px;font-size:13px;color:var(--muted);text-align:center;letter-spacing:.08em;border-top:1px solid var(--line)}
     .cm-portrait-overlay{position:absolute;inset:0;z-index:6;background:rgba(18,12,8,.94);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;animation:cm-fade-in .35s ease;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;touch-action:manipulation}.cm-portrait-overlay *{user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}.cm-portrait-frame{display:flex;flex-direction:column;align-items:center;max-width:95%;max-height:92vh;animation:cm-portrait-enter .4s ease}.cm-portrait-stage{display:flex;align-items:center;gap:8px}.cm-portrait-view{display:flex;flex-direction:column;align-items:center}.cm-portrait-view img{max-width:100%;max-height:76vh;object-fit:contain;border:3px solid rgba(180,130,100,.35);border-radius:2px;box-shadow:0 0 60px rgba(0,0,0,.6);background:var(--paper2);padding:4px}.cm-portrait-caption{display:flex;flex-direction:column;align-items:center;margin-top:6px}.cm-portrait-caption .cm-portrait-name{color:#e8d8c0;font-size:18px;font-weight:700;letter-spacing:.12em;text-shadow:0 0 12px rgba(0,0,0,.5)}.cm-portrait-caption .cm-portrait-cat{font-size:13px;color:rgba(200,180,155,.65);margin-top:2px;letter-spacing:.12em}.cm-portrait-arrow{background:none;border:1px solid rgba(180,150,120,.25);color:rgba(210,190,160,.55);font-size:24px;width:38px;height:38px;border-radius:50%;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .25s;user-select:none;-webkit-user-select:none;line-height:1;outline:none;touch-action:manipulation}.cm-portrait-arrow:focus{outline:none}.cm-portrait-arrow:hover{background:rgba(180,70,45,.35);color:#e8d8c0;border-color:rgba(200,120,80,.5)}.cm-portrait-dots{display:flex;gap:10px;margin-top:10px}.cm-portrait-dot{width:6px;height:6px;border-radius:50%;background:rgba(180,150,120,.3);transition:all .25s}.cm-portrait-dot.active{background:rgba(210,170,120,.8);box-shadow:0 0 8px rgba(200,150,100,.5)}.cm-portrait-hint{position:absolute;bottom:14px;left:0;right:0;text-align:center;color:rgba(180,160,140,.4);font-size:12px;letter-spacing:2px}@keyframes cm-fade-in{from{opacity:0}to{opacity:1}}@keyframes cm-portrait-enter{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}.cm-shop-keeper{border-left:3px solid #b46a81;padding:6px 10px;margin-bottom:8px}.cm-shop-points{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border:1px solid var(--line);border-radius:999px;font-size:14px}.cm-shop-coin{font-size:18px;color:#b46a81}.cm-shop-grid{display:flex;flex-direction:column;gap:10px}.cm-shop-item{display:flex;align-items:flex-start;gap:10px;border:1px solid var(--line);border-radius:14px;background:var(--card);padding:12px}.cm-shop-item-body{flex:1;min-width:0}.cm-shop-price{display:inline-block;padding:2px 8px;border-radius:999px;background:rgba(180,106,129,.12);color:#b46a81;font-size:12px;font-weight:700}.cm-shop-buy.disabled{opacity:.35;pointer-events:none}.cm-shop-desc{font-size:13px;line-height:1.8;color:var(--muted)}.cm-setting-desc{font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.6}.cm-background-input{width:100%;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);padding:10px 12px;font:inherit;outline:none}.cm-background-input:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}.cm-background-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.cm-background-actions .cm-diff-btn{width:auto;justify-content:center}.cm-modal-character-studio{width:min(940px,97%);background:linear-gradient(145deg,var(--paper),var(--paper2))}.cm-studio{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:460px}.cm-studio-sidebar{padding:14px 10px;border-right:1px solid var(--line);background:rgba(0,0,0,.035)}.cm-studio-sidebar-head{display:flex;justify-content:space-between;align-items:center;padding:0 4px 10px;color:var(--accent);font-size:12px;font-weight:700;letter-spacing:.12em}.cm-studio-sidebar-head small{color:var(--muted);font-size:11px;font-weight:400;letter-spacing:0}.cm-studio-search{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--ink);padding:8px 9px;margin:0 0 9px;font:inherit;font-size:12px;outline:none}.cm-studio-search:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}.cm-studio-character-list{display:flex;flex-direction:column;gap:4px;max-height:344px;overflow-y:auto;overscroll-behavior:contain;padding:4px;border:1px solid var(--line);border-radius:11px;background:rgba(0,0,0,.025)}.cm-studio-search-empty{margin:9px 4px;color:var(--muted);font-size:12px;text-align:center}.cm-studio-character{border:0;border-left:2px solid transparent;border-radius:9px;background:transparent;color:var(--muted);padding:9px 10px;text-align:left;cursor:pointer}.cm-studio-character b,.cm-studio-character span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cm-studio-character b{color:var(--ink);font-size:14px}.cm-studio-character span{font-size:11px;margin-top:3px}.cm-studio-character:hover,.cm-studio-character.active{background:rgba(164,61,45,.09);border-left-color:var(--accent)}.cm-studio-list-empty{color:var(--muted);font-size:12px;padding:8px}.cm-studio-main{min-width:0;display:flex;flex-direction:column}.cm-studio-tabs{display:flex;align-items:center;gap:4px;padding:10px 14px;border-bottom:1px solid var(--line)}.cm-studio-tabs>button{border:0;border-radius:8px;background:transparent;color:var(--muted);padding:7px 10px;font:inherit;font-size:13px;cursor:pointer}.cm-studio-tabs>button.active{background:var(--accent);color:#fff}.cm-studio-tabs>button:disabled{opacity:.35;cursor:not-allowed}.cm-studio-actions{margin-left:auto;display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.cm-studio-content{padding:16px;overflow:auto}.cm-studio-note,.cm-studio-field-help{margin:0;color:var(--muted);font-size:12px;line-height:1.6}.cm-studio-note{padding:9px 11px;border-left:3px solid var(--accent2);background:rgba(0,0,0,.035)}.cm-studio-empty{padding:20px;color:var(--muted);text-align:center}.theme-ink .cm-modal-character-studio{background:linear-gradient(145deg,#f5f0e4,#ddd4c2)}@media(max-width:620px){.cm-studio{grid-template-columns:1fr!important}.cm-studio-sidebar{border-right:0!important;border-bottom:1px solid var(--line);padding:10px!important;min-width:0!important;overflow:hidden!important;max-width:100%!important}.cm-studio-character-list{display:flex!important;flex-direction:row!important;flex-wrap:nowrap!important;max-height:none!important;overflow-x:auto!important;overflow-y:hidden!important}.cm-studio-character{min-width:120px!important;flex-shrink:0!important}.cm-studio-tabs{flex-wrap:wrap}.cm-studio-actions{margin-left:0;width:100%;justify-content:flex-start}}.cm-modal-character-manager{width:min(780px,96%);background:linear-gradient(145deg,var(--paper),var(--paper2))}.cm-character-linked{display:flex;flex-wrap:wrap;gap:6px;padding:2px 0 10px}.cm-character-linked-chip{display:inline-flex;align-items:center;gap:7px;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--line));border-radius:999px;padding:5px 8px 5px 10px;background:rgba(164,61,45,.08);color:var(--ink);font:inherit;font-size:12px;cursor:pointer}.cm-character-linked-chip:hover{border-color:var(--accent);color:var(--accent)}.cm-character-linked-chip i{font-style:normal;font-size:16px;line-height:10px;color:var(--muted)}.cm-character-linked-empty{color:var(--muted);font-size:13px;padding:5px 0}.cm-character-picker-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;border:1px dashed var(--line);border-radius:10px;background:transparent;color:var(--accent);padding:9px 11px;font:inherit;font-size:13px;font-weight:700;cursor:pointer}.cm-character-picker-toggle:hover,.cm-character-picker-toggle.open{border-color:var(--accent);background:rgba(164,61,45,.06)}.cm-character-picker-toggle span{font-size:12px;font-weight:400;color:var(--muted)}.cm-character-picker{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}.cm-character-picker-results{max-height:278px;overflow:auto;margin-top:8px;padding-right:4px}.cm-character-picker-empty,.cm-character-picker-more{margin:8px 2px;color:var(--muted);font-size:12px;text-align:center}.cm-character-picker-more{border-top:1px dashed var(--line);padding-top:9px}.cm-character-toolbar-actions{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap}.cm-character-toolbar{display:flex;align-items:end;gap:8px;padding:10px 12px;margin-bottom:16px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(90deg,rgba(0,0,0,.035),transparent)}.cm-character-worldbook{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.1)}.cm-character-worldbook-head{display:flex;justify-content:space-between;gap:10px;align-items:baseline;margin-bottom:8px;color:var(--accent);font-weight:700;font-size:13px}.cm-character-worldbook-head small{color:var(--muted);font-weight:400}.cm-character-worldbook-row{display:flex!important;grid-template-columns:none!important;align-items:flex-start;gap:9px;padding:9px 4px;border-top:1px dashed var(--line);color:var(--ink)!important;font-weight:400!important}.cm-character-worldbook-row input{margin-top:4px}.cm-character-worldbook-row span{display:grid;gap:2px}.cm-character-worldbook-row small{color:var(--muted);font-size:12px;line-height:1.45}.cm-character-status{padding:9px 12px;border-left:3px solid var(--accent2);background:rgba(0,0,0,.035);color:var(--muted);font-size:13px}.theme-ink .cm-modal-character-manager{background:linear-gradient(145deg,#f5f0e4,#ddd4c2)}.cm-modal-portrait-manager{width:min(780px,96%);background:linear-gradient(145deg,var(--paper),var(--paper2));backdrop-filter:none}.theme-ink .cm-modal-portrait-manager{background:linear-gradient(145deg,#f5f0e4,#ddd4c2);box-shadow:0 24px 70px rgba(23,26,23,.42)}.cm-portrait-toolbar{display:flex;align-items:end;gap:8px;padding:10px 12px;margin-bottom:16px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(90deg,rgba(0,0,0,.035),transparent)}.cm-portrait-select{display:grid!important;gap:4px!important;flex:1;color:var(--muted)!important;font-size:11px!important;letter-spacing:.12em}.cm-portrait-select select{width:100%;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);padding:5px 0;font:inherit;font-size:15px;outline:none}.cm-portrait-toolbar-btn{height:34px;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--muted);padding:0 10px;cursor:pointer}.cm-portrait-toolbar-btn:hover{border-color:var(--accent);color:var(--accent)}.cm-portrait-toolbar-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}.cm-portrait-toolbar-btn.icon{width:34px;padding:0}.cm-portrait-toolbar-btn:disabled{opacity:.35;cursor:not-allowed}.cm-portrait-manager-list{display:none}.cm-portrait-form{display:grid;gap:12px}.cm-portrait-form label{display:grid;gap:6px;color:var(--accent);font-weight:700;font-size:13px}.cm-portrait-textarea{min-height:92px;resize:vertical;line-height:1.55}.cm-portrait-enabled{display:block!important;color:var(--muted)!important;font-weight:400!important}.cm-portrait-enabled input{margin-right:7px}.cm-portrait-category-editor{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.12)}.cm-portrait-category-head{display:grid;grid-template-columns:minmax(110px,.45fr) minmax(0,1fr) 32px;gap:8px;margin:0 0 8px;color:var(--accent);font-size:12px;letter-spacing:.08em}.cm-portrait-category-row{display:grid;grid-template-columns:minmax(110px,.45fr) minmax(0,1fr) 32px;gap:8px;align-items:center;margin:8px 0}.cm-portrait-row-remove{width:32px;height:32px;border:1px solid var(--line);border-radius:50%;background:transparent;color:var(--muted);font-size:19px;line-height:1;cursor:pointer}.cm-portrait-row-remove:hover{border-color:#b84835;background:#b84835;color:#fff}.cm-portrait-add-row{margin-top:6px;border:0;background:transparent;color:var(--accent);font:inherit;font-weight:700;cursor:pointer;padding:6px 0}.cm-portrait-add-row span{font-size:18px;vertical-align:-1px}.theme-ink .cm-portrait-category-editor{background:rgba(255,255,255,.48)}@media(max-width:620px){.cm-portrait-category-head{display:none}.cm-portrait-category-row{grid-template-columns:1fr 1fr 32px}}
-    .cm-tools-dropdown [data-action="workshop"]{display:none!important}.cm-header>div:first-child{min-width:0}.cm-actions{flex-wrap:nowrap;white-space:nowrap}.cm-workshop-cloud{position:relative;color:var(--accent)!important}.cm-workshop-cloud i{position:absolute;right:-5px;top:-5px;display:grid;place-items:center;min-width:16px;height:16px;padding:0 4px;border:2px solid var(--paper);border-radius:999px;background:#d9463e;color:#fff;font:normal 9px/1 sans-serif}.cm-workshop-cloud i[hidden]{display:none!important}@media(max-width:768px){.cm-header{padding:11px 12px!important;gap:8px!important}.cm-header h1{max-width:42vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:19px}.cm-kicker{font-size:9px!important;letter-spacing:.13em!important}.cm-actions{gap:5px!important}.cm-icon-btn{width:30px!important;height:30px!important;padding:6px!important}.cm-tools-dropdown{right:0!important;left:auto!important}.cm-tabs{gap:5px!important;padding:8px!important}.cm-tabs button{padding:8px 10px!important}.cm-content{padding:10px!important}}
+    .cm-tools-dropdown [data-action="workshop"]{display:none!important}.cm-header>div:first-child{min-width:0}.cm-actions{flex-wrap:nowrap;white-space:nowrap}.cm-workshop-cloud{position:relative;color:var(--accent)!important}.cm-workshop-cloud i{position:absolute;right:-5px;top:-5px;display:grid;place-items:center;min-width:16px;height:16px;padding:0 4px;border:2px solid var(--paper);border-radius:999px;background:#d9463e;color:#fff;font:normal 9px/1 sans-serif}.cm-workshop-cloud i[hidden]{display:none!important}.cm-scenario-entry{display:inline-flex!important;align-items:center;gap:6px!important;border-color:color-mix(in srgb,var(--accent) 60%,var(--line))!important;background:color-mix(in srgb,var(--accent) 10%,var(--card))!important;color:var(--accent)!important;font-weight:700;letter-spacing:.04em}.cm-scenario-entry:hover{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)!important}.cm-scenario-entry svg{width:16px;height:16px}@media(max-width:768px){.cm-header{padding:11px 12px!important;gap:8px!important}.cm-header h1{max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:19px}.cm-kicker{font-size:9px!important;letter-spacing:.13em!important}.cm-actions{gap:5px!important}.cm-icon-btn{width:30px!important;height:30px!important;padding:6px!important}.cm-scenario-entry{width:30px;height:30px;padding:6px!important;justify-content:center}.cm-scenario-entry span{display:none}.cm-tools-dropdown{right:0!important;left:auto!important}.cm-tabs{gap:5px!important;padding:8px!important}.cm-tabs button{padding:8px 10px!important}.cm-content{padding:10px!important}}
     .cm-content{animation:cm-content-in .3s ease}
     .cm-card,.cm-item,.cm-fold,.cm-private-row,.cm-power-row,.cm-diff-btn,.cm-portrait-card{transition:transform .2s ease,box-shadow .2s ease}
     .cm-card:hover,.cm-item:hover,.cm-fold:hover{transform:translateY(-2px);box-shadow:0 14px 32px rgba(0,0,0,.1)}
@@ -3604,7 +5165,9 @@ function styleText() {
 
 function writeFrameDocument() {
   frameDocument.open();
-  frameDocument.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><style>${styleText()}</style></head><body></body></html>`);
+  frameDocument.write(
+    `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><style>${styleText()}</style></head><body></body></html>`,
+  );
   frameDocument.close();
 }
 
@@ -3633,15 +5196,21 @@ function loadIframeScripts() {
     };
     doc.head.appendChild(script2);
   };
-  script1.onerror = () => { win._canmingScriptsLoaded = false; };
+  script1.onerror = () => {
+    win._canmingScriptsLoaded = false;
+  };
 }
 
 function saveFoldState() {
   savedFoldState = new Set();
   try {
     const allDetails = frameDocument.querySelectorAll('.cm-fold[data-fold-key]');
-    allDetails.forEach(d => { if (d.open) savedFoldState.add(d.getAttribute('data-fold-key')); });
-  } catch { /* ignore */ }
+    allDetails.forEach(d => {
+      if (d.open) savedFoldState.add(d.getAttribute('data-fold-key'));
+    });
+  } catch {
+    /* ignore */
+  }
 }
 
 function renderModalOnly() {
@@ -3669,10 +5238,17 @@ function render() {
         if (opt && opt.series && opt.series[0]) {
           echartsGeoState = { center: opt.series[0].center, zoom: opt.series[0].zoom };
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
     if (echartsGraphInstance) {
-      try { echartsGraphInstance.dispose(); echartsGraphInstance = null; } catch { /* ignore */ }
+      try {
+        echartsGraphInstance.dispose();
+        echartsGraphInstance = null;
+      } catch {
+        /* ignore */
+      }
     }
     // 保存折叠状态与标签栏滚动位置
     saveFoldState();
@@ -3687,7 +5263,12 @@ function render() {
       savedContentScroll[renderedTab] = { left: contentEl.scrollLeft, top: contentEl.scrollTop };
     }
 
+    // 开局生成器与状态栏共用 iframe。后台刷新状态栏时保留生成器节点，
+    // 避免 body.innerHTML 将正在编辑的生成器直接销毁。
+    const scenarioGeneratorRoot = frameDocument.getElementById('canming-scenario-generator-root');
+    scenarioGeneratorRoot?.remove();
     frameDocument.body.innerHTML = `<div class="cm-root theme-${theme}">${renderPanel()}</div>`;
+    if (scenarioGeneratorRoot) frameDocument.body.appendChild(scenarioGeneratorRoot);
 
     // 移动端直接注入样式（不依赖媒体查询，确保在 iframe 内生效）
     let mobileStyle = frameDocument.getElementById('cm-mobile-style');
@@ -3797,7 +5378,7 @@ function bindFrameEvents() {
   if (body._inputHandler) body.removeEventListener('input', body._inputHandler);
   if (body._changeHandler) body.removeEventListener('change', body._changeHandler);
 
-  const clickHandler = (event) => {
+  const clickHandler = event => {
     const target = event.target;
 
     // 人物谱系：执行搜索并居中命中人物
@@ -3872,6 +5453,14 @@ function bindFrameEvents() {
       return;
     }
 
+    // 打开身份 DLC 开局生成器
+    if (target.closest('[data-action="scenario-generator"]')) {
+      event.preventDefault();
+      event.stopPropagation();
+      openScenarioGenerator();
+      return;
+    }
+
     // 打开变量修改器
     if (target.closest('[data-action="variable-editor"]')) {
       event.preventDefault();
@@ -3886,11 +5475,11 @@ function bindFrameEvents() {
       return;
     }
 
-
     if (target.closest('[data-action="character-manager-new"]')) {
       openCharacterManager();
       return;
-    }    const studioSelect = target.closest('[data-action="studio-select"]');
+    }
+    const studioSelect = target.closest('[data-action="studio-select"]');
     if (studioSelect) {
       openCharacterManager(studioSelect.getAttribute('data-character-id') || '', modalState.section || 'profile');
       return;
@@ -3900,7 +5489,8 @@ function bindFrameEvents() {
       modalState.section = studioSection.getAttribute('data-studio-section') || 'profile';
       renderModalOnly();
       return;
-    }    if (target.closest('[data-action="character-worldbook-picker"]')) {
+    }
+    if (target.closest('[data-action="character-worldbook-picker"]')) {
       modalState.worldbookPickerOpen = !modalState.worldbookPickerOpen;
       updateCharacterWorldbookSection();
       return;
@@ -3926,7 +5516,8 @@ function bindFrameEvents() {
     if (target.closest('[data-action="character-manager-import"]')) {
       frameDocument.querySelector('[data-character-import]')?.click();
       return;
-    }    const characterRemove = target.closest('[data-action="character-manager-remove"]');
+    }
+    const characterRemove = target.closest('[data-action="character-manager-remove"]');
     if (characterRemove) {
       removeCharacterProfile(characterRemove.getAttribute('data-character-id') || '');
       return;
@@ -4076,7 +5667,12 @@ function bindFrameEvents() {
     if (clearMoney) {
       event.preventDefault();
       event.stopPropagation();
-      modalState = { type: 'confirm', title: '一键清空', message: '确定要清空所有收支明细吗？此操作不可撤销。', path: '__clear_money__' };
+      modalState = {
+        type: 'confirm',
+        title: '一键清空',
+        message: '确定要清空所有收支明细吗？此操作不可撤销。',
+        path: '__clear_money__',
+      };
       render();
       return;
     }
@@ -4139,7 +5735,7 @@ function bindFrameEvents() {
     const portraitBtn = target.closest('[data-portrait-name]');
     if (portraitBtn) {
       const name = portraitBtn.getAttribute('data-portrait-name') || '';
-      if (getPortraitData()[name]) {
+      if (getAllPortraitData()[name]) {
         modalState = { type: 'portrait', name };
         render();
       }
@@ -4159,16 +5755,39 @@ function bindFrameEvents() {
     if (confirmOk) {
       const path = modalState?.path;
       modalState = null;
-      if (path === '__clear_money__') { clearAllMoney(); return; }
+      if (path === '__clear_money__') {
+        clearAllMoney();
+        return;
+      }
       if (path) execRemoveVariable(path);
       return;
     }
 
     // 立绘浮层——左右切换（局部更新 DOM，避免全量渲染导致图片闪烁）
     const portraitPrev = target.closest('[data-action="portrait-prev"]');
-    if (portraitPrev) { event.preventDefault(); event.stopPropagation(); if (modalState && modalState.type === 'portrait') { const cats = getPortraitData()[modalState.name]; const n = cats ? Object.keys(cats).length : 4; modalState.catIdx = ((modalState.catIdx ?? 0) - 1 + n) % n; updatePortraitOverlay(); } return; }
+    if (portraitPrev) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (modalState && modalState.type === 'portrait') {
+        const cats = getAllPortraitData()[modalState.name];
+        const n = cats ? Object.keys(cats).length : 4;
+        modalState.catIdx = ((modalState.catIdx ?? 0) - 1 + n) % n;
+        updatePortraitOverlay();
+      }
+      return;
+    }
     const portraitNext = target.closest('[data-action="portrait-next"]');
-    if (portraitNext) { event.preventDefault(); event.stopPropagation(); if (modalState && modalState.type === 'portrait') { const cats = getPortraitData()[modalState.name]; const n = cats ? Object.keys(cats).length : 4; modalState.catIdx = ((modalState.catIdx ?? 0) + 1) % n; updatePortraitOverlay(); } return; }
+    if (portraitNext) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (modalState && modalState.type === 'portrait') {
+        const cats = getAllPortraitData()[modalState.name];
+        const n = cats ? Object.keys(cats).length : 4;
+        modalState.catIdx = ((modalState.catIdx ?? 0) + 1) % n;
+        updatePortraitOverlay();
+      }
+      return;
+    }
 
     // 关闭弹窗（遮罩或×）
     const closeModal = target.closest('[data-action="close-modal"]');
@@ -4197,7 +5816,7 @@ function bindFrameEvents() {
     }
   };
 
-  const keyHandler = (event) => {
+  const keyHandler = event => {
     if (event.key === 'Enter' && event.target?.id === 'cm-graph-search-input') {
       event.preventDefault();
       graphSearch = event.target.value || '';
@@ -4212,31 +5831,42 @@ function bindFrameEvents() {
     }
   };
 
-  const inputHandler = (event) => {
+  const inputHandler = event => {
     const target = event.target;
     if (target && target.id === 'cm-graph-search-input') {
       graphSearch = target.value || '';
       applyGraphSearch();
-    }    const studioSearch = target?.closest?.('[data-studio-search]');
+    }
+    const studioSearch = target?.closest?.('[data-studio-search]');
     if (studioSearch && modalState?.type === 'character-studio') {
       const query = studioSearch.value.trim().toLocaleLowerCase();
       let matched = 0;
       frameDocument.querySelectorAll('[data-studio-search-text]').forEach(item => {
-        const visible = !query || String(item.dataset.studioSearchText || '').toLocaleLowerCase().includes(query);
+        const visible =
+          !query ||
+          String(item.dataset.studioSearchText || '')
+            .toLocaleLowerCase()
+            .includes(query);
         item.hidden = !visible;
         if (visible) matched++;
       });
       const empty = frameDocument.querySelector('.cm-studio-search-empty');
       if (empty) empty.hidden = matched > 0;
-    }    const worldbookSearch = target?.closest?.('[data-character-worldbook-search]');
+    }
+    const worldbookSearch = target?.closest?.('[data-character-worldbook-search]');
     if (worldbookSearch && modalState?.type === 'character-studio') {
       modalState.worldbookQuery = worldbookSearch.value || '';
       const result = frameDocument.querySelector('[data-character-worldbook-results]');
-      if (result) result.innerHTML = renderCharacterWorldbookOptions(modalState.worldbookEntries || [], new Set(modalState.selectedWorldbookEntries || []), modalState.worldbookQuery);
+      if (result)
+        result.innerHTML = renderCharacterWorldbookOptions(
+          modalState.worldbookEntries || [],
+          new Set(modalState.selectedWorldbookEntries || []),
+          modalState.worldbookQuery,
+        );
     }
   };
 
-  const changeHandler = async (event) => {
+  const changeHandler = async event => {
     const marketPayment = event.target.closest?.('[data-market-payment]');
     if (marketPayment) {
       marketPaymentCurrency = ['黄金', '白银', '铜钱'].includes(marketPayment.value) ? marketPayment.value : '白银';
@@ -4391,9 +6021,14 @@ function onLampUp(_event) {
   lamp.style.transition = '';
   if (dragState.moved) {
     clampLampToViewport();
-    saveStorage('position', JSON.stringify({ left: Number.parseInt(lamp.style.left, 10), top: Number.parseInt(lamp.style.top, 10) }));
+    saveStorage(
+      'position',
+      JSON.stringify({ left: Number.parseInt(lamp.style.left, 10), top: Number.parseInt(lamp.style.top, 10) }),
+    );
     lampDragJustEnded = true;
-    setTimeout(() => { lampDragJustEnded = false; }, 150);
+    setTimeout(() => {
+      lampDragJustEnded = false;
+    }, 150);
   }
   dragState = null;
 }
@@ -4588,9 +6223,8 @@ async function buyMarketItem(itemId, requestedQuantity, currency) {
       return;
     }
 
-    coins[quote.key] = quote.key === '铜钱'
-      ? Math.round(balance - quote.amount)
-      : roundMarketNumber(balance - quote.amount);
+    coins[quote.key] =
+      quote.key === '铜钱' ? Math.round(balance - quote.amount) : roundMarketNumber(balance - quote.amount);
     market._剩余库存[item.id] = remaining - quantity;
     const storage = ensureObject(ensureObject(data, '经济'), '仓储');
     if (!storage[item.name] || typeof storage[item.name] !== 'object') {
@@ -4730,7 +6364,11 @@ let toastType = '';
 let toastTimer = null;
 
 function getCanmingUiHost() {
-  try { return window.parent && window.parent !== window ? window.parent : window; } catch { return window; }
+  try {
+    return window.parent && window.parent !== window ? window.parent : window;
+  } catch {
+    return window;
+  }
 }
 
 function ensureCanmingUiStyle(doc) {
@@ -4890,7 +6528,11 @@ function canmingUiToast(message, type = 'ok') {
   if (!doc?.body) return;
   ensureCanmingUiStyle(doc);
   let layer = doc.getElementById('canming-ui-toast-layer');
-  if (!layer) { layer = doc.createElement('div'); layer.id = 'canming-ui-toast-layer'; doc.body.appendChild(layer); }
+  if (!layer) {
+    layer = doc.createElement('div');
+    layer.id = 'canming-ui-toast-layer';
+    doc.body.appendChild(layer);
+  }
   // 同步主题 class：确保 toast 跟随当前状态栏主题
   layer.className = `theme-${theme || 'night'}`;
   const toast = doc.createElement('div');
@@ -4911,28 +6553,64 @@ function canmingUiDialog(message, options = {}) {
     overlay.id = 'canming-ui-dialog';
     // 同步主题 class：确保 dialog 跟随当前状态栏主题
     overlay.className = `theme-${theme || 'night'}`;
-    const card = doc.createElement('section'); card.className = 'canming-ui-dialog-card';
-    const head = doc.createElement('div'); head.className = 'canming-ui-dialog-head'; head.textContent = options.title || '残明余烬';
-    const body = doc.createElement('div'); body.className = 'canming-ui-dialog-body'; body.textContent = String(message || '');
+    const card = doc.createElement('section');
+    card.className = 'canming-ui-dialog-card';
+    const head = doc.createElement('div');
+    head.className = 'canming-ui-dialog-head';
+    head.textContent = options.title || '残明余烬';
+    const body = doc.createElement('div');
+    body.className = 'canming-ui-dialog-body';
+    body.textContent = String(message || '');
     let input = null;
-    if (options.kind === 'prompt') { input = doc.createElement('input'); input.className = 'canming-ui-dialog-input'; input.placeholder = options.placeholder || ''; input.value = options.value || ''; body.appendChild(input); }
-    const actions = doc.createElement('div'); actions.className = 'canming-ui-dialog-actions';
-    const cancel = doc.createElement('button'); cancel.type = 'button'; cancel.textContent = options.cancelText || '取消';
-    const confirm = doc.createElement('button'); confirm.type = 'button'; confirm.className = options.danger ? 'danger' : 'primary'; confirm.textContent = options.confirmText || '确认';
-    const finish = value => { overlay.remove(); resolve(value); };
+    if (options.kind === 'prompt') {
+      input = doc.createElement('input');
+      input.className = 'canming-ui-dialog-input';
+      input.placeholder = options.placeholder || '';
+      input.value = options.value || '';
+      body.appendChild(input);
+    }
+    const actions = doc.createElement('div');
+    actions.className = 'canming-ui-dialog-actions';
+    const cancel = doc.createElement('button');
+    cancel.type = 'button';
+    cancel.textContent = options.cancelText || '取消';
+    const confirm = doc.createElement('button');
+    confirm.type = 'button';
+    confirm.className = options.danger ? 'danger' : 'primary';
+    confirm.textContent = options.confirmText || '确认';
+    const finish = value => {
+      overlay.remove();
+      resolve(value);
+    };
     cancel.onclick = () => finish(options.kind === 'prompt' ? null : false);
     confirm.onclick = () => finish(options.kind === 'prompt' ? input.value : true);
-    overlay.onclick = event => { if (event.target === overlay) finish(options.kind === 'prompt' ? null : false); };
-    input?.addEventListener('keydown', event => { if (event.key === 'Enter') finish(input.value); });
-    card.append(head, body, actions); actions.append(cancel, confirm); overlay.appendChild(card); doc.body.appendChild(overlay);
+    overlay.onclick = event => {
+      if (event.target === overlay) finish(options.kind === 'prompt' ? null : false);
+    };
+    input?.addEventListener('keydown', event => {
+      if (event.key === 'Enter') finish(input.value);
+    });
+    card.append(head, body, actions);
+    actions.append(cancel, confirm);
+    overlay.appendChild(card);
+    doc.body.appendChild(overlay);
     setTimeout(() => input?.focus(), 0);
   });
 }
 
 function registerCanmingUi() {
-  const api = { toast: canmingUiToast, confirm: (message, options = {}) => canmingUiDialog(message, options), prompt: (message, options = {}) => canmingUiDialog(message, { ...options, kind: 'prompt' }) };
+  const api = {
+    toast: canmingUiToast,
+    confirm: (message, options = {}) => canmingUiDialog(message, options),
+    prompt: (message, options = {}) => canmingUiDialog(message, { ...options, kind: 'prompt' }),
+  };
   globalThis.CanmingUI = { ...(globalThis.CanmingUI || {}), ...api };
-  try { const host = getCanmingUiHost(); host.CanmingUI = { ...(host.CanmingUI || {}), ...api }; } catch { /* ignore */ }
+  try {
+    const host = getCanmingUiHost();
+    host.CanmingUI = { ...(host.CanmingUI || {}), ...api };
+  } catch {
+    /* ignore */
+  }
 }
 
 function syncCanmingUiTheme() {
@@ -4944,7 +6622,9 @@ function syncCanmingUiTheme() {
     if (layer) layer.className = `theme-${theme || 'night'}`;
     const dialog = doc.getElementById('canming-ui-dialog');
     if (dialog) dialog.className = `theme-${theme || 'night'}`;
-  } catch { /* ignore cross-origin */ }
+  } catch {
+    /* ignore cross-origin */
+  }
 }
 
 registerCanmingUi();
@@ -4985,43 +6665,48 @@ function portraitCategoryRow(category = '', source = '') {
 }
 
 function getCharacterProfiles() {
+  const portraitEntries = getPortraitEntries();
+  const enabledEntries = Object.values(portraitEntries).filter(entry => entry?.enabled !== false && entry?.name);
   const stored = readJsonStorage(CHARACTER_PROFILE_STORAGE_KEY, null);
   if (stored?.version === 1 && Array.isArray(stored.profiles)) {
-    let changed = false;
-    stored.profiles.forEach(profile => {
-      const portrait = getPortraitEntries()[profile.name];
-      const gallery = normalizePortraitGallery(profile.gallery ?? portrait?.gallery, portrait?.source);
-      if (profile.gallery !== gallery) {
-        profile.gallery = gallery;
-        changed = true;
-      }
+    const preserved = stored.profiles.filter(profile => {
+      const generated =
+        String(profile?.id || '').startsWith('portrait-') || String(profile?.id || '').startsWith('scenario-');
+      return !generated;
     });
-    const knownNames = new Set(stored.profiles.map(profile => profile.name));
-    for (const entry of Object.values(getPortraitEntries())) {
-      if (!entry?.name || knownNames.has(entry.name)) continue;
-      stored.profiles.push({
-        id: `portrait-${stored.profiles.length}-${entry.name}`,
+    const knownNames = new Set(preserved.map(profile => profile.name));
+    const generated = enabledEntries
+      .filter(entry => !knownNames.has(entry.name))
+      .map((entry, index) => ({
+        id:
+          entry.source === 'scenario'
+            ? `scenario-${entry.scenarioId || 'dlc'}-${index}-${entry.name}`
+            : `portrait-${index}-${entry.name}`,
         name: entry.name,
         aliases: entry.aliases || [],
         title: entry.title || '',
         summary: entry.summary || '',
         gallery: normalizePortraitGallery(entry.gallery, entry.source),
-        worldbookEntries: [],
-      });
-      knownNames.add(entry.name);
-      changed = true;
+        worldbookEntries: entry.worldbookEntries || [],
+      }));
+    const nextProfiles = [...preserved, ...generated];
+    if (JSON.stringify(stored.profiles) !== JSON.stringify(nextProfiles)) {
+      stored.profiles = nextProfiles;
+      saveCharacterProfiles(stored);
     }
-    if (changed) saveCharacterProfiles(stored);
     return stored;
   }
-  const profiles = Object.values(getPortraitEntries()).map((entry, index) => ({
-    id: `portrait-${index}-${entry.name}`,
+  const profiles = enabledEntries.map((entry, index) => ({
+    id:
+      entry.source === 'scenario'
+        ? `scenario-${entry.scenarioId || 'dlc'}-${index}-${entry.name}`
+        : `portrait-${index}-${entry.name}`,
     name: entry.name,
     aliases: entry.aliases || [],
     title: entry.title || '',
     summary: entry.summary || '',
     gallery: normalizePortraitGallery(entry.gallery, entry.source),
-    worldbookEntries: [],
+    worldbookEntries: entry.worldbookEntries || [],
   }));
   const registry = { version: 1, profiles };
   saveCharacterProfiles(registry);
@@ -5051,7 +6736,9 @@ async function readCharacterWorldbookEntries() {
   const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
   if (typeof worldbook !== 'function') return [];
   try {
-    return (await worldbook(getWorldbookName()) || []).filter(entry => entry?.name && typeof entry.content === 'string');
+    return ((await worldbook(getWorldbookName())) || []).filter(
+      entry => entry?.name && typeof entry.content === 'string',
+    );
   } catch (error) {
     console.warn('[状态栏] 读取角色世界书失败:', error);
     return [];
@@ -5060,7 +6747,15 @@ async function readCharacterWorldbookEntries() {
 
 async function openCharacterManager(id = '', section = 'profile') {
   const profile = getCharacterProfiles().profiles.find(item => item.id === id);
-  modalState = { type: 'character-studio', id, section, worldbookEntries: [], selectedWorldbookEntries: profile?.worldbookEntries || [], worldbookPickerOpen: false, worldbookQuery: '' };
+  modalState = {
+    type: 'character-studio',
+    id,
+    section,
+    worldbookEntries: [],
+    selectedWorldbookEntries: profile?.worldbookEntries || [],
+    worldbookPickerOpen: false,
+    worldbookQuery: '',
+  };
   renderModalOnly();
   modalState.worldbookEntries = await readCharacterWorldbookEntries();
   if (modalState?.type === 'character-studio') renderModalOnly();
@@ -5068,8 +6763,11 @@ async function openCharacterManager(id = '', section = 'profile') {
 
 function renderCharacterWorldbookSection(entries, selectedWorldbookNames, pickerOpen, query = '') {
   const linkedNames = new Set(selectedWorldbookNames);
-  const linkedEntries = selectedWorldbookNames.map(name => entries.find(entry => entry.name === name) || { name, content: '该条目当前未在世界书中找到' });
-  if (!entries.length) return '<div class="cm-character-worldbook"><div class="cm-character-worldbook-head"><span>关联世界书条目</span><small>勾选后会随角色包导入、导出；不再按名字猜测。</small></div><p class="cm-setting-desc">未读取到世界书条目。请确认当前角色卡已绑定世界书。</p></div>';
+  const linkedEntries = selectedWorldbookNames.map(
+    name => entries.find(entry => entry.name === name) || { name, content: '该条目当前未在世界书中找到' },
+  );
+  if (!entries.length)
+    return '<div class="cm-character-worldbook"><div class="cm-character-worldbook-head"><span>关联世界书条目</span><small>勾选后会随角色包导入、导出；不再按名字猜测。</small></div><p class="cm-setting-desc">未读取到世界书条目。请确认当前角色卡已绑定世界书。</p></div>';
   return `<div class="cm-character-worldbook"><div class="cm-character-worldbook-head"><span>关联世界书条目</span><small>勾选后会随角色包导入、导出；不再按名字猜测。</small></div><div class="cm-character-linked">${linkedEntries.length ? linkedEntries.map(entry => `<button type="button" class="cm-character-linked-chip" data-action="character-worldbook-remove" data-worldbook-name="${html(entry.name)}"><span>${html(entry.name)}</span><i>×</i></button>`).join('') : '<span class="cm-character-linked-empty">尚未关联条目</span>'}</div><button type="button" class="cm-character-picker-toggle${pickerOpen ? ' open' : ''}" data-action="character-worldbook-picker">${pickerOpen ? '收起条目选择' : '选择世界书条目'}<span>${selectedWorldbookNames.length} 项已选</span></button>${pickerOpen ? `<div class="cm-character-picker"><input class="cm-background-input" data-character-worldbook-search placeholder="搜索条目名称或内容…" value="${html(query)}"><div class="cm-character-picker-results" data-character-worldbook-results>${renderCharacterWorldbookOptions(entries, linkedNames, query)}</div></div>` : ''}</div>`;
 }
 
@@ -5077,46 +6775,114 @@ function updateCharacterWorldbookSection() {
   const current = frameDocument?.querySelector('.cm-character-worldbook');
   if (!current || modalState?.type !== 'character-studio') return;
   const scrollTop = frameDocument.querySelector('.cm-modal-character-studio')?.scrollTop || 0;
-  current.outerHTML = renderCharacterWorldbookSection(modalState.worldbookEntries || [], modalState.selectedWorldbookEntries || [], Boolean(modalState.worldbookPickerOpen), modalState.worldbookQuery || '');
+  current.outerHTML = renderCharacterWorldbookSection(
+    modalState.worldbookEntries || [],
+    modalState.selectedWorldbookEntries || [],
+    Boolean(modalState.worldbookPickerOpen),
+    modalState.worldbookQuery || '',
+  );
   const dialog = frameDocument.querySelector('.cm-modal-character-studio');
   if (dialog) dialog.scrollTop = scrollTop;
 }
 function renderCharacterWorldbookOptions(entries, selectedNames, query = '') {
   const normalized = String(query).trim().toLocaleLowerCase();
-  const filtered = entries.filter(entry => !normalized || `${entry.name}\n${entry.content || ''}`.toLocaleLowerCase().includes(normalized));
-  const ordered = [...filtered].sort((a, b) => Number(selectedNames.has(b.name)) - Number(selectedNames.has(a.name))).slice(0, 60);
+  const filtered = entries.filter(
+    entry => !normalized || `${entry.name}\n${entry.content || ''}`.toLocaleLowerCase().includes(normalized),
+  );
+  const ordered = [...filtered]
+    .sort((a, b) => Number(selectedNames.has(b.name)) - Number(selectedNames.has(a.name)))
+    .slice(0, 60);
   if (!ordered.length) return '<p class="cm-character-picker-empty">没有匹配的世界书条目</p>';
-  const suffix = filtered.length > ordered.length ? `<p class="cm-character-picker-more">显示前 ${ordered.length} 项，请继续输入缩小范围</p>` : '';
-  return ordered.map(entry => `<label class="cm-character-worldbook-row"><input type="checkbox" data-character-worldbook value="${html(entry.name)}"${selectedNames.has(entry.name) ? ' checked' : ''}><span><b>${html(entry.name)}</b><small>${html(String(entry.content || '').replace(/\s+/g, ' ').slice(0, 72))}</small></span></label>`).join('') + suffix;
+  const suffix =
+    filtered.length > ordered.length
+      ? `<p class="cm-character-picker-more">显示前 ${ordered.length} 项，请继续输入缩小范围</p>`
+      : '';
+  return (
+    ordered
+      .map(
+        entry =>
+          `<label class="cm-character-worldbook-row"><input type="checkbox" data-character-worldbook value="${html(entry.name)}"${selectedNames.has(entry.name) ? ' checked' : ''}><span><b>${html(entry.name)}</b><small>${html(
+            String(entry.content || '')
+              .replace(/\s+/g, ' ')
+              .slice(0, 72),
+          )}</small></span></label>`,
+      )
+      .join('') + suffix
+  );
 }
 function renderStudioPortraitPane(profile) {
   if (!profile?.id) return '<div class="cm-studio-empty">先在“角色档案”页填写并保存角色名，再添加立绘。</div>';
-  const entry = getPortraitEntries()[profile.name] || { enabled: true, gallery: profile.gallery || 'none', portraits: {}, source: 'custom' };
-  const rows = Object.entries(entry.portraits || {}).map(([category, source]) => portraitCategoryRow(category, source)).join('') || portraitCategoryRow();
+  const entry = getPortraitEntries()[profile.name] || {
+    enabled: true,
+    gallery: profile.gallery || 'none',
+    portraits: {},
+    source: 'custom',
+  };
+  const rows =
+    Object.entries(entry.portraits || {})
+      .map(([category, source]) => portraitCategoryRow(category, source))
+      .join('') || portraitCategoryRow();
   return `<div class="cm-portrait-form"><div class="cm-studio-note">当前角色：<b>${html(profile.name)}</b>。立绘会自动使用此角色的名称与别名。</div><div class="cm-portrait-category-editor"><div class="cm-portrait-category-head"><span>立绘分类</span><span>HTTP/HTTPS 图片链接</span></div><div data-portrait-rows>${rows}</div><button type="button" class="cm-portrait-add-row" data-action="portrait-category-add">${portraitAddIcon()}<span>添加分类</span></button></div><label class="cm-portrait-enabled"><input type="checkbox" data-portrait-field="enabled" ${entry.enabled !== false ? 'checked' : ''}> 允许 AI 在正文插图中为此角色输出标签</label>${entry.source === 'custom' && Object.keys(entry.portraits || {}).length ? `<div class="cm-background-actions"><button class="cm-diff-btn" data-action="portrait-manager-remove" data-portrait-manager-name="${html(profile.name)}">删除全部立绘</button></div>` : ''}</div>`;
 }
 
 function renderCharacterStudioModal() {
   const registry = getCharacterProfiles();
-  const profile = registry.profiles.find(item => item.id === modalState.id) || { id: '', name: '', aliases: [], title: '', summary: '', gallery: 'none', worldbookEntries: [] };
+  const profile = registry.profiles.find(item => item.id === modalState.id) || {
+    id: '',
+    name: '',
+    aliases: [],
+    title: '',
+    summary: '',
+    gallery: 'none',
+    worldbookEntries: [],
+  };
   const section = modalState.section || 'profile';
-  const list = registry.profiles.map(item => `<button class="cm-studio-character${item.id === profile.id ? ' active' : ''}" data-action="studio-select" data-character-id="${html(item.id)}" data-studio-search-text="${html(`${item.name} ${item.aliases?.join(' ') || ''} ${item.title || ''}`)}"><b>${html(item.name)}</b><span>${html(item.title || '角色档案')}</span></button>`).join('') || '<p class="cm-studio-list-empty">还没有角色档案</p>';
+  const list =
+    registry.profiles
+      .map(
+        item =>
+          `<button class="cm-studio-character${item.id === profile.id ? ' active' : ''}" data-action="studio-select" data-character-id="${html(item.id)}" data-studio-search-text="${html(`${item.name} ${item.aliases?.join(' ') || ''} ${item.title || ''}`)}"><b>${html(item.name)}</b><span>${html(item.title || '角色档案')}</span></button>`,
+      )
+      .join('') || '<p class="cm-studio-list-empty">还没有角色档案</p>';
   const selected = modalState.selectedWorldbookEntries || profile.worldbookEntries || [];
-  const aiAppearanceControl = !profile.id || isExtensionCharacterProfile(profile) ? `<label class="cm-portrait-enabled"><input type="checkbox" data-character-field="allowAiAppearance" ${profile.allowAiAppearance !== false ? 'checked' : ''}> 允许 AI 主动安排此角色登场</label><p class="cm-studio-field-help">开启后，角色的姓名、称号与简介会加入常驻扩展角色索引。</p>` : '';
+  const aiAppearanceControl =
+    !profile.id || isExtensionCharacterProfile(profile)
+      ? `<label class="cm-portrait-enabled"><input type="checkbox" data-character-field="allowAiAppearance" ${profile.allowAiAppearance !== false ? 'checked' : ''}> 允许 AI 主动安排此角色登场</label><p class="cm-studio-field-help">开启后，角色的姓名、称号与简介会加入常驻扩展角色索引。</p>`
+      : '';
   const profilePane = `<div class="cm-portrait-form"><label>角色名<input class="cm-background-input" data-character-field="name" value="${html(profile.name)}" placeholder="例如：白瑶"></label><p class="cm-studio-field-help">用于关联此角色的立绘与正文插图标签。</p><label>别名（逗号分隔，可选）<input class="cm-background-input" data-character-field="aliases" value="${html((profile.aliases || []).join(', '))}" placeholder="例如：乐安公主"></label><label>称号（角色介绍页显示）<input class="cm-background-input" data-character-field="title" value="${html(profile.title || '')}" placeholder="例如：乐安公主"></label><label>简介（角色介绍页显示）<textarea class="cm-background-input cm-portrait-textarea" data-character-field="summary" placeholder="一句人物介绍">${html(profile.summary || '')}</textarea></label>${aiAppearanceControl}<label>人物志归属<select class="cm-background-input" data-character-field="gallery">${PORTRAIT_GALLERY_OPTIONS.map(([key, label]) => `<option value="${key}"${normalizePortraitGallery(profile.gallery) === key ? ' selected' : ''}>${label}</option>`).join('')}</select></label><p class="cm-studio-field-help">不加入人物志仍会保留角色档案、立绘及正文插图能力。</p>${renderCharacterWorldbookSection(modalState.worldbookEntries || [], selected, Boolean(modalState.worldbookPickerOpen), modalState.worldbookQuery || '')}</div>`;
-  const saveAction = section === 'portraits'
-    ? `<button class="cm-portrait-toolbar-btn primary" data-action="portrait-manager-save" data-portrait-manager-original="${html(profile.name)}" ${profile.id ? '' : 'disabled'}>保存立绘</button>`
-    : `<button class="cm-portrait-toolbar-btn primary" data-action="character-manager-save" data-character-id="${html(profile.id)}">保存</button>`;
+  const saveAction =
+    section === 'portraits'
+      ? `<button class="cm-portrait-toolbar-btn primary" data-action="portrait-manager-save" data-portrait-manager-original="${html(profile.name)}" ${profile.id ? '' : 'disabled'}>保存立绘</button>`
+      : `<button class="cm-portrait-toolbar-btn primary" data-action="character-manager-save" data-character-id="${html(profile.id)}">保存</button>`;
   const actions = `<button class="cm-portrait-toolbar-btn" data-action="character-manager-new">${portraitAddIcon()}<span>新建</span></button><button class="cm-portrait-toolbar-btn" data-action="character-manager-import">导入</button>${saveAction}${profile.id ? `<button class="cm-portrait-toolbar-btn" data-action="character-manager-export" data-character-id="${html(profile.id)}">导出</button><button class="cm-portrait-toolbar-btn" data-action="character-manager-remove" data-character-id="${html(profile.id)}">删除</button>` : ''}<input type="file" data-character-import accept="application/json,.json" hidden>`;
   return `<div class="cm-modal-mask" data-action="close-modal"><section class="cm-modal cm-modal-character-studio" role="dialog" aria-modal="true"><header class="cm-modal-head"><div><p class="cm-kicker">残明余烬 · 角色与立绘</p><h2>${profile.id ? html(profile.name) : '新建角色'}</h2></div><button data-action="close-modal">×</button></header><div class="cm-studio"><aside class="cm-studio-sidebar"><div class="cm-studio-sidebar-head"><span>角色列表</span><small>${registry.profiles.length} 位</small></div><input class="cm-studio-search" data-studio-search placeholder="搜索角色或别名"><div class="cm-studio-character-list">${list}</div><p class="cm-studio-search-empty" hidden>没有匹配的角色</p></aside><div class="cm-studio-main"><div class="cm-studio-tabs"><button class="${section === 'profile' ? 'active' : ''}" data-action="studio-section" data-studio-section="profile">角色档案</button><button class="${section === 'portraits' ? 'active' : ''}" data-action="studio-section" data-studio-section="portraits" ${profile.id ? '' : 'disabled'}>立绘</button><span class="cm-studio-actions">${actions}</span></div><div class="cm-studio-content">${section === 'portraits' ? renderStudioPortraitPane(profile) : profilePane}</div></div></div></section></div>`;
 }
 function renderCharacterManagerModal() {
   const registry = getCharacterProfiles();
-  const profile = registry.profiles.find(item => item.id === modalState.id) || { id: '', name: '', aliases: [], title: '', summary: '', gallery: 'none', worldbookEntries: [] };
+  const profile = registry.profiles.find(item => item.id === modalState.id) || {
+    id: '',
+    name: '',
+    aliases: [],
+    title: '',
+    summary: '',
+    gallery: 'none',
+    worldbookEntries: [],
+  };
   const worldbookEntries = modalState.worldbookEntries || [];
-  const profileOptions = ['<option value="">新建角色档案</option>', ...registry.profiles.map(item => `<option value="${html(item.id)}"${item.id === profile.id ? ' selected' : ''}>${html(item.name)}</option>`)].join('');
+  const profileOptions = [
+    '<option value="">新建角色档案</option>',
+    ...registry.profiles.map(
+      item =>
+        `<option value="${html(item.id)}"${item.id === profile.id ? ' selected' : ''}>${html(item.name)}</option>`,
+    ),
+  ].join('');
   const selectedWorldbookNames = modalState.selectedWorldbookEntries || profile.worldbookEntries || [];
-  const worldbookList = renderCharacterWorldbookSection(worldbookEntries, selectedWorldbookNames, Boolean(modalState.worldbookPickerOpen), modalState.worldbookQuery || '');
+  const worldbookList = renderCharacterWorldbookSection(
+    worldbookEntries,
+    selectedWorldbookNames,
+    Boolean(modalState.worldbookPickerOpen),
+    modalState.worldbookQuery || '',
+  );
   const portrait = getPortraitEntries()[profile.name];
   return `
     <div class="cm-modal-mask" data-action="close-modal">
@@ -5143,8 +6909,16 @@ function syncProfileToPortrait(profile, previousName = '') {
   const library = getPortraitLibrary();
   const current = library.entries[previousName] || library.entries[profile.name];
   if (!current) return;
-  if (previousName && previousName !== profile.name && current.source === 'custom') delete library.entries[previousName];
-  library.entries[profile.name] = { ...current, name: profile.name, aliases: profile.aliases, title: profile.title, summary: profile.summary, gallery: normalizePortraitGallery(profile.gallery, current.source) };
+  if (previousName && previousName !== profile.name && current.source === 'custom')
+    delete library.entries[previousName];
+  library.entries[profile.name] = {
+    ...current,
+    name: profile.name,
+    aliases: profile.aliases,
+    title: profile.title,
+    summary: profile.summary,
+    gallery: normalizePortraitGallery(profile.gallery, current.source),
+  };
   savePortraitLibrary(library);
 }
 
@@ -5155,23 +6929,36 @@ async function saveCharacterProfile(id) {
     const registry = getCharacterProfiles();
     const previous = registry.profiles.find(item => item.id === id);
     if (!previous && registry.profiles.some(item => item.name === name)) throw new Error('已有同名角色档案');
-    if (previous && registry.profiles.some(item => item.id !== id && item.name === name)) throw new Error('已有同名角色档案');
+    if (previous && registry.profiles.some(item => item.id !== id && item.name === name))
+      throw new Error('已有同名角色档案');
     const profile = {
       id: id || `character-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       name,
-      aliases: (characterProfileField('aliases')?.value || '').split(/[,，]/).map(item => item.trim()).filter(Boolean).filter(item => item !== name),
+      aliases: (characterProfileField('aliases')?.value || '')
+        .split(/[,，]/)
+        .map(item => item.trim())
+        .filter(Boolean)
+        .filter(item => item !== name),
       title: characterProfileField('title')?.value.trim() || '',
       summary: characterProfileField('summary')?.value.trim() || '',
       allowAiAppearance: Boolean(characterProfileField('allowAiAppearance')?.checked),
       gallery: normalizePortraitGallery(characterProfileField('gallery')?.value),
-      worldbookEntries: modalState.selectedWorldbookEntries || [...frameDocument.querySelectorAll('[data-character-worldbook]:checked')].map(input => input.value),
+      worldbookEntries:
+        modalState.selectedWorldbookEntries ||
+        [...frameDocument.querySelectorAll('[data-character-worldbook]:checked')].map(input => input.value),
     };
-    if (previous) registry.profiles = registry.profiles.map(item => item.id === id ? profile : item);
+    if (previous) registry.profiles = registry.profiles.map(item => (item.id === id ? profile : item));
     else registry.profiles.push(profile);
     saveCharacterProfiles(registry);
     syncProfileToPortrait(profile, previous?.name || '');
     await syncExtensionCharacterIndex();
-    modalState = { type: 'character-studio', id: profile.id, section: 'profile', worldbookEntries: modalState.worldbookEntries || [], selectedWorldbookEntries: profile.worldbookEntries || [] };
+    modalState = {
+      type: 'character-studio',
+      id: profile.id,
+      section: 'profile',
+      worldbookEntries: modalState.worldbookEntries || [],
+      selectedWorldbookEntries: profile.worldbookEntries || [],
+    };
     renderModalOnly();
     showToast(`✓ 已保存「${name}」角色档案`, 'ok');
   } catch (error) {
@@ -5181,7 +6968,9 @@ async function saveCharacterProfile(id) {
 
 function downloadCharacterPackage(bundle) {
   const filename = `${String(bundle.character.name || '角色').replace(/[\\/:*?"<>|]/g, '_')}.canming-character.json`;
-  const url = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json;charset=utf-8' }));
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json;charset=utf-8' }),
+  );
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = filename;
@@ -5198,8 +6987,17 @@ async function exportCharacterPackage(id) {
     for (const [category, source] of Object.entries(portraitEntry?.portraits || {})) {
       if (isPortraitUrl(source)) portraits[category] = { type: 'url', value: source };
     }
-    const worldbookEntries = (await readCharacterWorldbookEntries()).filter(entry => (profile.worldbookEntries || []).includes(entry.name)).map(entry => JSON.parse(JSON.stringify(entry)));
-    downloadCharacterPackage({ format: CHARACTER_PACKAGE_FORMAT, version: 1, exportedAt: new Date().toISOString(), character: profile, portraits, worldbookEntries });
+    const worldbookEntries = (await readCharacterWorldbookEntries())
+      .filter(entry => (profile.worldbookEntries || []).includes(entry.name))
+      .map(entry => JSON.parse(JSON.stringify(entry)));
+    downloadCharacterPackage({
+      format: CHARACTER_PACKAGE_FORMAT,
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      character: profile,
+      portraits,
+      worldbookEntries,
+    });
     showToast(`✓ 已导出「${profile.name}」角色包`, 'ok');
   } catch (error) {
     showToast(`✗ 导出角色包失败：${error?.message || '未知错误'}`, 'err');
@@ -5218,13 +7016,20 @@ async function importCharacterPackage(file) {
 async function importCharacterPackageBundle(packageBundle) {
   const workshop = getCanmingWorkshop();
   const isWorkshopPackage = packageBundle?.format === WORKSHOP_PACKAGE_FORMAT;
-  const checked = isWorkshopPackage && typeof workshop?.validatePackage === 'function' ? workshop.validatePackage(packageBundle) : packageBundle;
+  const checked =
+    isWorkshopPackage && typeof workshop?.validatePackage === 'function'
+      ? workshop.validatePackage(packageBundle)
+      : packageBundle;
   const bundle = isWorkshopPackage
-    ? (checked.version === 2 ? checked.resources?.find(item => item.kind === 'character') : checked.payload)
+    ? checked.version === 2
+      ? checked.resources?.find(item => item.kind === 'character')
+      : checked.payload
     : checked;
   if (isWorkshopPackage && checked.version === 2 && !bundle) throw new Error('该作品没有角色档案资源。');
-  if (isWorkshopPackage && checked.version !== 2 && checked.type !== 'character-package') throw new Error('该作品不是角色包。');
-  if (!isWorkshopPackage && (bundle?.format !== CHARACTER_PACKAGE_FORMAT || bundle?.version !== 1)) throw new Error('不是有效的残明余烬角色包');
+  if (isWorkshopPackage && checked.version !== 2 && checked.type !== 'character-package')
+    throw new Error('该作品不是角色包。');
+  if (!isWorkshopPackage && (bundle?.format !== CHARACTER_PACKAGE_FORMAT || bundle?.version !== 1))
+    throw new Error('不是有效的残明余烬角色包');
   if (!bundle?.character?.name) throw new Error('角色包缺少角色档案。');
 
   const imported = bundle.character;
@@ -5232,18 +7037,34 @@ async function importCharacterPackageBundle(packageBundle) {
   const existing = registry.profiles.find(item => item.name === imported.name);
   let overwrite = false;
   if (existing) {
-    overwrite = await canmingUiDialog(`「${imported.name}」已存在，是否覆盖角色档案、关联世界书与立绘？`, { title: '导入角色包', confirmText: '覆盖并导入', cancelText: '其他选项', danger: true });
-    if (!overwrite && !await canmingUiDialog('是否另存为一个新角色？', { title: '导入角色包', confirmText: '另存并导入', cancelText: '取消' })) throw new Error('已取消导入。');
+    overwrite = await canmingUiDialog(`「${imported.name}」已存在，是否覆盖角色档案、关联世界书与立绘？`, {
+      title: '导入角色包',
+      confirmText: '覆盖并导入',
+      cancelText: '其他选项',
+      danger: true,
+    });
+    if (
+      !overwrite &&
+      !(await canmingUiDialog('是否另存为一个新角色？', {
+        title: '导入角色包',
+        confirmText: '另存并导入',
+        cancelText: '取消',
+      }))
+    )
+      throw new Error('已取消导入。');
   }
   const usedNames = new Set(registry.profiles.map(item => item.name));
   const name = existing && !overwrite ? nextImportedName(imported.name, usedNames) : imported.name;
-  const worldbookEntries = Array.isArray(bundle.worldbookEntries) ? bundle.worldbookEntries.map(entry => JSON.parse(JSON.stringify(entry))) : [];
+  const worldbookEntries = Array.isArray(bundle.worldbookEntries)
+    ? bundle.worldbookEntries.map(entry => JSON.parse(JSON.stringify(entry)))
+    : [];
   const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
   const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
   const linkedNames = [];
   if (worldbookEntries.length) {
-    if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function') throw new Error('世界书接口不可用。');
-    const merged = [...(await worldbook(getWorldbookName()) || [])];
+    if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function')
+      throw new Error('世界书接口不可用。');
+    const merged = [...((await worldbook(getWorldbookName())) || [])];
     const names = new Set(merged.map(entry => entry.name));
     for (const rawEntry of worldbookEntries) {
       if (!rawEntry?.name || typeof rawEntry.content !== 'string') throw new Error('角色包包含无效世界书条目。');
@@ -5273,19 +7094,41 @@ async function importCharacterPackageBundle(packageBundle) {
     gallery: normalizePortraitGallery(imported.gallery),
     worldbookEntries: linkedNames,
   };
-  registry.profiles = overwrite && existing ? registry.profiles.map(item => item.id === existing.id ? profile : item) : [...registry.profiles, profile];
+  registry.profiles =
+    overwrite && existing
+      ? registry.profiles.map(item => (item.id === existing.id ? profile : item))
+      : [...registry.profiles, profile];
   saveCharacterProfiles(registry);
 
   const assets = {};
   for (const [category, asset] of Object.entries(bundle.portraits || {})) {
-    if (asset?.type !== 'url' || !isPortraitUrl(asset.value)) throw new Error(`立绘「${category}」仅支持 HTTP/HTTPS 链接`);
+    if (asset?.type !== 'url' || !isPortraitUrl(asset.value))
+      throw new Error(`立绘「${category}」仅支持 HTTP/HTTPS 链接`);
     assets[category] = asset.value;
   }
   const library = getPortraitLibrary();
   if (Object.keys(assets).length) {
-    library.entries[name] = { ...(library.entries[name] || {}), name, aliases: profile.aliases, title: profile.title, summary: profile.summary, gallery: profile.gallery, enabled: true, portraits: assets, source: 'custom' };
+    library.entries[name] = {
+      ...(library.entries[name] || {}),
+      name,
+      aliases: profile.aliases,
+      title: profile.title,
+      summary: profile.summary,
+      gallery: profile.gallery,
+      enabled: true,
+      portraits: assets,
+      source: 'custom',
+    };
   } else if (overwrite && library.entries[name]) {
-    library.entries[name] = { ...library.entries[name], name, aliases: profile.aliases, title: profile.title, summary: profile.summary, gallery: profile.gallery, portraits: {} };
+    library.entries[name] = {
+      ...library.entries[name],
+      name,
+      aliases: profile.aliases,
+      title: profile.title,
+      summary: profile.summary,
+      gallery: profile.gallery,
+      portraits: {},
+    };
   }
   savePortraitLibrary(library);
   await syncPortraitIllustrationRule();
@@ -5303,15 +7146,20 @@ async function removeCharacterProfile(id) {
   const portraitSources = Object.values(portraitEntry?.portraits || {});
   const worldbookNames = [...new Set(profile.worldbookEntries || [])];
   const message = `确定永久删除「${profile.name}」吗？\n\n将删除：\n• 角色档案\n• ${worldbookNames.length} 条已关联世界书人设\n• ${portraitSources.length} 张立绘链接\n\n此操作无法恢复。`;
-  if (!await canmingUiDialog(message, { title: '删除角色档案', confirmText: '永久删除', danger: true })) return;
+  if (!(await canmingUiDialog(message, { title: '删除角色档案', confirmText: '永久删除', danger: true }))) return;
   try {
     if (worldbookNames.length) {
       const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
       const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
-      if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function') throw new Error('世界书接口不可用，已取消删除以保护关联人设');
-      const current = await worldbook(getWorldbookName()) || [];
+      if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function')
+        throw new Error('世界书接口不可用，已取消删除以保护关联人设');
+      const current = (await worldbook(getWorldbookName())) || [];
       const linked = new Set(worldbookNames);
-      await replaceWorldbook(getWorldbookName(), current.filter(entry => !linked.has(entry.name)), { render: 'immediate' });
+      await replaceWorldbook(
+        getWorldbookName(),
+        current.filter(entry => !linked.has(entry.name)),
+        { render: 'immediate' },
+      );
     }
 
     if (portraitEntry) {
@@ -5342,12 +7190,14 @@ function renderSettingsModal() {
         <div class="cm-modal-body">
           <h3>游戏难度</h3>
           <p class="cm-setting-desc">切换后即时生效，同时只能启用一种难度。当前：<b>${html(difficultyInfo(activeDifficulty)[1])}</b></p>
-          <div class="cm-diff-options">${DIFFICULTIES.map(([id, name, desc]) => `
+          <div class="cm-diff-options">${DIFFICULTIES.map(
+            ([id, name, desc]) => `
             <button class="cm-diff-btn${id === activeDifficulty ? ' active' : ''}" data-action="set-difficulty" data-difficulty="${id}">
               <span class="cm-diff-name">${html(name)}</span>
               <span class="cm-diff-desc">${html(desc)}</span>
               ${id === activeDifficulty ? '<span class="cm-diff-check">✓</span>' : ''}
-            </button>`).join('')}</div>
+            </button>`,
+          ).join('')}</div>
           <h3>主题背景</h3>
           <p class="cm-setting-desc">可填 HTTPS/HTTP 图片地址，或上传本地图片。背景只保存在当前浏览器；留空并保存可恢复主题默认背景。</p>
           <input class="cm-background-input" data-background-url value="${html(customBackgroundUrl.startsWith('data:') ? '' : customBackgroundUrl)}" placeholder="https://example.com/background.jpg" inputmode="url" autocomplete="off">
@@ -5396,8 +7246,8 @@ function renderConfirmModal() {
 }
 
 function renderPortraitOverlay() {
-  const imgs = getPortraitData()[modalState.name];
-  if (!imgs) return "";
+  const imgs = getAllPortraitData()[modalState.name];
+  if (!imgs) return '';
   const categories = Object.entries(imgs);
   const idx = modalState.catIdx ?? 0;
   const [cat, url] = categories[idx] || categories[0];
@@ -5426,7 +7276,7 @@ function renderPortraitOverlay() {
 /** 局部更新立绘浮层：切换分类时不重建整个面板，避免图片闪烁 */
 function updatePortraitOverlay() {
   if (!modalState || modalState.type !== 'portrait') return;
-  const imgs = getPortraitData()[modalState.name];
+  const imgs = getAllPortraitData()[modalState.name];
   if (!imgs) return;
   const categories = Object.entries(imgs);
   const idx = modalState.catIdx ?? 0;
@@ -5447,7 +7297,6 @@ function updatePortraitOverlay() {
   });
 }
 
-
 function getWorldbookName() {
   const charWb = getCharWorldbookNames('current');
   if (!charWb?.primary) throw new Error('当前角色卡未绑定世界书');
@@ -5466,7 +7315,13 @@ async function syncWorldbookSettings() {
     // 难度：以世界书里实际 enabled 的难度条目为准
     const enabledDifficultyEntry = entries.find(entry => {
       const name = entry.name || '';
-      return entry.enabled && (name.includes('难度-休闲') || name.includes('难度-中等') || name.includes('难度-真实') || name.includes('难度-绝境'));
+      return (
+        entry.enabled &&
+        (name.includes('难度-休闲') ||
+          name.includes('难度-中等') ||
+          name.includes('难度-真实') ||
+          name.includes('难度-绝境'))
+      );
     });
     if (enabledDifficultyEntry) {
       const name = enabledDifficultyEntry.name || '';
@@ -5513,7 +7368,12 @@ async function setDifficulty(difficulty) {
     const diffName = DIFFICULTIES.find(d => d[0] === difficulty)[1];
     const updated = entries.map(entry => {
       const name = entry.name || '';
-      if (name.includes('难度-休闲') || name.includes('难度-中等') || name.includes('难度-真实') || name.includes('难度-绝境')) {
+      if (
+        name.includes('难度-休闲') ||
+        name.includes('难度-中等') ||
+        name.includes('难度-真实') ||
+        name.includes('难度-绝境')
+      ) {
         return { ...entry, enabled: name.includes(`难度-${diffName}`) };
       }
       return entry;
@@ -5583,10 +7443,12 @@ function portraitField(name) {
 }
 
 function buildPortraitManifest() {
-  return Object.values(getPortraitEntries())
-    .filter(entry => entry?.enabled !== false && entry?.name && Object.keys(entry.portraits || {}).length)
-    .map(entry => `- ${entry.name}：${Object.keys(entry.portraits).join('、')}`)
-    .join('\n') || '- （暂无可用立绘）';
+  return (
+    Object.values(getPortraitEntries())
+      .filter(entry => entry?.enabled !== false && entry?.name && Object.keys(entry.portraits || {}).length)
+      .map(entry => `- ${entry.name}：${Object.keys(entry.portraits).join('、')}`)
+      .join('\n') || '- （暂无可用立绘）'
+  );
 }
 
 async function syncPortraitIllustrationRule() {
@@ -5599,7 +7461,10 @@ async function syncPortraitIllustrationRule() {
   const updated = entries.map(entry => {
     if (!(entry.name || '').includes('正文插图-输出规则')) return entry;
     const content = String(entry.content || '');
-    const nextContent = content.replace(/<!-- CANMING_PORTRAIT_MANIFEST_START -->[\s\S]*?<!-- CANMING_PORTRAIT_MANIFEST_END -->/, manifest);
+    const nextContent = content.replace(
+      /<!-- CANMING_PORTRAIT_MANIFEST_START -->[\s\S]*?<!-- CANMING_PORTRAIT_MANIFEST_END -->/,
+      manifest,
+    );
     if (nextContent === content) return entry;
     changed = true;
     return { ...entry, content: nextContent };
@@ -5619,11 +7484,16 @@ function compactCharacterIndexText(value, maxLength) {
 }
 
 function buildExtensionCharacterIndex() {
-  const lines = getCharacterProfiles().profiles
-    .filter(profile => isExtensionCharacterProfile(profile) && profile.allowAiAppearance !== false && profile.name)
+  const lines = getCharacterProfiles()
+    .profiles.filter(
+      profile => isExtensionCharacterProfile(profile) && profile.allowAiAppearance !== false && profile.name,
+    )
     .map(profile => {
       const name = compactCharacterIndexText(profile.name, 32);
-      const aliases = (profile.aliases || []).slice(0, 3).map(alias => compactCharacterIndexText(alias, 24)).filter(Boolean);
+      const aliases = (profile.aliases || [])
+        .slice(0, 3)
+        .map(alias => compactCharacterIndexText(alias, 24))
+        .filter(Boolean);
       const title = compactCharacterIndexText(profile.title, 40);
       const summary = compactCharacterIndexText(profile.summary, 120);
       return `- ${name}${aliases.length ? `（别名：${aliases.join('、')}）` : ''}${title ? `｜${title}` : ''}${summary ? `｜${summary}` : ''}`;
@@ -5641,7 +7511,10 @@ async function syncExtensionCharacterIndex() {
   const updated = entries.map(entry => {
     if (!(entry.name || '').includes('扩展角色索引')) return entry;
     const content = String(entry.content || '');
-    const nextContent = content.replace(/<!-- CANMING_CUSTOM_CHARACTER_INDEX_START -->[\s\S]*?<!-- CANMING_CUSTOM_CHARACTER_INDEX_END -->/, manifest);
+    const nextContent = content.replace(
+      /<!-- CANMING_CUSTOM_CHARACTER_INDEX_START -->[\s\S]*?<!-- CANMING_CUSTOM_CHARACTER_INDEX_END -->/,
+      manifest,
+    );
     if (nextContent === content) return entry;
     changed = true;
     return { ...entry, content: nextContent };
@@ -5664,11 +7537,27 @@ async function savePortraitEntry(originalName) {
     const oldEntry = library.entries[originalName];
     if (originalName && originalName !== name && oldEntry?.source === 'custom') delete library.entries[originalName];
     const linkedProfile = findCharacterProfileByName(name) || findCharacterProfileByName(originalName);
-    library.entries[name] = { ...oldEntry, name, aliases, title: linkedProfile?.title || oldEntry?.title || '自定义角色', summary: linkedProfile?.summary || oldEntry?.summary || '', gallery: normalizePortraitGallery(linkedProfile?.gallery ?? oldEntry?.gallery, oldEntry?.source), enabled, portraits, source: oldEntry?.source || 'custom' };
+    library.entries[name] = {
+      ...oldEntry,
+      name,
+      aliases,
+      title: linkedProfile?.title || oldEntry?.title || '自定义角色',
+      summary: linkedProfile?.summary || oldEntry?.summary || '',
+      gallery: normalizePortraitGallery(linkedProfile?.gallery ?? oldEntry?.gallery, oldEntry?.source),
+      enabled,
+      portraits,
+      source: oldEntry?.source || 'custom',
+    };
     delete library.entries[name].persona;
     savePortraitLibrary(library);
     await syncPortraitIllustrationRule();
-    modalState = { type: 'character-studio', id: findCharacterProfileByName(name)?.id || '', section: 'portraits', worldbookEntries: modalState.worldbookEntries || [], selectedWorldbookEntries: findCharacterProfileByName(name)?.worldbookEntries || [] };
+    modalState = {
+      type: 'character-studio',
+      id: findCharacterProfileByName(name)?.id || '',
+      section: 'portraits',
+      worldbookEntries: modalState.worldbookEntries || [],
+      selectedWorldbookEntries: findCharacterProfileByName(name)?.worldbookEntries || [],
+    };
     renderModalOnly();
     showToast(`✓ 已保存「${name}」的立绘，并同步正文插图清单`, 'ok');
   } catch (error) {
@@ -5680,21 +7569,43 @@ async function removePortraitEntry(name) {
   const library = getPortraitLibrary();
   const entry = library.entries[name];
   if (!entry || entry.source !== 'custom') return showToast('✗ 内置角色不能在此删除', 'err');
-  if (!await canmingUiDialog(`确定删除自定义角色「${name}」及其立绘吗？`, { title: '删除自定义立绘', confirmText: '删除', danger: true })) return;
+  if (
+    !(await canmingUiDialog(`确定删除自定义角色「${name}」及其立绘吗？`, {
+      title: '删除自定义立绘',
+      confirmText: '删除',
+      danger: true,
+    }))
+  )
+    return;
   delete library.entries[name];
   savePortraitLibrary(library);
-  try { await syncPortraitIllustrationRule(); } catch (error) { console.warn('[状态栏] 同步正文插图清单失败:', error); }
-  modalState = { type: 'character-studio', id: '', section: 'portraits', worldbookEntries: [], selectedWorldbookEntries: [] };
+  try {
+    await syncPortraitIllustrationRule();
+  } catch (error) {
+    console.warn('[状态栏] 同步正文插图清单失败:', error);
+  }
+  modalState = {
+    type: 'character-studio',
+    id: '',
+    section: 'portraits',
+    worldbookEntries: [],
+    selectedWorldbookEntries: [],
+  };
   showToast(`✓ 已删除「${name}」`, 'ok');
 }
 
 async function bootstrap() {
   const parentDocument = window.parent?.document ?? document;
   const parentWindow = window.parent ?? window;
+  exposeStatusbarActions();
   const portraitLibrary = getPortraitLibrary();
   window.CanmingPortraitLibrary = portraitLibrary;
   if (window.parent && window.parent !== window) window.parent.CanmingPortraitLibrary = portraitLibrary;
-  try { await syncExtensionCharacterIndex(); } catch (error) { console.warn('[状态栏] 同步扩展角色索引失败:', error); }
+  try {
+    await syncExtensionCharacterIndex();
+  } catch (error) {
+    console.warn('[状态栏] 同步扩展角色索引失败:', error);
+  }
 
   // 清除旧实例
   parentDocument.getElementById(STATUSBAR_ID)?.remove();
@@ -5793,71 +7704,82 @@ async function bootstrap() {
 
   try {
     await waitForMvu();
-  } catch { /* 保持控件可见 */ }
+  } catch {
+    /* 保持控件可见 */
+  }
   refreshData(true);
 
   // MVU 事件驱动刷新（优先）
   const mvu = globalThis.Mvu ?? window.parent?.Mvu;
   if (mvu?.events?.VARIABLE_UPDATE_ENDED) {
     const onVarUpdate = (newVars, oldVars) => {
-    normalizeStatDataKeys(_.get(newVars, 'stat_data', null));
-    normalizeStatDataKeys(_.get(oldVars, 'stat_data', null));
-    // 自动月度结算：检测月份变化，就地执行结算
-    try {
-      const oldDate = _.get(oldVars, 'stat_data.世界运转.当前日期', '');
-      const newDate = _.get(newVars, 'stat_data.世界运转.当前日期', '');
-      const oldYM = extractYearMonth(oldDate);
-      const newYM = extractYearMonth(newDate);
-      const data = _.get(newVars, 'stat_data', null);
-      if (oldYM && newYM && oldYM !== newYM) {
-        if (data) resetMonthlyMarketStock(data, newYM);
-        if (loadStorage('last_closed_army_ym', '') !== oldYM) {
-          const settleResult = doSettlementInPlace(newVars, { closeYM: oldYM, applyArmy: true });
-          saveStorage('last_closed_army_ym', oldYM);
-          // 自动结算 toast：面板打开时立即可见
-          if (settleResult && isOpen) {
-            const grainInfo = settleResult.grain?.grainConsumed ? `耗粮 ${settleResult.grain.grainConsumed} 石` : '';
-            const silverInfo = settleResult.grain?.silverSpent ? `折银 ${settleResult.grain.silverSpent} 两` : '';
-            const shortageInfo = settleResult.grain?.shortage ? `缺口 ${settleResult.grain.shortage} 石` : '';
-            const extra = [grainInfo, silverInfo, shortageInfo].filter(Boolean).join(' · ');
-            showToast(`✓ 已自动结算 ${oldYM}（私库 ${settleResult.totalTransfer >= 0 ? '+' : ''}${settleResult.totalTransfer} 两${extra ? '，' + extra : ''}）`, 'ok');
+      normalizeStatDataKeys(_.get(newVars, 'stat_data', null));
+      normalizeStatDataKeys(_.get(oldVars, 'stat_data', null));
+      // 自动月度结算：检测月份变化，就地执行结算
+      try {
+        const oldDate = _.get(oldVars, 'stat_data.世界运转.当前日期', '');
+        const newDate = _.get(newVars, 'stat_data.世界运转.当前日期', '');
+        const oldYM = extractYearMonth(oldDate);
+        const newYM = extractYearMonth(newDate);
+        const data = _.get(newVars, 'stat_data', null);
+        if (oldYM && newYM && oldYM !== newYM) {
+          if (data) resetMonthlyMarketStock(data, newYM);
+          if (loadStorage('last_closed_army_ym', '') !== oldYM) {
+            const settleResult = doSettlementInPlace(newVars, { closeYM: oldYM, applyArmy: true });
+            saveStorage('last_closed_army_ym', oldYM);
+            // 自动结算 toast：面板打开时立即可见
+            if (settleResult && isOpen) {
+              const grainInfo = settleResult.grain?.grainConsumed ? `耗粮 ${settleResult.grain.grainConsumed} 石` : '';
+              const silverInfo = settleResult.grain?.silverSpent ? `折银 ${settleResult.grain.silverSpent} 两` : '';
+              const shortageInfo = settleResult.grain?.shortage ? `缺口 ${settleResult.grain.shortage} 石` : '';
+              const extra = [grainInfo, silverInfo, shortageInfo].filter(Boolean).join(' · ');
+              showToast(
+                `✓ 已自动结算 ${oldYM}（私库 ${settleResult.totalTransfer >= 0 ? '+' : ''}${settleResult.totalTransfer} 两${extra ? '，' + extra : ''}）`,
+                'ok',
+              );
+            }
           }
-        }
-        saveStorage('last_settled_ym', newYM);
-      } else if (newYM && data) {
-        ensureMarketState(data, newYM);
-        if (!loadStorage('last_settled_ym', '')) {
-          // 初次进入/导入旧档时只记录当前月份，不触发结算，避免误清账
           saveStorage('last_settled_ym', newYM);
+        } else if (newYM && data) {
+          ensureMarketState(data, newYM);
+          if (!loadStorage('last_settled_ym', '')) {
+            // 初次进入/导入旧档时只记录当前月份，不触发结算，避免误清账
+            saveStorage('last_settled_ym', newYM);
+          }
+        } else {
+          reconcileEconomy(data);
         }
-      } else {
-        reconcileEconomy(data);
+      } catch (e) {
+        /* 静默，结算失败不影响变量更新 */
       }
-    } catch (e) { /* 静默，结算失败不影响变量更新 */ }
-    // 十二时辰自动同步：根据二十四时计算，AI 无需手动写入
-    try {
-      const h = _.get(newVars, 'stat_data.世界运转.二十四时.小时');
-      const m = _.get(newVars, 'stat_data.世界运转.二十四时.分钟');
-      const shichen = computeShichen(h, m);
-      if (shichen) {
-        if (!_.get(newVars, 'stat_data.世界运转.十二时辰')) {
-          _.set(newVars, 'stat_data.世界运转.十二时辰', {});
+      // 十二时辰自动同步：根据二十四时计算，AI 无需手动写入
+      try {
+        const h = _.get(newVars, 'stat_data.世界运转.二十四时.小时');
+        const m = _.get(newVars, 'stat_data.世界运转.二十四时.分钟');
+        const shichen = computeShichen(h, m);
+        if (shichen) {
+          if (!_.get(newVars, 'stat_data.世界运转.十二时辰')) {
+            _.set(newVars, 'stat_data.世界运转.十二时辰', {});
+          }
+          _.set(newVars, 'stat_data.世界运转.十二时辰.时辰', shichen.时辰);
+          _.set(newVars, 'stat_data.世界运转.十二时辰.刻', shichen.刻);
         }
-        _.set(newVars, 'stat_data.世界运转.十二时辰.时辰', shichen.时辰);
-        _.set(newVars, 'stat_data.世界运转.十二时辰.刻', shichen.刻);
+      } catch (e) {
+        /* 静默 */
       }
-    } catch (e) { /* 静默 */ }
-    // 生育系统推进：根据 AI 更新的世界运转天数计算日差
-    try {
-      const newDay = _.get(newVars, 'stat_data.世界运转.世界运转天数');
-      const oldDay = _.get(oldVars, 'stat_data.世界运转.世界运转天数');
-      if (typeof newDay === 'number' && typeof oldDay === 'number' && newDay > oldDay) {
-        const days = Math.min(newDay - oldDay, 60); // 上限60天，防止异常值
-        advanceReproductiveSystem(newVars, days, oldDay);
+      // 生育系统推进：根据 AI 更新的世界运转天数计算日差
+      try {
+        const newDay = _.get(newVars, 'stat_data.世界运转.世界运转天数');
+        const oldDay = _.get(oldVars, 'stat_data.世界运转.世界运转天数');
+        if (typeof newDay === 'number' && typeof oldDay === 'number' && newDay > oldDay) {
+          const days = Math.min(newDay - oldDay, 60); // 上限60天，防止异常值
+          advanceReproductiveSystem(newVars, days, oldDay);
+        }
+      } catch (e) {
+        /* 静默 */
       }
-    } catch (e) { /* 静默 */ }
-    if (isOpen) refreshData(true);
-  };
+      if (isOpen) refreshData(true);
+    };
     window._canmingMvuHandler = onVarUpdate;
     eventOn(mvu.events.VARIABLE_UPDATE_ENDED, onVarUpdate);
   }
@@ -5868,7 +7790,9 @@ async function bootstrap() {
       eventOn(tavern_events.WORLDINFO_UPDATED, () => syncWorldbookSettings());
       eventOn(tavern_events.WORLDINFO_SETTINGS_UPDATED, () => syncWorldbookSettings());
     }
-  } catch { /* 旧版本酒馆没有这些事件时忽略 */ }
+  } catch {
+    /* 旧版本酒馆没有这些事件时忽略 */
+  }
 
   // 轮询作为降级方案
   refreshTimer = setInterval(checkLatestMessage, 10000);
@@ -5891,7 +7815,11 @@ async function bootstrap() {
     }
     // ECharts resize
     if (echartsInstance) {
-      try { echartsInstance.resize(); } catch { /* ignore */ }
+      try {
+        echartsInstance.resize();
+      } catch {
+        /* ignore */
+      }
     }
   };
   parentWindow.addEventListener('resize', onResize);
@@ -5905,10 +7833,16 @@ function cleanup() {
   getCharacterGenerator()?.close?.();
   clearInterval(refreshTimer);
   cleanupWorkshopNoticePolling();
-  if (echartsInstance) { echartsInstance.dispose(); echartsInstance = null; }
+  if (echartsInstance) {
+    echartsInstance.dispose();
+    echartsInstance = null;
+  }
   frame?.remove();
   lamp?.remove();
   const parentDocument = window.parent?.document ?? document;
+  const parentWindow = window.parent ?? window;
+  if (parentWindow.CanmingStatusbarActions?._owner === STATUSBAR_ACTIONS_OWNER)
+    delete parentWindow.CanmingStatusbarActions;
   parentDocument.getElementById('canming-lamp-style')?.remove();
   parentDocument.getElementById('canming-lamp-font')?.remove();
   if (window._canmingOnResize && window._canmingParentWindow) {
