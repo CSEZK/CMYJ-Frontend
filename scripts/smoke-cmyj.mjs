@@ -169,7 +169,7 @@ for (const [name, anchor] of Object.entries(experienceAnchors)) {
 assert.ok(releaseLoader.length > 300_000, '1.7 正式版共享加载器未包含完整脚本集');
 assert.match(releaseLoader, /__CMYJRemoteScriptsV17/);
 assert.doesNotMatch(releaseLoader, /__CMYJRemoteScriptsV17Beta/);
-assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.3'/);
+assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.4'/);
 assert.match(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps\/world_1634\.js/);
 assert.match(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps\/world_1634_overview\.js/);
 assert.match(releaseStatusbarSource, /east_asia_1634_provinces/);
@@ -194,6 +194,7 @@ assert.match(releaseStatusbarSource, /rebindWorldbooks\('current', \{ primary: n
 assert.doesNotMatch(releaseStatusbarSource, /additional\.push\(binding\.primary\)/);
 assert.match(releaseStatusbarSource, /await resolveBuiltinTongchengWorldbook\(\)/);
 assert.match(releaseStatusbarSource, /自动校正单主世界书失败/);
+assert.match(releaseStatusbarSource, /availableNames\.filter\(name => name === '残明余烬1\.7'\)/);
 assert.match(releaseGeneratorSource, /STORAGE_KEY_API = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /API_SETTINGS_KEY = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /minBaseVersion: '1\.7\.0'/);
