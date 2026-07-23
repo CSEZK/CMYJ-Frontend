@@ -1,7 +1,7 @@
 import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.7.0-beta.12';
+const STATUSBAR_VERSION = '1.7.0-beta.13';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
@@ -1825,7 +1825,11 @@ function normalizePortraitLibrary(library) {
 
 function applyActiveDlcPortraits(library, context = ACTIVE_DLC_CONTEXT) {
   const profiles = Array.isArray(context?.portraitProfiles) ? context.portraitProfiles : [];
-  const allowedNames = new Set(profiles.map(profile => profile?.name).filter(Boolean));
+  const scenarioPortraitNames = new Set(
+    profiles
+      .filter(profile => profile?.portraits && typeof profile.portraits === 'object')
+      .map(profile => profile.name),
+  );
   let changed = false;
   for (const [name, portraits] of Object.entries(PORTRAIT_DATA)) {
     const entry = library.entries[name] || {
@@ -1837,14 +1841,14 @@ function applyActiveDlcPortraits(library, context = ACTIVE_DLC_CONTEXT) {
       source: 'builtin',
       portraits: { ...portraits },
     };
-    const enabled = allowedNames.has(name);
+    const enabled = true;
     if (!library.entries[name] || entry.enabled !== enabled) changed = true;
     entry.enabled = enabled;
     if (entry.source !== 'custom') entry.source = 'builtin';
     library.entries[name] = entry;
   }
   for (const [name, entry] of Object.entries(library.entries)) {
-    if (entry?.source === 'scenario' && !allowedNames.has(name)) {
+    if (entry?.source === 'scenario' && !scenarioPortraitNames.has(name)) {
       delete library.entries[name];
       changed = true;
     }
@@ -4555,7 +4559,7 @@ async function installBuiltinTongchengScenario() {
       openings,
       worldbookEntries: [builtinTongchengOverviewEntry(overviews)],
       initialRelationships: [],
-      portraitProfiles: Object.keys(PORTRAIT_DATA).map(name => ({ name, source: 'builtin' })),
+      portraitProfiles: [],
       characterOverviewVersion: 1,
       characterOverviews: overviews,
       characterAdaptationVersion: 3,
