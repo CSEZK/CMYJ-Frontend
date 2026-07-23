@@ -1976,7 +1976,8 @@ import { Schema } from '../schema/definition.js';
         await options.installScenarioPackage(bundle);
         notify('身份 DLC 已安装，请新建聊天并选择开场。', 'success');
       } catch (error) {
-        notify(`安装失败：${error?.message || error}`, 'error');
+        if (error?.code === 'SCENARIO_REPLACE_CANCELLED') notify('已保留当前身份 DLC。', 'info');
+        else notify(`安装失败：${error?.message || error}`, 'error');
       }
       return;
     }
