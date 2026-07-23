@@ -1,7 +1,7 @@
 import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.7.1';
+const STATUSBAR_VERSION = '1.7.2';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
@@ -4510,11 +4510,15 @@ async function resolveBuiltinTongchengWorldbook() {
       if (missing.length) continue;
 
       resolvedBaseWorldbookName = name;
-      if (name !== binding.primary && typeof rebindWorldbooks === 'function') {
-        const additional = (binding.additional || []).filter(item => item && item !== name);
-        if (binding.primary && binding.primary !== name && !additional.includes(binding.primary))
-          additional.push(binding.primary);
-        await rebindWorldbooks('current', { primary: name, additional });
+      // 身份 DLC、人物概览和人物适配都直接写入基础卡的主世界书。
+      // 旧修复逻辑会把错误的旧主书迁移到 additional，导致两本内容近似相同的
+      // 世界书同时参与扫描，常驻条目也因此重复注入。残明余烬 1.7 明确采用
+      // 单主世界书：确认完整书后同时清理历史遗留的附加绑定。
+      if (
+        typeof rebindWorldbooks === 'function' &&
+        (name !== binding.primary || (binding.additional || []).length)
+      ) {
+        await rebindWorldbooks('current', { primary: name, additional: [] });
       }
       return entries;
     } catch (error) {
@@ -4530,6 +4534,9 @@ async function resolveBuiltinTongchengWorldbook() {
 
 async function installBuiltinTongchengScenario() {
   try {
+    // 即使原版开局已经安装，也要先校正为单主世界书；否则旧版留下的
+    // additional 绑定会在“已安装”分支提前返回后继续重复消耗 Token。
+    const entries = await resolveBuiltinTongchengWorldbook();
     const installed = await getInstalledScenarioInfo();
     const originalAdaptationCount = ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS.length;
     const installedAdaptationCount = Array.isArray(installed?.context?.characterAdaptations)
@@ -4547,7 +4554,6 @@ async function installBuiltinTongchengScenario() {
       showToast(`✓ 已补全原版桐城开局的 ${repaired.characterAdaptationCount} 名角色人设`, 'ok');
       return repaired;
     }
-    const entries = await resolveBuiltinTongchengWorldbook();
     const openings = BUILTIN_TONGCHENG_OPENINGS.map(definition => {
       const entry = entries.find(item => item?.name === definition.entry);
       if (!entry?.content) throw new Error(`基础卡缺少内置资源「${definition.entry}」，请重新同步角色卡。`);

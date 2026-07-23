@@ -168,7 +168,7 @@ for (const [name, anchor] of Object.entries(experienceAnchors)) {
 assert.ok(releaseLoader.length > 300_000, '1.7 正式版共享加载器未包含完整脚本集');
 assert.match(releaseLoader, /__CMYJRemoteScriptsV17/);
 assert.doesNotMatch(releaseLoader, /__CMYJRemoteScriptsV17Beta/);
-assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.1'/);
+assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.2'/);
 assert.match(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps\/world_1634\.js/);
 assert.match(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps\/world_1634_overview\.js/);
 assert.match(releaseStatusbarSource, /east_asia_1634_provinces/);
@@ -182,6 +182,8 @@ assert.match(releaseStatusbarSource, /ACTIVE_DLC_STORAGE_PREFIX = 'canming-dlc:a
 assert.match(releaseStatusbarSource, /async function resolveBuiltinTongchengWorldbook\(\)/);
 assert.match(releaseStatusbarSource, /rebindCharWorldbooks/);
 assert.match(releaseStatusbarSource, /resolvedBaseWorldbookName = name/);
+assert.match(releaseStatusbarSource, /rebindWorldbooks\('current', \{ primary: name, additional: \[\] \}\)/);
+assert.doesNotMatch(releaseStatusbarSource, /additional\.push\(binding\.primary\)/);
 assert.match(releaseGeneratorSource, /STORAGE_KEY_API = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /API_SETTINGS_KEY = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /minBaseVersion: '1\.7\.0'/);
