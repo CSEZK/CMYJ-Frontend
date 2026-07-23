@@ -168,7 +168,11 @@ for (const [name, anchor] of Object.entries(experienceAnchors)) {
 assert.ok(releaseLoader.length > 300_000, '1.7 正式版共享加载器未包含完整脚本集');
 assert.match(releaseLoader, /__CMYJRemoteScriptsV17/);
 assert.doesNotMatch(releaseLoader, /__CMYJRemoteScriptsV17Beta/);
-assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.0'/);
+assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.1'/);
+assert.match(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps\/world_1634\.js/);
+assert.match(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps\/world_1634_overview\.js/);
+assert.match(releaseStatusbarSource, /east_asia_1634_provinces/);
+assert.doesNotMatch(releaseStatusbarSource, /GooYi-C\/History@main\/world_1629\.js/);
 assert.match(releaseWorkshopSource, /const API='https:\/\/cm-yj-workshop\.canming-cloud\.workers\.dev'/);
 assert.match(releaseWorkshopSource, /TK='canming-workshop:token'/);
 assert.match(releaseWorkshopSource, /UK='canming-workshop:user'/);
