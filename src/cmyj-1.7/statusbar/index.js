@@ -51,6 +51,7 @@ const WORKSHOP_NOTICE_RESUME_THROTTLE_MS = 15000;
 const WORKSHOP_NOTICE_RUNTIME_KEY = '_canmingWorkshopNoticeRuntime';
 const WORKSHOP_NOTICE_OWNER = {};
 let workshopUnreadCount = 0;
+let resolvedBaseWorldbookName = '';
 
 function getWorkshopNoticeRuntime() {
   const hostWindow = window.parent ?? window;
@@ -4426,6 +4427,54 @@ async function repairBuiltinTongchengCharacterAdaptations() {
   };
 }
 
+async function resolveBuiltinTongchengWorldbook() {
+  const readWorldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
+  const listWorldbooks = globalThis.getWorldbookNames ?? window.parent?.getWorldbookNames;
+  const rebindWorldbooks = globalThis.rebindCharWorldbooks ?? window.parent?.rebindCharWorldbooks;
+  if (typeof readWorldbook !== 'function') throw new Error('世界书读取接口不可用。');
+
+  const binding = getCharWorldbookNames('current') || {};
+  const currentCharacterName = getWorkshopApi('getCurrentCharacterName')?.() || '';
+  const availableNames = typeof listWorldbooks === 'function' ? listWorldbooks() || [] : [];
+  const candidates = [
+    binding.primary,
+    ...(binding.additional || []),
+    currentCharacterName,
+    ...availableNames.filter(name => name === currentCharacterName),
+    ...availableNames.filter(name => /残明余烬.*1\.7|1\.7.*残明余烬/u.test(name)),
+    ...availableNames,
+  ].filter((name, index, names) => name && names.indexOf(name) === index);
+  const requiredNames = BUILTIN_TONGCHENG_OPENINGS.map(opening => opening.entry);
+  let closest = null;
+
+  for (const name of candidates) {
+    try {
+      const entries = (await readWorldbook(name)) || [];
+      const missing = requiredNames.filter(
+        requiredName => !entries.some(entry => entry?.name === requiredName && String(entry.content || '').trim()),
+      );
+      if (!closest || missing.length < closest.missing.length) closest = { name, entries, missing };
+      if (missing.length) continue;
+
+      resolvedBaseWorldbookName = name;
+      if (name !== binding.primary && typeof rebindWorldbooks === 'function') {
+        const additional = (binding.additional || []).filter(item => item && item !== name);
+        if (binding.primary && binding.primary !== name && !additional.includes(binding.primary))
+          additional.push(binding.primary);
+        await rebindWorldbooks('current', { primary: name, additional });
+      }
+      return entries;
+    } catch (error) {
+      console.warn(`[残明余烬] 无法读取候选世界书「${name}」`, error);
+    }
+  }
+
+  const missing = closest?.missing?.join('、') || requiredNames.join('、');
+  throw new Error(
+    `当前绑定世界书「${binding.primary || '未绑定'}」缺少内置资源：${missing}。请重新导入完整的《残明余烬1.7》角色卡。`,
+  );
+}
+
 async function installBuiltinTongchengScenario() {
   try {
     const installed = await getInstalledScenarioInfo();
@@ -4445,9 +4494,7 @@ async function installBuiltinTongchengScenario() {
       showToast(`✓ 已补全原版桐城开局的 ${repaired.characterAdaptationCount} 名角色人设`, 'ok');
       return repaired;
     }
-    const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
-    if (typeof worldbook !== 'function') throw new Error('世界书读取接口不可用。');
-    const entries = (await worldbook(getWorldbookName())) || [];
+    const entries = await resolveBuiltinTongchengWorldbook();
     const openings = BUILTIN_TONGCHENG_OPENINGS.map(definition => {
       const entry = entries.find(item => item?.name === definition.entry);
       if (!entry?.content) throw new Error(`基础卡缺少内置资源「${definition.entry}」，请重新同步角色卡。`);
@@ -7298,6 +7345,7 @@ function updatePortraitOverlay() {
 }
 
 function getWorldbookName() {
+  if (resolvedBaseWorldbookName) return resolvedBaseWorldbookName;
   const charWb = getCharWorldbookNames('current');
   if (!charWb?.primary) throw new Error('当前角色卡未绑定世界书');
   return charWb.primary;
