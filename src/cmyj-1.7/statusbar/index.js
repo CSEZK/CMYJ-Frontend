@@ -1,7 +1,7 @@
 import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.7.3';
+const STATUSBAR_VERSION = '1.7.4';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
@@ -4492,11 +4492,14 @@ async function resolveBuiltinTongchengWorldbook() {
   const currentCharacterName = getWorkshopApi('getCurrentCharacterName')?.() || '';
   const availableNames = typeof listWorldbooks === 'function' ? listWorldbooks() || [] : [];
   const candidates = [
-    binding.primary,
-    ...(binding.additional || []),
+    // 正式卡优先使用与角色卡同名的「残明余烬1.7」世界书，不能让旧版或
+    // DLC 测试版仅因当前仍被绑定就抢先成为新的唯一主书。
     currentCharacterName,
     ...availableNames.filter(name => name === currentCharacterName),
+    ...availableNames.filter(name => name === '残明余烬1.7'),
     ...availableNames.filter(name => /残明余烬.*1\.7|1\.7.*残明余烬/u.test(name)),
+    binding.primary,
+    ...(binding.additional || []),
     ...availableNames,
   ].filter((name, index, names) => name && names.indexOf(name) === index);
   const requiredNames = BUILTIN_TONGCHENG_OPENINGS.map(opening => opening.entry);
