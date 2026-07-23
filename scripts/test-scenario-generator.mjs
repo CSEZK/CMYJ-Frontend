@@ -104,7 +104,7 @@ assert.equal(resource.scenario.newChatRequired, true);
 assert.equal(resource.openings.length, 1);
 assert.equal(resource.characterOverviews['origin-opening'].length, 1);
 assert.equal(resource.characterAdaptationVersion, 3);
-assert.deepEqual(resource.portraitProfiles, [{ name: '栖云' }], 'DLC 应启用已选角色的内置立绘');
+assert.deepEqual(resource.portraitProfiles, [{ name: '栖云', source: 'builtin' }], 'DLC 应启用已选角色的内置立绘');
 const protagonistEntry = resource.worldbookEntries.find(entry => entry.name === '[scenario]<user>身份');
 assert.ok(protagonistEntry, 'DLC 必须包含专门记录 <user> 身份的世界书条目');
 assert.match(protagonistEntry.content, /<玩家身份背景>/);

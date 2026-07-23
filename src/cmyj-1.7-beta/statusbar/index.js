@@ -1,7 +1,7 @@
 import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.7.0-beta.11';
+const STATUSBAR_VERSION = '1.7.0-beta.12';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
@@ -4555,7 +4555,7 @@ async function installBuiltinTongchengScenario() {
       openings,
       worldbookEntries: [builtinTongchengOverviewEntry(overviews)],
       initialRelationships: [],
-      portraitProfiles: Object.keys(PORTRAIT_DATA).map(name => ({ name })),
+      portraitProfiles: Object.keys(PORTRAIT_DATA).map(name => ({ name, source: 'builtin' })),
       characterOverviewVersion: 1,
       characterOverviews: overviews,
       characterAdaptationVersion: 3,
