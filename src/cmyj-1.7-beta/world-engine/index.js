@@ -6,7 +6,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 (() => {
   'use strict';
 
-  const VERSION = '1.0.0-beta.3';
+  const VERSION = '1.0.0-beta.4';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -298,11 +298,49 @@ import integratedStyles from './styles-integrated.raw?raw';
       return createEmptyState(chatId);
     }
     const state = { ...createEmptyState(chatId), ...clone(raw), chatId };
-    state.facts = asArray(state.facts).slice(-LIMITS.facts);
-    state.activeEvents = asArray(state.activeEvents).slice(-LIMITS.activeEvents);
-    state.actors = asArray(state.actors).slice(-LIMITS.actors);
-    state.intelPackets = asArray(state.intelPackets).slice(-LIMITS.intelPackets);
-    state.hooks = asArray(state.hooks).slice(-LIMITS.hooks);
+    // 早期版本允许空字段和错误归类进入档案；读取时先做保守清理，避免脏数据继续喂给副模型。
+    state.facts = asArray(state.facts)
+      .filter(item => asText(item?.content) && item?.status === 'occurred' && Number(item?.confidence) >= 0.6)
+      .slice(-LIMITS.facts);
+    state.activeEvents = asArray(state.activeEvents)
+      .filter(
+        item =>
+          asText(item?.title) &&
+          asText(item?.summary) &&
+          asText(item?.stage) &&
+          asText(item?.location) &&
+          asText(item?.nextTrigger),
+      )
+      .slice(-LIMITS.activeEvents);
+    state.actors = asArray(state.actors)
+      .filter(
+        item =>
+          asText(item?.name) &&
+          (asText(item?.currentAction) || asText(item?.nextDecision) || asArray(item?.knowledge).some(Boolean)),
+      )
+      .slice(-LIMITS.actors);
+    state.intelPackets = asArray(state.intelPackets)
+      .filter(
+        item =>
+          asText(item?.content) &&
+          asText(item?.origin) &&
+          asText(item?.destination) &&
+          asText(item?.channel) &&
+          asText(item?.status) &&
+          asText(item?.eta) &&
+          Number(item?.reliability) > 0,
+      )
+      .slice(-LIMITS.intelPackets);
+    state.hooks = asArray(state.hooks)
+      .filter(
+        item =>
+          asText(item?.title) &&
+          asText(item?.summary) &&
+          asText(item?.stage) &&
+          asText(item?.trigger) &&
+          asText(item?.failCondition),
+      )
+      .slice(-LIMITS.hooks);
     state.cameraHistory = asArray(state.cameraHistory).slice(-LIMITS.cameraHistory);
     state.checkpoints = asArray(state.checkpoints).slice(-LIMITS.checkpoints);
     state.nextTurnPacket = normalizePacket(state.nextTurnPacket);
@@ -378,6 +416,10 @@ import integratedStyles from './styles-integrated.raw?raw';
       message: selected.message || '',
       data: selected.data || {},
     };
+  }
+
+  function isFirstFloor(messageId) {
+    return Number(messageId) === 0;
   }
 
   function sameMessageKey(left, right) {
@@ -558,29 +600,40 @@ import integratedStyles from './styles-integrated.raw?raw';
   }
 
   function systemPrompt() {
-    return `你是《残明余烬》的“天下演化史官”。你读取主模型已经完成的正文，将其中真正发生的事情结构化，并让不在玩家视野内的明末世界沿因果继续运转。你还要亲自撰写本轮的“平行世界”镜头；脚本会把它直接追加到刚完成的主模型消息末尾，主模型不会代写这一部分。
+    return `你是《残明余烬》的“天下演化史官”。主模型已写完玩家视角正文；你负责核账、推进视野外因果，并亲自写出本轮平行世界正文。脚本会把 parallel_world 直接追加到这一楼主模型消息末尾，主模型不会代写。
 
-铁律：
-1. 玩家输入只是意图，绝不能直接视为成功事实。以主模型正文实际描写的结果为准。
-2. CURRENT_TURN 是唯一主要新增事实来源；RECENT_CONTEXT 只用于消解代词、承接行动和避免重复，禁止把旧事实再次提交。
-3. 区分 occurred（已经发生）、planned（计划）、ordered（命令已下但结果未知）、reported（某人声称）、rumor（传闻）、failed（失败）、aborted（中止）和 descriptive（纯纹理）。只有 occurred 能直接进入硬事实。
-4. 对话只证明说话者说过这句话，不证明话中内容真实。平行世界的叙述性事实属于客观世界；其中人物对话仍可能误判、撒谎或夸大。
-5. 模型知道不等于人物知道。所有知识必须有目击、告知、公文、书信、驿传、商旅或流言等渠道。秘密不会瞬间传播。
-6. 叙事回合不等于日期推进。正文时间未推进时，可以推进同一时刻的细小行动，不可让军队瞬移、工程完工或城池无因易手。
-7. 历史时间线是未受干预时的惯性，不是强制剧本。不得跳过前提直接播放历史结果。
-8. 已在 CANONICAL_STATE 中存在的事件要推进或解决，不要换名字重复创建。ID 应稳定、简短、可读。
-9. 主角认知变量不等于客观真相。传闻写入认知账本时，客观世界仍可保持“待确认”。
-10. 输出严格符合 JSON Schema。内容使用简体中文，简洁但保留因果。
-11. 顶层字段名必须原样使用 snake_case：
-world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、upsert_intel、remove_intel_ids、upsert_hooks、resolve_hook_ids、camera_history、next_turn_packet、parallel_world。
-12. parallel_world 必须是可以直接展示给玩家的成品正文：写 2 个玩家当前视角之外的电影式场景，每段以【地名·地点·时辰】单独起行，场景之间空一行。优先推进已有事件、人物行动和情报传播；若素材不足，只写低风险日常切片，不得凭空决定城池陷落、重要人物死亡或军队胜败。
-13. parallel_world 内不要再包裹 <平行世界> 标签；脚本会统一添加标签。禁止“与此同时”“玩家不知道的是”“镜头转向”等转场句，也不要使用星号或破折号分隔线。
+一、输入权限
+1. CURRENT_TURN.assistantOutput 与本轮 currentClock、mvuChanges 是唯一主要新增证据。玩家输入只是意图，不能当作成功结果。
+2. RECENT_CONTEXT 只用于承接称谓、动作和时间，严禁把旧内容当成本轮新事实重复入档。
+3. CANONICAL_STATE 是只读旧档案：同一事件、人物、驿报、伏线必须沿用稳定 ID 推进或结案，不得换名重建。
+4. currentKnowledgeReference 是角色资料和玩家认知参考，不是客观事实清单；不得把名册照抄进人物行动，也不得把秘密自动变成全员已知。
 
-你的输出同时完成：事实提取、世界状态增量、后续主模型联动包，以及本轮平行世界正文。不要输出 JSON 之外的解释。`;
+二、事实与知识铁律
+1. 只有正文或平行世界叙述明确发生的 occurred 才是硬事实。planned、ordered、reported、rumor、failed、aborted、descriptive 均不得写入 new_facts。
+2. 对话只证明某人说过这句话，不证明话中内容真实。人物获知信息必须有目击、告知、公文、书信、驿传、商旅或流言渠道。
+3. 回合不等于日期推进。时间未推进时只能发展同一时刻可完成的细小行动，不得让军队瞬移、工程骤成或城池无因易手。
+4. 历史只是未受干预时的惯性，不是强制剧本；重大结果必须有已入档前因。
+
+三、各字段只能填写以下内容
+- world_summary：70—140 字的“当前天下态势快照”。只写已确认且仍有效的局势，不复述本楼玩家场景，不写未经证据支持的宏大推测；天下态势没有实质变化时沿用旧摘要并只做最小修订。
+- new_facts：仅写本轮新发生且可举证的客观事实。每条 evidence 指明来自“主模型正文”“MVU 变化”或“本轮平行世界”的哪一项结果。
+- upsert_events：仅写需要跨回合追踪的持续因果过程；普通对话和一次性动作不是事件。必须有阶段、地点、摘要和下一触发条件。完成后用 resolve_event_ids 结案。
+- upsert_actors：仅写本轮确有行动、位置、目标、知识或下一决策变化的重要 NPC。current_action 与 updated_reason 必须具体；严禁仅因角色出现在资料或名册中就建档。
+- upsert_intel：仅写“正在传播”的信息包，必须同时有起点、终点、传播渠道、状态、预计到达时间、可靠度和当前知情者。静态秘密、人物背景、债务关系、私人心意不是驿报；已到达者从队列移除并写入 next_turn_packet.arrivedIntel。
+- upsert_hooks：仅写尚未显化但具备具体触发条件与失效条件的潜在因果线；氛围描写和泛泛风险不是伏线。
+- camera_history：只写本轮两个平行场景的简短“地点—人物—行动”标签，用于下轮避免重复，不写正文。
+- next_turn_packet：只给下一轮主模型提供可用信息。hardFacts 是已发生且与下一轮有关的事实；arrivedIntel 是本轮实际到达的信息；localConsequences 是玩家所在地可观察后果；npcKnowledge 严格区分知道与不知道；activePressures 是眼前压力；constraints 是不能违背的事实边界；cameraCandidates 是可继续观察的视野外线索。没有内容就输出空数组，禁止拿其他字段凑数。
+- parallel_world：写 2 个玩家当前视角之外、可以直接展示的电影式场景。每段以【地名·地点·时辰】单独起行，场景之间空一行；优先推进旧事件、人物行动和真实的信息传播。素材不足时只写低风险日常切片，不能重演玩家场景，也不能凭空制造重大胜负、死亡或政局结果。
+
+四、输出纪律
+1. 顶层字段必须原样使用 snake_case，并严格符合 JSON Schema。
+2. parallel_world 不得再包裹 <平行世界> 标签；不得写“与此同时”“玩家不知道的是”“镜头转向”等元叙事转场，也不要使用星号或破折号分隔线。
+3. 全部内容使用简体中文，简洁、具体、保留因果。不要输出 JSON 之外的任何解释。`;
   }
 
   function outputSchema() {
-    const stringArray = { type: 'array', items: { type: 'string' } };
+    const nonEmptyString = { type: 'string', minLength: 1 };
+    const stringArray = { type: 'array', items: nonEmptyString };
     return {
       name: 'canming_world_engine_transition',
       description: '残明余烬天下演化的结构化增量',
@@ -603,7 +656,12 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
           'parallel_world',
         ],
         properties: {
-          world_summary: { type: 'string' },
+          world_summary: {
+            type: 'string',
+            minLength: 20,
+            maxLength: 280,
+            description: '当前天下态势快照；只写已确认且仍有效的宏观或地方局势，不复述本楼玩家场景。',
+          },
           new_facts: {
             type: 'array',
             items: {
@@ -623,20 +681,25 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
                 'evidence',
               ],
               properties: {
-                id: { type: 'string' },
-                content: { type: 'string' },
+                id: nonEmptyString,
+                content: nonEmptyString,
                 status: {
                   type: 'string',
-                  enum: ['occurred', 'planned', 'ordered', 'reported', 'rumor', 'failed', 'aborted', 'descriptive'],
+                  enum: ['occurred'],
+                  description: '硬事实字段只接受已经发生的结果；其他状态应进入事件、驿报或不提交。',
                 },
                 scope: { type: 'string', enum: ['player_scene', 'parallel_world', 'variable_update'] },
-                location: { type: 'string' },
+                location: nonEmptyString,
                 actors: stringArray,
                 witnesses: stringArray,
-                publicity: { type: 'string' },
-                confidence: { type: 'number' },
-                importance: { type: 'number' },
-                evidence: { type: 'string' },
+                publicity: nonEmptyString,
+                confidence: { type: 'number', minimum: 0, maximum: 1 },
+                importance: { type: 'number', minimum: 0, maximum: 100 },
+                evidence: {
+                  type: 'string',
+                  minLength: 1,
+                  description: '具体证据来源与结果，不得只写“正文可见”。',
+                },
               },
             },
           },
@@ -657,14 +720,14 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
                 'source_fact_ids',
               ],
               properties: {
-                id: { type: 'string' },
-                title: { type: 'string' },
-                stage: { type: 'string' },
-                status: { type: 'string' },
-                location: { type: 'string' },
+                id: nonEmptyString,
+                title: nonEmptyString,
+                stage: nonEmptyString,
+                status: nonEmptyString,
+                location: nonEmptyString,
                 actors: stringArray,
-                summary: { type: 'string' },
-                next_trigger: { type: 'string' },
+                summary: nonEmptyString,
+                next_trigger: nonEmptyString,
                 source_fact_ids: stringArray,
               },
             },
@@ -686,14 +749,22 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
                 'updated_reason',
               ],
               properties: {
-                id: { type: 'string' },
-                name: { type: 'string' },
-                location: { type: 'string' },
-                goal: { type: 'string' },
-                current_action: { type: 'string' },
+                id: nonEmptyString,
+                name: nonEmptyString,
+                location: nonEmptyString,
+                goal: nonEmptyString,
+                current_action: {
+                  type: 'string',
+                  minLength: 1,
+                  description: '此人物此刻正在做的具体行动；没有行动变化就不要提交该人物。',
+                },
                 knowledge: stringArray,
-                next_decision: { type: 'string' },
-                updated_reason: { type: 'string' },
+                next_decision: nonEmptyString,
+                updated_reason: {
+                  type: 'string',
+                  minLength: 1,
+                  description: '本轮为何需要更新此人物，必须对应新证据或本轮视野外行动。',
+                },
               },
             },
           },
@@ -714,14 +785,14 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
                 'known_by',
               ],
               properties: {
-                id: { type: 'string' },
-                content: { type: 'string' },
-                origin: { type: 'string' },
-                destination: { type: 'string' },
-                channel: { type: 'string' },
-                status: { type: 'string' },
-                eta: { type: 'string' },
-                reliability: { type: 'number' },
+                id: nonEmptyString,
+                content: nonEmptyString,
+                origin: nonEmptyString,
+                destination: nonEmptyString,
+                channel: nonEmptyString,
+                status: nonEmptyString,
+                eta: nonEmptyString,
+                reliability: { type: 'number', minimum: 0.01, maximum: 1 },
                 known_by: stringArray,
               },
             },
@@ -743,20 +814,30 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
                 'source_fact_ids',
               ],
               properties: {
-                id: { type: 'string' },
-                title: { type: 'string' },
-                stage: { type: 'string' },
-                summary: { type: 'string' },
+                id: nonEmptyString,
+                title: nonEmptyString,
+                stage: nonEmptyString,
+                summary: nonEmptyString,
                 visible_signs: stringArray,
-                trigger: { type: 'string' },
-                fail_condition: { type: 'string' },
+                trigger: nonEmptyString,
+                fail_condition: nonEmptyString,
                 source_fact_ids: stringArray,
               },
             },
           },
           resolve_hook_ids: stringArray,
-          camera_history: stringArray,
-          parallel_world: { type: 'string' },
+          camera_history: {
+            type: 'array',
+            maxItems: 2,
+            items: nonEmptyString,
+            description: '本轮两个平行场景的短标签，不是场景正文。',
+          },
+          parallel_world: {
+            type: 'string',
+            minLength: 80,
+            maxLength: 5000,
+            description: '两个可直接追加到主模型消息末尾的玩家视野外成品场景，不含平行世界标签。',
+          },
           next_turn_packet: {
             type: 'object',
             additionalProperties: false,
@@ -779,7 +860,7 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
                   type: 'object',
                   additionalProperties: false,
                   required: ['name', 'knows', 'doesNotKnow'],
-                  properties: { name: { type: 'string' }, knows: stringArray, doesNotKnow: stringArray },
+                  properties: { name: nonEmptyString, knows: stringArray, doesNotKnow: stringArray },
                 },
               },
               activePressures: stringArray,
@@ -797,7 +878,8 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
     const current = getMessages(messageKey.messageId)?.[0];
     const previousStat = findPreviousStatData(messageKey.messageId);
     return {
-      instruction: '只从 CURRENT_TURN 提交本轮新事实。RECENT_CONTEXT 与 CANONICAL_STATE 均为只读。',
+      instruction:
+        '先判定 CURRENT_TURN 中真正发生了什么，再按字段职责提交最小必要增量。RECENT_CONTEXT、CANONICAL_STATE 与角色资料均为只读参考，禁止照抄名册、旧事实或静态秘密凑数。',
       currentTurn: {
         messageId: messageKey.messageId,
         swipeId: messageKey.swipeId,
@@ -1066,7 +1148,10 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
     const source = result && typeof result === 'object' ? result : {};
     state.revision = Number(state.revision || 0) + 1;
     state.clock = clockFromStatData(currentStat || {});
-    state.worldSummary = asText(source.world_summary, state.worldSummary).slice(0, 5000);
+    state.worldSummary = asText(source.world_summary, state.worldSummary)
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 600);
 
     const newFacts = asArray(source.new_facts)
       .map(raw => ({
@@ -1090,13 +1175,29 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
         source: { messageId: messageKey.messageId, swipeId: messageKey.swipeId, hash: messageKey.hash },
         createdAt: nowIso(),
       }))
-      .filter(fact => fact.content && fact.status !== 'descriptive' && fact.confidence >= 0.45);
+      .filter(
+        fact =>
+          fact.content &&
+          fact.status === 'occurred' &&
+          fact.location &&
+          fact.publicity &&
+          fact.evidence &&
+          fact.confidence >= 0.6,
+      );
     state.facts = upsertById(state.facts, newFacts, settings.maxFacts, 'F', item => item);
 
     const resolvedEvents = new Set(asArray(source.resolve_event_ids).map(String));
     state.activeEvents = asArray(state.activeEvents).filter(item => !resolvedEvents.has(String(item.id)));
     state.activeEvents = upsertById(state.activeEvents, source.upsert_events, LIMITS.activeEvents, 'EV', raw => {
-      if (!asText(raw?.title) && !asText(raw?.summary)) return null;
+      if (
+        !asText(raw?.title) ||
+        !asText(raw?.summary) ||
+        !asText(raw?.stage) ||
+        !asText(raw?.location) ||
+        !asText(raw?.next_trigger)
+      ) {
+        return null;
+      }
       return {
         id: raw?.id,
         title: asText(raw?.title),
@@ -1117,7 +1218,7 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
     });
 
     state.actors = upsertById(state.actors, source.upsert_actors, LIMITS.actors, 'NPC', raw => {
-      if (!asText(raw?.name)) return null;
+      if (!asText(raw?.name) || !asText(raw?.current_action) || !asText(raw?.updated_reason)) return null;
       return {
         id: raw?.id,
         name: asText(raw?.name),
@@ -1136,7 +1237,17 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
     const removedIntel = new Set(asArray(source.remove_intel_ids).map(String));
     state.intelPackets = asArray(state.intelPackets).filter(item => !removedIntel.has(String(item.id)));
     state.intelPackets = upsertById(state.intelPackets, source.upsert_intel, LIMITS.intelPackets, 'INTEL', raw => {
-      if (!asText(raw?.content)) return null;
+      if (
+        !asText(raw?.content) ||
+        !asText(raw?.origin) ||
+        !asText(raw?.destination) ||
+        !asText(raw?.channel) ||
+        !asText(raw?.status) ||
+        !asText(raw?.eta) ||
+        Number(raw?.reliability) <= 0
+      ) {
+        return null;
+      }
       return {
         id: raw?.id,
         content: asText(raw?.content),
@@ -1156,7 +1267,15 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
     const resolvedHooks = new Set(asArray(source.resolve_hook_ids).map(String));
     state.hooks = asArray(state.hooks).filter(item => !resolvedHooks.has(String(item.id)));
     state.hooks = upsertById(state.hooks, source.upsert_hooks, LIMITS.hooks, 'HOOK', raw => {
-      if (!asText(raw?.title) && !asText(raw?.summary)) return null;
+      if (
+        !asText(raw?.title) ||
+        !asText(raw?.summary) ||
+        !asText(raw?.stage) ||
+        !asText(raw?.trigger) ||
+        !asText(raw?.fail_condition)
+      ) {
+        return null;
+      }
       return {
         id: raw?.id,
         title: asText(raw?.title),
@@ -1334,6 +1453,13 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
   }
 
   async function processMessage(messageId, { force = false, source = 'auto' } = {}) {
+    if (isFirstFloor(messageId) && source !== 'manual') {
+      runtime.pendingMessageId = null;
+      runtime.pendingForce = false;
+      runtime.lastNotice = '首楼是开场初始化内容，自动推演已忽略。';
+      renderPanel();
+      return getChatState();
+    }
     if (runtime.busy) throw new Error('已有天下推演正在进行。');
     const chatId = getCurrentChatId();
     if (!chatId) throw new Error('当前没有可用的聊天文件。');
@@ -1400,6 +1526,11 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
 
   function scheduleProcess(messageId, { force = false, source = 'auto', delayMs = settings.settleDelayMs } = {}) {
     clearTimeout(runtime.scheduledTimer);
+    if (isFirstFloor(messageId) && source !== 'manual') {
+      runtime.pendingMessageId = null;
+      runtime.pendingForce = false;
+      return;
+    }
     runtime.pendingMessageId = Number(messageId);
     runtime.scheduledTimer = setTimeout(() => {
       if (!settings.enabled || (!settings.autoRun && source === 'auto')) return;
@@ -1418,7 +1549,7 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
     if (dryRun || !settings.enabled || !settings.autoRun) return;
     if (['regenerate', 'swipe', 'continue', 'impersonate'].includes(String(generationType || '').toLowerCase())) return;
     const messageId = findLatestAssistantMessageId();
-    if (messageId < 0) return;
+    if (messageId <= 0) return;
     const key = currentMessageKey(messageId);
     if (!key || sameMessageKey(getChatState().lastProcessed, key)) return;
     clearTimeout(runtime.scheduledTimer);
@@ -1522,7 +1653,7 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
       <section class="cwe-overview-lead">
         <div class="cwe-world-brief">
           <div class="cwe-brief-kicker"><span>今日天下</span><span>${escapeHtml(state.clock.date || '未定年月')}</span></div>
-          <h2 title="${escapeHtml(state.worldSummary || '天下档案尚未开始结算。')}">${escapeHtml(shortText(state.worldSummary || '天下档案尚未开始结算。', 160))}</h2>
+          <h2>${escapeHtml(state.worldSummary || '天下档案尚未开始结算。')}</h2>
           <p>${escapeHtml([state.clock.location || '地点未明', state.clock.time, `第 ${state.revision} 次演化`, processed].filter(Boolean).join(' · '))}</p>
         </div>
         <div class="cwe-overview-status">
@@ -2227,7 +2358,7 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
 
     on(events.MESSAGE_RECEIVED, (messageId, type) => {
       if (!settings.enabled || !settings.autoRun) return;
-      if (type === 'first_message' || type === 'quiet' || type === 'extension') return;
+      if (isFirstFloor(messageId) || type === 'first_message' || type === 'quiet' || type === 'extension') return;
       runtime.pendingMessageId = Number(messageId);
       runtime.pendingForce = ['regenerate', 'swipe'].includes(type);
       if (runtime.mvuReady) {
@@ -2249,7 +2380,11 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
           runtime.pendingMessageId != null && currentMessageKey(runtime.pendingMessageId)
             ? runtime.pendingMessageId
             : findLatestAssistantMessageId();
-        if (messageId < 0) return;
+        if (messageId <= 0) {
+          runtime.pendingMessageId = null;
+          runtime.pendingForce = false;
+          return;
+        }
         scheduleProcess(messageId, { force: runtime.pendingForce, source: 'mvu', delayMs: 120 });
         runtime.pendingForce = false;
       });
@@ -2259,10 +2394,12 @@ world_summary、new_facts、upsert_events、resolve_event_ids、upsert_actors、
     );
     on(events.MESSAGE_SWIPED, messageId => {
       if (!settings.enabled || !settings.autoRun) return;
+      if (isFirstFloor(messageId)) return;
       scheduleProcess(Number(messageId), { force: true, source: 'auto' });
     });
     on(events.MESSAGE_EDITED, messageId => {
       if (!settings.enabled || !settings.autoRun) return;
+      if (isFirstFloor(messageId)) return;
       const key = currentMessageKey(Number(messageId));
       const selfWrittenHash = runtime.selfWrittenMessageHashes.get(Number(messageId));
       if (key && selfWrittenHash === key.hash) {

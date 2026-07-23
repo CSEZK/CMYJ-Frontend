@@ -1575,14 +1575,17 @@ select:focus-visible {
 }
 
 .cwe-world-brief h2 {
-  max-height: 4.5em;
+  display: block;
+  max-height: none;
+  overflow: visible;
   margin-block: 7px 5px;
   font-family: var(--cwe-font-body);
-  font-size: 17px;
+  font-size: 15.5px;
   font-weight: 700;
   letter-spacing: 0.015em;
-  line-height: 1.5;
-  -webkit-line-clamp: 3;
+  line-height: 1.55;
+  -webkit-box-orient: initial;
+  -webkit-line-clamp: unset;
 }
 
 .cwe-world-brief > p {
