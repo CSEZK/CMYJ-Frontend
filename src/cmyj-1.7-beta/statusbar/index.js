@@ -976,96 +976,97 @@ let mapMode = loadStorage('mapMode', 'status');
 let marketTransactionPending = false;
 
 // ============================================================
-// 东亚 GeoJSON 子集 —— 从 WORLD_1629 筛选
+// 东亚 GeoJSON 子集 —— 从 WORLD_1634 筛选
 // ============================================================
 
-/** 从 WORLD_1629 中筛选东亚相关特征，构造精简 FeatureCollection */
-function buildEastAsiaGeo() {
-  const W = frame.contentWindow?.WORLD_1629;
-  if (!W || !W.features) return { type: 'FeatureCollection', features: [] };
-  const TARGETS = new Set([
-    // 直接匹配（一一对应）
-    '北直隶',
-    '山东布政使司',
-    '山西布政使司',
-    '河南布政使司',
-    '陕西布政使司',
-    '陕西行都司',
-    '四川布政使司',
-    '江西布政使司',
-    '浙江布政使司',
-    '福建布政使司',
-    '广东布政使司',
-    '广西布政使司',
-    '云南布政使司',
-    '贵州布政使司',
-    '辽东都司',
-    '宁夏卫',
-    '莫卧儿帝国',
-    '阿瑜陀耶王朝(暹罗)',
-    '不丹竺巴',
-    '尼泊尔马拉王朝',
-    '西属菲律宾',
-    '马打蓝苏丹国',
-    '藏巴汗',
-    '叶尔羌汗国',
-    '和硕特部',
-    '康区土司',
-    '澜沧·真腊',
-    // 合并用（一个残明区域 = 多个 GeoJSON 特征）
-    '建州女真(后金)',
-    '野人女真诸部',
-    '蒙古察哈尔部',
-    '蒙古土默特部',
-    '朵颜三卫',
-    '喀尔喀蒙古',
-    '南直隶(江南)',
-    '南直隶(江北)',
-    '湖广布政使司(北)',
-    '湖广布政使司(南)',
-    '后黎朝·郑主',
-    '阮主(广南)',
-    '澳大利亚(原住民)',
-  ]);
+/** WORLD_1634 的明代府州 source_id → 残明区域。 */
+const MING_REGION_SOURCE_IDS = {
+  云南: new Set([220761, 220767, 220770, 220774, 220783, 220793, 220796, 220799, 220801, 220803, 220807, 220810, 220818, 220826, 220844, 220847, 220850, 220856, 220861, 220866, 220871, 220880, 220883, 220885, 220895, 220896, 220899, 220919, 220927, 220934, 220940, 220944, 220946, 220947, 220950]),
+  北直隶: new Set([220257, 220263, 220291, 220297, 220335, 220343, 220365]),
+  南直隶: new Set([90206, 90245, 90261, 90271, 90267, 90528, 90531, 90541, 90575, 90581, 91116, 91126, 91134, 91195, 91142, 91143, 91192, 91145]),
+  四川: new Set([220649, 220656, 220662, 220664, 220665, 220669, 220674, 220683, 220694, 220721, 220726, 220727, 220743, 220749, 220752, 220756, 220759, 220791]),
+  宁夏: new Set([220593, 220596, 220597]),
+  山东: new Set([220358, 220377, 220389, 220399, 220405]),
+  山西: new Set([220022, 221238, 221256, 221249, 221252, 221276, 221265, 221279, 220250]),
+  广东: new Set([97703, 97726, 97739, 97766, 97770, 97780, 97795, 97805, 97808, 97822]),
+  广西: new Set([93741, 93698, 93701, 93692, 93706, 93711, 93718, 93789, 221220, 221184, 221185, 93754, 221192, 221197, 221200, 93762, 97714]),
+  江西: new Set([97101, 97119, 97123, 97133, 97159, 97166, 97216, 97232, 97241, 97252, 97259, 97280, 97106]),
+  河南: new Set([220269, 220274, 220433, 220437, 220446, 220453, 220459, 220467, 220474, 220477, 220480]),
+  浙江: new Set([90118, 90120, 90347, 90348, 90461, 90413, 90439, 90368, 90384, 90423, 90119]),
+  湖广: new Set([97830, 97831, 97836, 97865, 97880, 97892, 97907, 97917, 97304, 97309, 97315, 97325, 97330, 97339, 97346, 97379, 97389, 221224, 97919]),
+  福建: new Set([90024, 90050, 90005, 90002, 90010, 90009, 90021, 90026, 90013]),
+  贵州: new Set([220965, 220971, 220986, 221070, 220995, 221002, 221005, 221008, 221014, 221019, 221022, 221025, 221026, 221028, 221037, 221043, 221041, 221066, 221189, 97398]),
+  陕西: new Set([220496, 220504, 220516, 220526, 220527, 220536, 220544, 220568, 220577, 220581, 220587, 220588, 220603, 220604, 220610, 220615, 220618, 220625, 220628, 220634, 220643]),
+};
 
-  let features = W.features
-    .filter(f => TARGETS.has(f.properties.name))
-    .map(f => {
-      const display = GEO_NAME_DISPLAY[f.properties.name];
-      if (display) {
-        return { ...f, properties: { ...f.properties, name: display } };
-      }
-      return f;
-    });
-
-  // 拆分德川幕府 → 日本 + 朝鲜 + 东番
-  const tokugawa = W.features.find(f => f.properties.name === '德川幕府');
-  if (tokugawa && tokugawa.geometry.type === 'MultiPolygon') {
-    const coords = tokugawa.geometry.coordinates;
-    // Poly 1 (765 pts, lng 124-130, lat 34-43) = 朝鲜半岛
-    // Poly 18 (254 pts, lng 120-122, lat 22-25) = 东番/台湾
-    // 其余 = 日本列岛
-    const koreaCoords = [coords[1]];
-    const taiwanCoords = [coords[18]];
-    const japanCoords = coords.filter((_, i) => i !== 1 && i !== 18);
-
-    features.push({
-      type: 'Feature',
-      properties: { name: '朝鲜' },
-      geometry: { type: 'MultiPolygon', coordinates: koreaCoords },
-    });
-    features.push({
-      type: 'Feature',
-      properties: { name: '东番' },
-      geometry: { type: 'MultiPolygon', coordinates: taiwanCoords },
-    });
-    features.push({
-      type: 'Feature',
-      properties: { name: '日本' },
-      geometry: { type: 'MultiPolygon', coordinates: japanCoords },
-    });
+const MING_SOURCE_ID_TO_REGION = (() => {
+  const map = {};
+  for (const [regionName, sourceIds] of Object.entries(MING_REGION_SOURCE_IDS)) {
+    for (const sourceId of sourceIds) map[sourceId] = regionName;
   }
+  return map;
+})();
 
+/** WORLD_1634 中不按 category 整体归并的特征名。 */
+const WORLD_1634_NAME_DISPLAY = {
+  辽东都司: '辽东',
+  西属菲律宾: '吕宋',
+  阿瑜陀耶王国: '暹罗',
+  '大越（郑阮纷争）': '郑主',
+  柬埔寨王国: '澜沧',
+  澜沧王国: '澜沧',
+  荷兰东印度公司据点与影响区: '爪哇',
+  不丹: '不丹',
+  尼泊尔诸王国: '尼婆罗',
+  澳洲原住民诸族: '澳洲',
+};
+
+function getWorld1634DisplayName(feature) {
+  const properties = feature?.properties || {};
+  const directName = WORLD_1634_NAME_DISPLAY[properties.name];
+  if (directName) return directName;
+  switch (properties.category) {
+    case 'ming_administration':
+      return MING_SOURCE_ID_TO_REGION[properties.source_id] || null;
+    case 'joseon_province':
+      return '朝鲜';
+    case 'japan_province':
+    case 'ainu_region':
+    case 'east_asian_polity':
+      return '日本';
+    case 'taiwan_polity':
+      return '东番';
+    case 'jurchen_region':
+      return '后金';
+    case 'mongol_region':
+      return '察哈尔';
+    case 'western_regions':
+      return '西域';
+    case 'tibetan_polity':
+      return '乌思藏';
+    case 'qinghai_region':
+      return '青海';
+    case 'mughal_subah':
+      return '莫卧儿';
+    default:
+      return null;
+  }
+}
+
+/** 从 WORLD_1634 中筛选东亚相关特征，并归并到残明区域名。 */
+function buildEastAsiaGeo() {
+  const world = frame.contentWindow?.WORLD_1634;
+  if (!world?.features) return { type: 'FeatureCollection', features: [] };
+  const features = world.features.flatMap(feature => {
+    const displayName = getWorld1634DisplayName(feature);
+    if (!displayName) return [];
+    return [
+      {
+        ...feature,
+        properties: { ...feature.properties, original_name: feature.properties.name, name: displayName },
+      },
+    ];
+  });
   return { type: 'FeatureCollection', features };
 }
 
@@ -1106,49 +1107,6 @@ const REGION_GEO_MAP = {
   安南: ['郑主', '广南'],
   澳洲: ['澳洲'],
   '澜沧·真腊': ['澜沧'],
-};
-
-/** GeoJSON 原名 → 显示名（ECharts nameMap） */
-const GEO_NAME_DISPLAY = {
-  山东布政使司: '山东',
-  山西布政使司: '山西',
-  河南布政使司: '河南',
-  陕西布政使司: '陕西',
-  陕西行都司: '陕西',
-  四川布政使司: '四川',
-  江西布政使司: '江西',
-  浙江布政使司: '浙江',
-  福建布政使司: '福建',
-  广东布政使司: '广东',
-  广西布政使司: '广西',
-  云南布政使司: '云南',
-  贵州布政使司: '贵州',
-  '湖广布政使司(北)': '湖广',
-  '湖广布政使司(南)': '湖广',
-  '南直隶(江南)': '南直隶',
-  '南直隶(江北)': '南直隶',
-  辽东都司: '辽东',
-  宁夏卫: '宁夏',
-  莫卧儿帝国: '莫卧儿',
-  '阿瑜陀耶王朝(暹罗)': '暹罗',
-  不丹竺巴: '不丹',
-  尼泊尔马拉王朝: '尼婆罗',
-  西属菲律宾: '吕宋',
-  马打蓝苏丹国: '爪哇',
-  藏巴汗: '乌思藏',
-  康区土司: '乌思藏',
-  叶尔羌汗国: '西域',
-  和硕特部: '青海',
-  '建州女真(后金)': '后金',
-  野人女真诸部: '野人女真',
-  蒙古察哈尔部: '察哈尔',
-  蒙古土默特部: '土默特',
-  朵颜三卫: '朵颜三卫',
-  喀尔喀蒙古: '喀尔喀',
-  '后黎朝·郑主': '郑主',
-  '阮主(广南)': '广南',
-  '澳大利亚(原住民)': '澳洲',
-  '澜沧·真腊': '澜沧',
 };
 
 /** 反向查找：GeoJSON 特征名 → 残明区域名 */
@@ -1235,7 +1193,7 @@ function buildOwnershipData(regions, isNight) {
 function initEChartsMap() {
   const win = frame.contentWindow;
   const echarts = win?.echarts;
-  if (!echarts || !win?.WORLD_1629) {
+  if (!echarts || !win?.WORLD_1634) {
     echartsReady = false;
     return;
   }
@@ -1244,8 +1202,8 @@ function initEChartsMap() {
   echartsReady = true;
 
   // 注册地图（仅首次）
-  if (!echarts.getMap('east_asia_1629')) {
-    echarts.registerMap('east_asia_1629', buildEastAsiaGeo());
+  if (!echarts.getMap('east_asia_1634')) {
+    echarts.registerMap('east_asia_1634', buildEastAsiaGeo());
   }
 
   // 销毁旧实例避免重复初始化
@@ -1262,7 +1220,7 @@ function initEChartsMap() {
     series: [
       {
         type: 'map',
-        map: 'east_asia_1629',
+        map: 'east_asia_1634',
         roam: true,
         center: echartsGeoState?.center || [110, 35],
         zoom: echartsGeoState?.zoom || 1.5,
@@ -5182,7 +5140,7 @@ function loadIframeScripts() {
 
   script1.onload = () => {
     const script2 = doc.createElement('script');
-    script2.src = 'https://testingcf.jsdelivr.net/gh/GooYi-C/History@main/world_1629.js';
+    script2.src = 'https://testingcf.jsdelivr.net/gh/CSEZK/CMYJ-Frontend@develop/assets/maps/world_1634.js';
     script2.onload = () => {
       echartsReady = true;
       // 如果已在地图标签页，初始化
@@ -5344,7 +5302,7 @@ function render() {
 let echartsRetryCount = 0;
 function tryInitEChartsMap() {
   const win = frame.contentWindow;
-  if (win?.echarts && win?.WORLD_1629) {
+  if (win?.echarts && win?.WORLD_1634) {
     echartsRetryCount = 0;
     initEChartsMap();
     return;
