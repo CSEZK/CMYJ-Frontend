@@ -36,12 +36,14 @@ project.id = 'cmyj.test.datong-fort';
 project.protagonist.identity = '大同镇边军小旗';
 project.protagonist.occupation = '边堡小旗';
 project.protagonist.location = '山西大同府北境边堡';
-project.opening.body = '风卷着沙砾撞上堡门，欠饷的军士已经堵在门外。';
+project.opening.body =
+  '风卷着沙砾撞上堡门，user看见欠饷的军士已经堵在门外。\n\n<initial_variables>\n不应保留\n</initial_variables>';
 project.characters.栖云.included = true;
 project.characters.栖云.known = true;
 project.characters.栖云.scene = false;
 project.characters.栖云.adaptationBrief = '成为随主角往来边镇、负责商路联络的旧识';
 project.characters.栖云.category = '亲属';
+project.characters.栖云.affection = 37;
 project.characters.栖云.relation = '义妹';
 project.characters.栖云.identity = '随养母经营边地商路的义女';
 project.characters.栖云.activityArea = '通常往来于大同府城与北境商路';
@@ -112,6 +114,7 @@ for (const transientField of ['openingExperience', 'currentGoals', 'knownInforma
   assert.equal(Object.hasOwn(qiyunAdaptation, transientField), false, `长期适配不得包含 ${transientField}`);
 }
 assert.equal(initvar.人际网络.亲属.栖云.是否在场, false);
+assert.equal(initvar.人际网络.亲属.栖云.好感度, 37);
 assert.equal(initvar.天下地图.地区态势.山西.实控阵营, '明廷');
 assert.deepEqual(Object.keys(initvar), [
   '世界运转',
@@ -132,5 +135,9 @@ assert.deepEqual(initvar.经济.仓储.粟米, { 数量: 18, 单位: '石' });
 assert.equal(initvar.经济.市场.价格指数.粮食, 100, '补丁合并不得覆盖固定市场骨架');
 assert.deepEqual(initvar.时局与任务.当前任务.安抚欠饷军士, { 类型: '军政', 说明: '在哗变前筹到粮饷', 进度: '未开始' });
 assert.equal((resource.openings[0].content.match(/<initvar>/g) || []).length, 1);
+assert.equal((resource.openings[0].content.match(/<\/initvar>/g) || []).length, 1);
+assert.doesNotMatch(resource.openings[0].content, /<\/?initial_variables>/);
+assert.match(resource.openings[0].content, /<user>看见/);
+assert.doesNotMatch(resource.openings[0].content, /(?<!<)\buser\b(?!>)/);
 
 console.info('开局生成器 v2 长期适配、固定 initvar 骨架和初始化补丁合并测试通过。');

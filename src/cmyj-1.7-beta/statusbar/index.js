@@ -1,7 +1,7 @@
 import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.7.0-beta.7';
+const STATUSBAR_VERSION = '1.7.0-beta.8';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
@@ -1909,10 +1909,10 @@ function getPortraitEntries() {
   return getPortraitLibrary().entries;
 }
 
-function getPortraitData() {
+function collectPortraitData({ includeDisabled = false } = {}) {
   const data = {};
   for (const [name, entry] of Object.entries(getPortraitEntries())) {
-    if (entry?.enabled === false) continue;
+    if (!includeDisabled && entry?.enabled === false) continue;
     if (!entry?.portraits || typeof entry.portraits !== 'object') continue;
     const portraits = Object.fromEntries(Object.entries(entry.portraits).filter(([, source]) => isPortraitUrl(source)));
     if (!Object.keys(portraits).length) continue;
@@ -1922,6 +1922,14 @@ function getPortraitData() {
     }
   }
   return data;
+}
+
+function getPortraitData() {
+  return collectPortraitData();
+}
+
+function getAllPortraitData() {
+  return collectPortraitData({ includeDisabled: true });
 }
 
 function get(source, path, fallback = '') {
@@ -3258,7 +3266,6 @@ function renderPortraits() {
   const filters = [['all', '全部'], ...PORTRAIT_GALLERY_OPTIONS.filter(([key]) => key !== 'none')];
   const counts = Object.values(entries).reduce(
     (result, entry) => {
-      if (entry?.enabled === false) return result;
       const gallery = normalizePortraitGallery(entry?.gallery, entry?.source);
       if (gallery !== 'none') {
         result.all += 1;
@@ -3269,7 +3276,6 @@ function renderPortraits() {
     { all: 0, beauties: 0, heroes: 0, beings: 0 },
   );
   const names = Object.keys(entries).filter(name => {
-    if (entries[name]?.enabled === false) return false;
     const gallery = normalizePortraitGallery(entries[name]?.gallery, entries[name]?.source);
     return gallery !== 'none' && (portraitGalleryFilter === 'all' || gallery === portraitGalleryFilter);
   });
@@ -3290,7 +3296,7 @@ function renderPortraits() {
     <div class="cm-portrait-grid">
       ${names
         .map(name => {
-          const imgs = getPortraitData()[name] || {};
+          const imgs = getAllPortraitData()[name] || {};
           const cover = imgs.日常 || Object.values(imgs)[0] || '';
           return `
         <button class="cm-portrait-card" data-portrait-name="${html(name)}">
@@ -3303,11 +3309,11 @@ function renderPortraits() {
         .join('')}
     </div>
     ${names.length ? '' : '<p class="cm-empty">此分类暂未收录人物。</p>'}
-    <p class="cm-personage-note">未加入人物志的角色仍会保留角色档案、立绘与正文插图能力。可在角色管理器中随时调整归属。</p>`;
+    <p class="cm-personage-note">内置人物立绘始终保留在人物志中；身份 DLC 只决定正文插图当前可以调用哪些人物，不再删减这里的收藏。</p>`;
 }
 
 function renderPortraitDetail() {
-  const imgs = getPortraitData()[portraitSelected];
+  const imgs = getAllPortraitData()[portraitSelected];
   if (!imgs) return '';
   const categories = Object.entries(imgs);
   return `
@@ -4188,8 +4194,17 @@ async function importWorldbookWorkshopPackage(bundle) {
 const CHARACTER_ADAPTATION_PATTERN =
   /(<!-- CANMING_CHARACTER_ADAPTATION_START -->)([\s\S]*?)(<!-- CANMING_CHARACTER_ADAPTATION_END -->)/;
 
+function normalizeUserReference(value) {
+  const sentinel = '\u0000CMYJ_USER_TOKEN\u0000';
+  return String(value || '')
+    .replace(/<\s*user\s*>/gi, sentinel)
+    .replace(/\{\{\s*user\s*\}\}/gi, sentinel)
+    .replace(/\buser\b/gi, sentinel)
+    .replaceAll(sentinel, '<user>');
+}
+
 function characterAdaptationBody(adaptation, version = 2) {
-  const scalar = value => JSON.stringify(String(value || ''));
+  const scalar = value => JSON.stringify(normalizeUserReference(value));
   const isV3 = Number(version) >= 3;
   // v2 mixed long-term positioning with an opening snapshot. Keep accepting old
   // packages, but deliberately map only information that remains useful after
@@ -4223,34 +4238,34 @@ function characterAdaptationBody(adaptation, version = 2) {
   const relationships = Array.isArray(adaptation.nonFixedRelationships)
     ? adaptation.nonFixedRelationships.filter(item => item?.character && item?.relation)
     : [];
-  const lines = ['', '  状态: 已配置'];
-  if (identityPosition) lines.push(`  本世界线身份定位: ${scalar(identityPosition)}`);
-  if (activityRange) lines.push(`  常驻地与活动范围: ${scalar(activityRange)}`);
-  if (factionAlignment) lines.push(`  长期势力归属: ${scalar(factionAlignment)}`);
-  if (userRelationshipOrigin) lines.push(`  与user的关系来源: ${scalar(userRelationshipOrigin)}`);
-  if (relationshipPattern) lines.push(`  长期相处模式: ${scalar(relationshipPattern)}`);
-  if (isV3 && adaptation.longTermSituation) lines.push(`  本世界线长期处境: ${scalar(adaptation.longTermSituation)}`);
+  const lines = ['', '身份与关系:'];
+  if (identityPosition) lines.push(`  身份: ${scalar(identityPosition)}`);
+  if (activityRange) lines.push(`  活动范围: ${scalar(activityRange)}`);
+  if (factionAlignment) lines.push(`  势力归属: ${scalar(factionAlignment)}`);
+  if (userRelationshipOrigin) lines.push(`  与<user>的过往: ${scalar(userRelationshipOrigin)}`);
+  if (relationshipPattern) lines.push(`  相处方式: ${scalar(relationshipPattern)}`);
+  if (isV3 && adaptation.longTermSituation) lines.push(`  长期处境: ${scalar(adaptation.longTermSituation)}`);
   if (typeof addressPrinciples === 'string' && addressPrinciples)
     lines.push(`  称呼原则: ${scalar(addressPrinciples)}`);
   else if (characterToUser || userToCharacter) {
     lines.push(
-      '  称呼原则:',
-      `    角色称呼user: ${scalar(characterToUser)}`,
-      `    user称呼角色: ${scalar(userToCharacter)}`,
+      '  彼此称呼:',
+      `    角色称呼<user>: ${scalar(characterToUser)}`,
+      `    <user>称呼角色: ${scalar(userToCharacter)}`,
     );
   }
   if (relationships.length) {
-    lines.push('  与其他角色的长期关系:');
+    lines.push('  与其他人物:');
     for (const relationship of relationships) {
       lines.push(`    - 角色: ${scalar(relationship.character)}`, `      关系: ${scalar(relationship.relation)}`);
     }
   }
   lines.push(
-    '  人设适配原则:',
+    '  演绎要点:',
     ...(persistentPrinciples.length
       ? persistentPrinciples.map(rule => `    - ${scalar(rule)}`)
-      : ['    - "不得改变原始人设的性格核心、固定经历与固定关系。"']),
-    '  ',
+      : ['    - "不得改变原始人设的性格核心、重要经历与人物关系。"']),
+    '',
   );
   return lines.join('\n');
 }
@@ -4605,13 +4620,28 @@ async function importScenarioWorkshopPackage(bundle) {
     throw new Error('角色卡更新接口不可用。');
   const characterName = getCurrentName();
   if (!characterName) throw new Error('请先打开《残明余烬》基础卡。');
-  const character = await getCharacter(characterName);
+  let character = await getCharacter(characterName);
   character.extensions = character.extensions && typeof character.extensions === 'object' ? character.extensions : {};
-  const previous = character.extensions.canming_dlc;
-  if (previous?.id && previous.id !== resource.scenario.id)
-    throw new Error(
-      `当前基础卡已安装「${previous.name || previous.id}」。每张卡只能安装一个身份 DLC；如需更换，请先卸载并新建聊天。`,
+  let previous = character.extensions.canming_dlc;
+  if (previous?.id && previous.id !== resource.scenario.id) {
+    const confirmed = (window.parent ?? window).confirm(
+      `检测到尚未卸载的身份 DLC「${previous.name || previous.id}」。\n\n每张基础卡只能启用一个身份 DLC。是否先卸载旧 DLC，再安装「${resource.name}」？完成后必须新建聊天。`,
     );
+    if (!confirmed) {
+      const cancelled = new Error('已取消替换当前身份 DLC。');
+      cancelled.code = 'SCENARIO_REPLACE_CANCELLED';
+      throw cancelled;
+    }
+    await uninstallWorkshopInstall({ scenarios: [previous.id] });
+    await workshop?.forgetScenarioInstall?.(previous.id, {
+      cleanup: true,
+      bridge: createWorkshopBridge(),
+    });
+    character = await getCharacter(characterName);
+    character.extensions =
+      character.extensions && typeof character.extensions === 'object' ? character.extensions : {};
+    previous = character.extensions.canming_dlc;
+  }
 
   const scenarioWorldbookNames = new Set((resource.worldbookEntries || []).map(entry => entry?.name).filter(Boolean));
   const getWorldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
@@ -5683,7 +5713,7 @@ function bindFrameEvents() {
     const portraitBtn = target.closest('[data-portrait-name]');
     if (portraitBtn) {
       const name = portraitBtn.getAttribute('data-portrait-name') || '';
-      if (getPortraitData()[name]) {
+      if (getAllPortraitData()[name]) {
         modalState = { type: 'portrait', name };
         render();
       }
@@ -5717,7 +5747,7 @@ function bindFrameEvents() {
       event.preventDefault();
       event.stopPropagation();
       if (modalState && modalState.type === 'portrait') {
-        const cats = getPortraitData()[modalState.name];
+        const cats = getAllPortraitData()[modalState.name];
         const n = cats ? Object.keys(cats).length : 4;
         modalState.catIdx = ((modalState.catIdx ?? 0) - 1 + n) % n;
         updatePortraitOverlay();
@@ -5729,7 +5759,7 @@ function bindFrameEvents() {
       event.preventDefault();
       event.stopPropagation();
       if (modalState && modalState.type === 'portrait') {
-        const cats = getPortraitData()[modalState.name];
+        const cats = getAllPortraitData()[modalState.name];
         const n = cats ? Object.keys(cats).length : 4;
         modalState.catIdx = ((modalState.catIdx ?? 0) + 1) % n;
         updatePortraitOverlay();
@@ -7194,7 +7224,7 @@ function renderConfirmModal() {
 }
 
 function renderPortraitOverlay() {
-  const imgs = getPortraitData()[modalState.name];
+  const imgs = getAllPortraitData()[modalState.name];
   if (!imgs) return '';
   const categories = Object.entries(imgs);
   const idx = modalState.catIdx ?? 0;
@@ -7224,7 +7254,7 @@ function renderPortraitOverlay() {
 /** 局部更新立绘浮层：切换分类时不重建整个面板，避免图片闪烁 */
 function updatePortraitOverlay() {
   if (!modalState || modalState.type !== 'portrait') return;
-  const imgs = getPortraitData()[modalState.name];
+  const imgs = getAllPortraitData()[modalState.name];
   if (!imgs) return;
   const categories = Object.entries(imgs);
   const idx = modalState.catIdx ?? 0;
