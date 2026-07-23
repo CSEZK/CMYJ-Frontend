@@ -6,7 +6,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 (() => {
   'use strict';
 
-  const VERSION = '1.0.0-alpha.1';
+  const VERSION = '1.0.0-beta.4';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -27,7 +27,8 @@ import integratedStyles from './styles-integrated.raw?raw';
   if (hostWindow[RUNTIME_KEY]?.mounted) return;
 
   const DEFAULT_SETTINGS = Object.freeze({
-    enabled: false,
+    settingsVersion: 2,
+    enabled: true,
     autoRun: true,
     lookbackRounds: 3,
     settleDelayMs: 1200,
@@ -61,6 +62,10 @@ import integratedStyles from './styles-integrated.raw?raw';
     modelFetchError: false,
     activeJob: null,
     scheduledTimer: null,
+    pendingMessageId: null,
+    pendingForce: false,
+    selfWrittenMessageHashes: new Map(),
+    mvuReady: false,
     themeTimer: null,
     isOpen: false,
     activeTab: 'overview',
@@ -183,9 +188,12 @@ import integratedStyles from './styles-integrated.raw?raw';
   function loadSettings() {
     const raw = readJsonLocal('settings', {});
     const connectionMode = raw?.connectionMode === 'custom' ? 'custom' : 'tavern';
+    const enabled = Number(raw?.settingsVersion || 0) >= 2 ? raw?.enabled !== false : true;
     return {
       ...DEFAULT_SETTINGS,
       ...(raw && typeof raw === 'object' ? raw : {}),
+      settingsVersion: 2,
+      enabled,
       connectionMode,
       lookbackRounds: Math.round(clamp(raw?.lookbackRounds ?? DEFAULT_SETTINGS.lookbackRounds, 1, 8)),
       settleDelayMs: Math.round(clamp(raw?.settleDelayMs ?? DEFAULT_SETTINGS.settleDelayMs, 400, 5000)),
@@ -201,6 +209,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     settings = {
       ...DEFAULT_SETTINGS,
       ...next,
+      settingsVersion: 2,
       connectionMode: next.connectionMode === 'custom' ? 'custom' : 'tavern',
       lookbackRounds: Math.round(clamp(next.lookbackRounds, 1, 8)),
       settleDelayMs: Math.round(clamp(next.settleDelayMs, 400, 5000)),
@@ -289,11 +298,49 @@ import integratedStyles from './styles-integrated.raw?raw';
       return createEmptyState(chatId);
     }
     const state = { ...createEmptyState(chatId), ...clone(raw), chatId };
-    state.facts = asArray(state.facts).slice(-LIMITS.facts);
-    state.activeEvents = asArray(state.activeEvents).slice(-LIMITS.activeEvents);
-    state.actors = asArray(state.actors).slice(-LIMITS.actors);
-    state.intelPackets = asArray(state.intelPackets).slice(-LIMITS.intelPackets);
-    state.hooks = asArray(state.hooks).slice(-LIMITS.hooks);
+    // 早期版本允许空字段和错误归类进入档案；读取时先做保守清理，避免脏数据继续喂给副模型。
+    state.facts = asArray(state.facts)
+      .filter(item => asText(item?.content) && item?.status === 'occurred' && Number(item?.confidence) >= 0.6)
+      .slice(-LIMITS.facts);
+    state.activeEvents = asArray(state.activeEvents)
+      .filter(
+        item =>
+          asText(item?.title) &&
+          asText(item?.summary) &&
+          asText(item?.stage) &&
+          asText(item?.location) &&
+          asText(item?.nextTrigger),
+      )
+      .slice(-LIMITS.activeEvents);
+    state.actors = asArray(state.actors)
+      .filter(
+        item =>
+          asText(item?.name) &&
+          (asText(item?.currentAction) || asText(item?.nextDecision) || asArray(item?.knowledge).some(Boolean)),
+      )
+      .slice(-LIMITS.actors);
+    state.intelPackets = asArray(state.intelPackets)
+      .filter(
+        item =>
+          asText(item?.content) &&
+          asText(item?.origin) &&
+          asText(item?.destination) &&
+          asText(item?.channel) &&
+          asText(item?.status) &&
+          asText(item?.eta) &&
+          Number(item?.reliability) > 0,
+      )
+      .slice(-LIMITS.intelPackets);
+    state.hooks = asArray(state.hooks)
+      .filter(
+        item =>
+          asText(item?.title) &&
+          asText(item?.summary) &&
+          asText(item?.stage) &&
+          asText(item?.trigger) &&
+          asText(item?.failCondition),
+      )
+      .slice(-LIMITS.hooks);
     state.cameraHistory = asArray(state.cameraHistory).slice(-LIMITS.cameraHistory);
     state.checkpoints = asArray(state.checkpoints).slice(-LIMITS.checkpoints);
     state.nextTurnPacket = normalizePacket(state.nextTurnPacket);
@@ -371,6 +418,10 @@ import integratedStyles from './styles-integrated.raw?raw';
     };
   }
 
+  function isFirstFloor(messageId) {
+    return Number(messageId) === 0;
+  }
+
   function sameMessageKey(left, right) {
     return Boolean(
       left &&
@@ -397,6 +448,8 @@ import integratedStyles from './styles-integrated.raw?raw';
       .replace(/<Analysis>[\s\S]*?<\/Analysis>/gi, '')
       .replace(/<行动选项>[\s\S]*?<\/行动选项>/gi, '')
       .replace(/<UpdateVariable>[\s\S]*?<\/UpdateVariable>/gi, '')
+      .replace(/<initvar>[\s\S]*?<\/initvar>/gi, '')
+      .replace(/<平行世界(?:\s[^>]*)?>[\s\S]*?<\/平行世界>\s*$/gi, '')
       .replace(/<StatusPlaceHolderImpl\s*\/>/gi, '')
       .trim();
   }
@@ -420,15 +473,26 @@ import integratedStyles from './styles-integrated.raw?raw';
   function deepDiff(oldValue, newValue, path = '', output = [], limit = 100) {
     if (output.length >= limit) return output;
     if (Object.is(oldValue, newValue)) return output;
-    const oldObject = oldValue && typeof oldValue === 'object';
-    const newObject = newValue && typeof newValue === 'object';
-    if (!oldObject || !newObject || Array.isArray(oldValue) || Array.isArray(newValue)) {
-      output.push({ path: path || '/', before: oldValue, after: newValue });
+    const oldObject = oldValue && typeof oldValue === 'object' && !Array.isArray(oldValue);
+    const newObject = newValue && typeof newValue === 'object' && !Array.isArray(newValue);
+    if (!oldObject && !newObject) {
+      const compact = value => {
+        if (typeof value === 'string') return value.slice(0, 500);
+        if (Array.isArray(value)) {
+          const primitive = value.every(item => item == null || ['string', 'number', 'boolean'].includes(typeof item));
+          return primitive ? value.slice(0, 20) : `[复杂数组，共 ${value.length} 项]`;
+        }
+        return value;
+      };
+      output.push({ path: path || '/', before: compact(oldValue), after: compact(newValue) });
       return output;
     }
-    const keys = new Set([...Object.keys(oldValue || {}), ...Object.keys(newValue || {})]);
+    const keys = new Set([
+      ...Object.keys(oldObject ? oldValue : {}),
+      ...Object.keys(newObject ? newValue : {}),
+    ]);
     for (const key of keys) {
-      deepDiff(oldValue?.[key], newValue?.[key], `${path}/${key}`, output, limit);
+      deepDiff(oldObject ? oldValue[key] : undefined, newObject ? newValue[key] : undefined, `${path}/${key}`, output, limit);
       if (output.length >= limit) break;
     }
     return output;
@@ -439,9 +503,23 @@ import integratedStyles from './styles-integrated.raw?raw';
     if (typeof getMessages !== 'function') return {};
     for (let id = Number(messageId) - 1; id >= 0; id -= 1) {
       const message = getMessages(id)?.[0];
-      if (message?.role === 'assistant' && message.data?.stat_data) return message.data.stat_data;
+      if (message?.role !== 'assistant') continue;
+      const statData = getMessageStatData(id);
+      if (statData) return statData;
     }
     return {};
+  }
+
+  function getMessageStatData(messageId) {
+    try {
+      const mvu = api('Mvu');
+      const data = mvu?.getMvuData?.({ type: 'message', message_id: Number(messageId) });
+      if (data?.stat_data) return data.stat_data;
+    } catch {
+      /* MVU 尚未就绪时继续读取楼层附带数据 */
+    }
+    const message = api('getChatMessages')?.(Number(messageId))?.[0];
+    return message?.data?.stat_data || null;
   }
 
   function findPreviousUserInput(messageId) {
@@ -522,25 +600,40 @@ import integratedStyles from './styles-integrated.raw?raw';
   }
 
   function systemPrompt() {
-    return `你是《残明余烬》的“天下演化史官”。你不续写玩家正文，不替主模型写小说；你读取主模型已经完成的回复，将其中真正发生的事情结构化，并让不在玩家视野内的明末世界沿因果继续运转。
+    return `你是《残明余烬》的“天下演化史官”。主模型已写完玩家视角正文；你负责核账、推进视野外因果，并亲自写出本轮平行世界正文。脚本会把 parallel_world 直接追加到这一楼主模型消息末尾，主模型不会代写。
 
-铁律：
-1. 玩家输入只是意图，绝不能直接视为成功事实。以主模型正文实际描写的结果为准。
-2. CURRENT_TURN 是唯一主要新增事实来源；RECENT_CONTEXT 只用于消解代词、承接行动和避免重复，禁止把旧事实再次提交。
-3. 区分 occurred（已经发生）、planned（计划）、ordered（命令已下但结果未知）、reported（某人声称）、rumor（传闻）、failed（失败）、aborted（中止）和 descriptive（纯纹理）。只有 occurred 能直接进入硬事实。
-4. 对话只证明说话者说过这句话，不证明话中内容真实。平行世界的叙述性事实属于客观世界；其中人物对话仍可能误判、撒谎或夸大。
-5. 模型知道不等于人物知道。所有知识必须有目击、告知、公文、书信、驿传、商旅或流言等渠道。秘密不会瞬间传播。
-6. 叙事回合不等于日期推进。正文时间未推进时，可以推进同一时刻的细小行动，不可让军队瞬移、工程完工或城池无因易手。
-7. 历史时间线是未受干预时的惯性，不是强制剧本。不得跳过前提直接播放历史结果。
-8. 已在 CANONICAL_STATE 中存在的事件要推进或解决，不要换名字重复创建。ID 应稳定、简短、可读。
-9. 主角认知变量不等于客观真相。传闻写入认知账本时，客观世界仍可保持“待确认”。
-10. 输出严格符合 JSON Schema。内容使用简体中文，简洁但保留因果。
+一、输入权限
+1. CURRENT_TURN.assistantOutput 与本轮 currentClock、mvuChanges 是唯一主要新增证据。玩家输入只是意图，不能当作成功结果。
+2. RECENT_CONTEXT 只用于承接称谓、动作和时间，严禁把旧内容当成本轮新事实重复入档。
+3. CANONICAL_STATE 是只读旧档案：同一事件、人物、驿报、伏线必须沿用稳定 ID 推进或结案，不得换名重建。
+4. currentKnowledgeReference 是角色资料和玩家认知参考，不是客观事实清单；不得把名册照抄进人物行动，也不得把秘密自动变成全员已知。
 
-你的输出同时完成：事实提取、世界状态增量、下一轮主模型联动包。不要输出 JSON 之外的解释。`;
+二、事实与知识铁律
+1. 只有正文或平行世界叙述明确发生的 occurred 才是硬事实。planned、ordered、reported、rumor、failed、aborted、descriptive 均不得写入 new_facts。
+2. 对话只证明某人说过这句话，不证明话中内容真实。人物获知信息必须有目击、告知、公文、书信、驿传、商旅或流言渠道。
+3. 回合不等于日期推进。时间未推进时只能发展同一时刻可完成的细小行动，不得让军队瞬移、工程骤成或城池无因易手。
+4. 历史只是未受干预时的惯性，不是强制剧本；重大结果必须有已入档前因。
+
+三、各字段只能填写以下内容
+- world_summary：70—140 字的“当前天下态势快照”。只写已确认且仍有效的局势，不复述本楼玩家场景，不写未经证据支持的宏大推测；天下态势没有实质变化时沿用旧摘要并只做最小修订。
+- new_facts：仅写本轮新发生且可举证的客观事实。每条 evidence 指明来自“主模型正文”“MVU 变化”或“本轮平行世界”的哪一项结果。
+- upsert_events：仅写需要跨回合追踪的持续因果过程；普通对话和一次性动作不是事件。必须有阶段、地点、摘要和下一触发条件。完成后用 resolve_event_ids 结案。
+- upsert_actors：仅写本轮确有行动、位置、目标、知识或下一决策变化的重要 NPC。current_action 与 updated_reason 必须具体；严禁仅因角色出现在资料或名册中就建档。
+- upsert_intel：仅写“正在传播”的信息包，必须同时有起点、终点、传播渠道、状态、预计到达时间、可靠度和当前知情者。静态秘密、人物背景、债务关系、私人心意不是驿报；已到达者从队列移除并写入 next_turn_packet.arrivedIntel。
+- upsert_hooks：仅写尚未显化但具备具体触发条件与失效条件的潜在因果线；氛围描写和泛泛风险不是伏线。
+- camera_history：只写本轮两个平行场景的简短“地点—人物—行动”标签，用于下轮避免重复，不写正文。
+- next_turn_packet：只给下一轮主模型提供可用信息。hardFacts 是已发生且与下一轮有关的事实；arrivedIntel 是本轮实际到达的信息；localConsequences 是玩家所在地可观察后果；npcKnowledge 严格区分知道与不知道；activePressures 是眼前压力；constraints 是不能违背的事实边界；cameraCandidates 是可继续观察的视野外线索。没有内容就输出空数组，禁止拿其他字段凑数。
+- parallel_world：写 2 个玩家当前视角之外、可以直接展示的电影式场景。每段以【地名·地点·时辰】单独起行，场景之间空一行；优先推进旧事件、人物行动和真实的信息传播。素材不足时只写低风险日常切片，不能重演玩家场景，也不能凭空制造重大胜负、死亡或政局结果。
+
+四、输出纪律
+1. 顶层字段必须原样使用 snake_case，并严格符合 JSON Schema。
+2. parallel_world 不得再包裹 <平行世界> 标签；不得写“与此同时”“玩家不知道的是”“镜头转向”等元叙事转场，也不要使用星号或破折号分隔线。
+3. 全部内容使用简体中文，简洁、具体、保留因果。不要输出 JSON 之外的任何解释。`;
   }
 
   function outputSchema() {
-    const stringArray = { type: 'array', items: { type: 'string' } };
+    const nonEmptyString = { type: 'string', minLength: 1 };
+    const stringArray = { type: 'array', items: nonEmptyString };
     return {
       name: 'canming_world_engine_transition',
       description: '残明余烬天下演化的结构化增量',
@@ -560,9 +653,15 @@ import integratedStyles from './styles-integrated.raw?raw';
           'resolve_hook_ids',
           'camera_history',
           'next_turn_packet',
+          'parallel_world',
         ],
         properties: {
-          world_summary: { type: 'string' },
+          world_summary: {
+            type: 'string',
+            minLength: 20,
+            maxLength: 280,
+            description: '当前天下态势快照；只写已确认且仍有效的宏观或地方局势，不复述本楼玩家场景。',
+          },
           new_facts: {
             type: 'array',
             items: {
@@ -582,20 +681,25 @@ import integratedStyles from './styles-integrated.raw?raw';
                 'evidence',
               ],
               properties: {
-                id: { type: 'string' },
-                content: { type: 'string' },
+                id: nonEmptyString,
+                content: nonEmptyString,
                 status: {
                   type: 'string',
-                  enum: ['occurred', 'planned', 'ordered', 'reported', 'rumor', 'failed', 'aborted', 'descriptive'],
+                  enum: ['occurred'],
+                  description: '硬事实字段只接受已经发生的结果；其他状态应进入事件、驿报或不提交。',
                 },
                 scope: { type: 'string', enum: ['player_scene', 'parallel_world', 'variable_update'] },
-                location: { type: 'string' },
+                location: nonEmptyString,
                 actors: stringArray,
                 witnesses: stringArray,
-                publicity: { type: 'string' },
-                confidence: { type: 'number' },
-                importance: { type: 'number' },
-                evidence: { type: 'string' },
+                publicity: nonEmptyString,
+                confidence: { type: 'number', minimum: 0, maximum: 1 },
+                importance: { type: 'number', minimum: 0, maximum: 100 },
+                evidence: {
+                  type: 'string',
+                  minLength: 1,
+                  description: '具体证据来源与结果，不得只写“正文可见”。',
+                },
               },
             },
           },
@@ -616,14 +720,14 @@ import integratedStyles from './styles-integrated.raw?raw';
                 'source_fact_ids',
               ],
               properties: {
-                id: { type: 'string' },
-                title: { type: 'string' },
-                stage: { type: 'string' },
-                status: { type: 'string' },
-                location: { type: 'string' },
+                id: nonEmptyString,
+                title: nonEmptyString,
+                stage: nonEmptyString,
+                status: nonEmptyString,
+                location: nonEmptyString,
                 actors: stringArray,
-                summary: { type: 'string' },
-                next_trigger: { type: 'string' },
+                summary: nonEmptyString,
+                next_trigger: nonEmptyString,
                 source_fact_ids: stringArray,
               },
             },
@@ -645,14 +749,22 @@ import integratedStyles from './styles-integrated.raw?raw';
                 'updated_reason',
               ],
               properties: {
-                id: { type: 'string' },
-                name: { type: 'string' },
-                location: { type: 'string' },
-                goal: { type: 'string' },
-                current_action: { type: 'string' },
+                id: nonEmptyString,
+                name: nonEmptyString,
+                location: nonEmptyString,
+                goal: nonEmptyString,
+                current_action: {
+                  type: 'string',
+                  minLength: 1,
+                  description: '此人物此刻正在做的具体行动；没有行动变化就不要提交该人物。',
+                },
                 knowledge: stringArray,
-                next_decision: { type: 'string' },
-                updated_reason: { type: 'string' },
+                next_decision: nonEmptyString,
+                updated_reason: {
+                  type: 'string',
+                  minLength: 1,
+                  description: '本轮为何需要更新此人物，必须对应新证据或本轮视野外行动。',
+                },
               },
             },
           },
@@ -673,14 +785,14 @@ import integratedStyles from './styles-integrated.raw?raw';
                 'known_by',
               ],
               properties: {
-                id: { type: 'string' },
-                content: { type: 'string' },
-                origin: { type: 'string' },
-                destination: { type: 'string' },
-                channel: { type: 'string' },
-                status: { type: 'string' },
-                eta: { type: 'string' },
-                reliability: { type: 'number' },
+                id: nonEmptyString,
+                content: nonEmptyString,
+                origin: nonEmptyString,
+                destination: nonEmptyString,
+                channel: nonEmptyString,
+                status: nonEmptyString,
+                eta: nonEmptyString,
+                reliability: { type: 'number', minimum: 0.01, maximum: 1 },
                 known_by: stringArray,
               },
             },
@@ -702,19 +814,30 @@ import integratedStyles from './styles-integrated.raw?raw';
                 'source_fact_ids',
               ],
               properties: {
-                id: { type: 'string' },
-                title: { type: 'string' },
-                stage: { type: 'string' },
-                summary: { type: 'string' },
+                id: nonEmptyString,
+                title: nonEmptyString,
+                stage: nonEmptyString,
+                summary: nonEmptyString,
                 visible_signs: stringArray,
-                trigger: { type: 'string' },
-                fail_condition: { type: 'string' },
+                trigger: nonEmptyString,
+                fail_condition: nonEmptyString,
                 source_fact_ids: stringArray,
               },
             },
           },
           resolve_hook_ids: stringArray,
-          camera_history: stringArray,
+          camera_history: {
+            type: 'array',
+            maxItems: 2,
+            items: nonEmptyString,
+            description: '本轮两个平行场景的短标签，不是场景正文。',
+          },
+          parallel_world: {
+            type: 'string',
+            minLength: 80,
+            maxLength: 5000,
+            description: '两个可直接追加到主模型消息末尾的玩家视野外成品场景，不含平行世界标签。',
+          },
           next_turn_packet: {
             type: 'object',
             additionalProperties: false,
@@ -737,7 +860,7 @@ import integratedStyles from './styles-integrated.raw?raw';
                   type: 'object',
                   additionalProperties: false,
                   required: ['name', 'knows', 'doesNotKnow'],
-                  properties: { name: { type: 'string' }, knows: stringArray, doesNotKnow: stringArray },
+                  properties: { name: nonEmptyString, knows: stringArray, doesNotKnow: stringArray },
                 },
               },
               activePressures: stringArray,
@@ -750,18 +873,18 @@ import integratedStyles from './styles-integrated.raw?raw';
     };
   }
 
-  function buildRequestPayload(baseState, messageKey) {
+  function buildRequestPayload(baseState, messageKey, currentStat = getMessageStatData(messageKey.messageId) || {}) {
     const getMessages = api('getChatMessages');
     const current = getMessages(messageKey.messageId)?.[0];
-    const currentStat = current?.data?.stat_data || {};
     const previousStat = findPreviousStatData(messageKey.messageId);
     return {
-      instruction: '只从 CURRENT_TURN 提交本轮新事实。RECENT_CONTEXT 与 CANONICAL_STATE 均为只读。',
+      instruction:
+        '先判定 CURRENT_TURN 中真正发生了什么，再按字段职责提交最小必要增量。RECENT_CONTEXT、CANONICAL_STATE 与角色资料均为只读参考，禁止照抄名册、旧事实或静态秘密凑数。',
       currentTurn: {
         messageId: messageKey.messageId,
         swipeId: messageKey.swipeId,
         userInputAsIntentOnly: findPreviousUserInput(messageKey.messageId),
-        assistantOutput: String(current?.message || '').slice(0, 30000),
+        assistantOutput: stripForContext(current?.message || '').slice(0, 30000),
         currentClock: clockFromStatData(currentStat),
         mvuChanges: deepDiff(previousStat, currentStat).slice(0, 100),
         currentKnowledgeReference: buildKnowledgeReference(currentStat, current?.message || ''),
@@ -773,14 +896,11 @@ import integratedStyles from './styles-integrated.raw?raw';
 
   function customApiConfig() {
     if (settings.connectionMode !== 'custom') {
-      return {
-        temperature: settings.temperature,
-        max_tokens: settings.maxTokens,
-      };
+      return null;
     }
     if (!settings.apiUrl) throw new Error('独立 API 模式尚未填写 API 地址。');
     return {
-      apiurl: settings.apiUrl,
+      apiurl: settings.apiUrl.replace(/\/+$/, ''),
       key: settings.apiKey,
       ...(settings.model ? { model: settings.model } : {}),
       source: settings.apiSource || 'openai',
@@ -808,6 +928,144 @@ import integratedStyles from './styles-integrated.raw?raw';
     }
   }
 
+  function requireParallelWorld(result) {
+    if (!asText(result?.parallel_world)) {
+      throw new Error('副模型结构缺少 parallel_world 平行世界正文。');
+    }
+    return result;
+  }
+
+  function normalizeModelResult(result) {
+    if (!result || typeof result !== 'object' || Array.isArray(result)) {
+      throw new Error('副模型输出缺少可用的结构化对象。');
+    }
+    if (
+      'world_summary' in result ||
+      'new_facts' in result ||
+      'upsert_events' in result ||
+      'next_turn_packet' in result
+    ) {
+      return requireParallelWorld({
+        ...result,
+        parallel_world: asText(
+          result.parallel_world || result.parallelWorld || result.parallelWorldText || result.parallel_world_text,
+        ),
+      });
+    }
+
+    // 部分兼容 OpenAI 的服务会忽略 json_schema，但仍返回语义完整的常见 camelCase 结构。
+    // 在本地归一化它，避免请求成功却被误判成“新增 0 条”。
+    const incrementCandidates = [
+      result.worldStateIncrement,
+      result.transition,
+      result.data,
+      result.result,
+      result,
+    ];
+    const increment = incrementCandidates.find(
+      item =>
+        item &&
+        typeof item === 'object' &&
+        !Array.isArray(item) &&
+        ('worldSummary' in item ||
+          'newOrUpdatedEvents' in item ||
+          'newFacts' in item ||
+          'nextTurnPacket' in item ||
+          'promptsForMainModel' in item),
+    );
+    if (!increment) {
+      throw new Error('副模型没有按天下演化结构返回结果。');
+    }
+    const facts = asArray(result.extractedFacts || increment.extractedFacts || increment.newFacts || increment.facts);
+    const events = asArray(increment.newOrUpdatedEvents || increment.events || increment.upsertEvents);
+    const actors = asArray(increment.newOrUpdatedActors || increment.actors || increment.upsertActors);
+    const intel = asArray(increment.newIntelPackets || increment.intelPackets || increment.upsertIntel);
+    const prompts = asArray(increment.promptsForMainModel)
+      .map(value => asText(value))
+      .filter(Boolean);
+    const camera = asText(increment.cameraActivity);
+
+    return requireParallelWorld({
+      world_summary: asText(increment.worldSummary),
+      new_facts: facts.map((item, index) => ({
+        id: asText(item?.id || item?.factId || `F-${index + 1}`),
+        content: asText(item?.content || item?.fact),
+        status: asText(item?.status, 'occurred'),
+        scope: asText(item?.scope, 'player_scene'),
+        location: asText(item?.location),
+        actors: asArray(item?.actors),
+        witnesses: asArray(item?.witnesses),
+        publicity: asText(item?.publicity),
+        confidence: Number(item?.confidence ?? 0.8),
+        importance: Number(item?.importance ?? 60),
+        evidence: asText(item?.evidence || item?.source),
+      })),
+      upsert_events: events.map(item => ({
+        id: asText(item?.id || item?.eventId),
+        title: asText(item?.title || item?.eventName),
+        stage: asText(item?.stage || item?.status),
+        status: asText(item?.status, 'active'),
+        location: asText(item?.location),
+        actors: asArray(item?.actors || item?.participants),
+        summary: asText(item?.summary || item?.description),
+        next_trigger: asText(item?.next_trigger || item?.nextTrigger || item?.impact),
+        source_fact_ids: asArray(item?.source_fact_ids || item?.sourceFactIds),
+      })),
+      resolve_event_ids: asArray(increment.resolveEventIds),
+      upsert_actors: actors.map(item => ({
+        id: asText(item?.id || item?.actorId),
+        name: asText(item?.name || item?.actorName),
+        location: asText(item?.location),
+        goal: asText(item?.goal || asArray(item?.knownMotivations).join('；')),
+        current_action: asText(item?.current_action || item?.currentAction || item?.currentStatus),
+        knowledge: asArray(item?.knowledge),
+        next_decision: asText(item?.next_decision || item?.nextDecision),
+        updated_reason: asText(item?.updated_reason || item?.updatedReason || item?.currentStatus),
+      })),
+      upsert_intel: intel.map(item => ({
+        id: asText(item?.id || item?.intelId),
+        content: asText(item?.content),
+        origin: asText(item?.origin || item?.source),
+        destination: asText(item?.destination || item?.spreadRange),
+        channel: asText(item?.channel, '传闻'),
+        status: asText(item?.status, '传播中'),
+        eta: asText(item?.eta),
+        reliability: Number(item?.reliability ?? 0.65),
+        known_by: asArray(item?.known_by || item?.knownBy),
+      })),
+      remove_intel_ids: asArray(increment.removeIntelIds),
+      upsert_hooks: asArray(increment.newOrUpdatedHooks),
+      resolve_hook_ids: asArray(increment.resolveHookIds),
+      camera_history: camera ? [camera] : [],
+      parallel_world: asText(
+        result.parallelWorld ||
+          result.parallelWorldText ||
+          increment.parallelWorld ||
+          increment.parallelWorldText ||
+          increment.parallel_world ||
+          camera,
+      ),
+      next_turn_packet: {
+        hardFacts: facts.map(item => asText(item?.content || item?.fact)).filter(Boolean),
+        arrivedIntel: intel.map(item => asText(item?.content)).filter(Boolean),
+        localConsequences: events.map(item => asText(item?.impact)).filter(Boolean),
+        npcKnowledge: actors
+          .map(item => ({
+            name: asText(item?.name || item?.actorName),
+            knows: asArray(item?.knowledge),
+            doesNotKnow: [],
+          }))
+          .filter(item => item.name),
+        activePressures: events
+          .filter(item => asText(item?.status).toLowerCase() !== 'resolved')
+          .map(item => asText(item?.description || item?.summary))
+          .filter(Boolean),
+        cameraCandidates: camera ? [camera] : [],
+        constraints: prompts,
+      },
+    });
+  }
+
   async function callWorldModel(payload, generationId) {
     const generateRaw = api('generateRaw');
     const generate = api('generate');
@@ -829,19 +1087,35 @@ import integratedStyles from './styles-integrated.raw?raw';
       };
       if (customApi) config.custom_api = customApi;
       try {
-        const raw =
+        const request =
           typeof generateRaw === 'function'
-            ? await generateRaw(config)
-            : await generate({
+            ? generateRaw(config)
+            : generate({
                 generation_id: generationId,
                 should_silence: true,
                 user_input: `${systemPrompt()}\n\n${userPrompt}${retryHint}`,
                 json_schema: outputSchema(),
                 ...(customApi ? { custom_api: customApi } : {}),
               });
-        return parseAiResult(raw);
+        const raw = await Promise.race([
+          request,
+          new Promise((_, reject) =>
+            setTimeout(() => {
+              try {
+                api('stopGenerationById')?.(generationId);
+              } catch {
+                /* 请求超时后停止失败也要正常释放界面 */
+              }
+              reject(new Error('副模型请求超过 90 秒仍未返回，请检查当前连接或更换模型。'));
+            }, 90000),
+          ),
+        ]);
+        return normalizeModelResult(parseAiResult(raw));
       } catch (error) {
         lastError = error;
+        const message = error instanceof Error ? error.message : String(error);
+        const canRetry = /JSON|Schema|结构|工具调用|解析/i.test(message);
+        if (!canRetry) break;
       }
     }
     throw lastError || new Error('天下推演失败。');
@@ -874,7 +1148,10 @@ import integratedStyles from './styles-integrated.raw?raw';
     const source = result && typeof result === 'object' ? result : {};
     state.revision = Number(state.revision || 0) + 1;
     state.clock = clockFromStatData(currentStat || {});
-    state.worldSummary = asText(source.world_summary, state.worldSummary).slice(0, 5000);
+    state.worldSummary = asText(source.world_summary, state.worldSummary)
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 600);
 
     const newFacts = asArray(source.new_facts)
       .map(raw => ({
@@ -898,13 +1175,29 @@ import integratedStyles from './styles-integrated.raw?raw';
         source: { messageId: messageKey.messageId, swipeId: messageKey.swipeId, hash: messageKey.hash },
         createdAt: nowIso(),
       }))
-      .filter(fact => fact.content && fact.status !== 'descriptive' && fact.confidence >= 0.45);
+      .filter(
+        fact =>
+          fact.content &&
+          fact.status === 'occurred' &&
+          fact.location &&
+          fact.publicity &&
+          fact.evidence &&
+          fact.confidence >= 0.6,
+      );
     state.facts = upsertById(state.facts, newFacts, settings.maxFacts, 'F', item => item);
 
     const resolvedEvents = new Set(asArray(source.resolve_event_ids).map(String));
     state.activeEvents = asArray(state.activeEvents).filter(item => !resolvedEvents.has(String(item.id)));
     state.activeEvents = upsertById(state.activeEvents, source.upsert_events, LIMITS.activeEvents, 'EV', raw => {
-      if (!asText(raw?.title) && !asText(raw?.summary)) return null;
+      if (
+        !asText(raw?.title) ||
+        !asText(raw?.summary) ||
+        !asText(raw?.stage) ||
+        !asText(raw?.location) ||
+        !asText(raw?.next_trigger)
+      ) {
+        return null;
+      }
       return {
         id: raw?.id,
         title: asText(raw?.title),
@@ -925,7 +1218,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     });
 
     state.actors = upsertById(state.actors, source.upsert_actors, LIMITS.actors, 'NPC', raw => {
-      if (!asText(raw?.name)) return null;
+      if (!asText(raw?.name) || !asText(raw?.current_action) || !asText(raw?.updated_reason)) return null;
       return {
         id: raw?.id,
         name: asText(raw?.name),
@@ -944,7 +1237,17 @@ import integratedStyles from './styles-integrated.raw?raw';
     const removedIntel = new Set(asArray(source.remove_intel_ids).map(String));
     state.intelPackets = asArray(state.intelPackets).filter(item => !removedIntel.has(String(item.id)));
     state.intelPackets = upsertById(state.intelPackets, source.upsert_intel, LIMITS.intelPackets, 'INTEL', raw => {
-      if (!asText(raw?.content)) return null;
+      if (
+        !asText(raw?.content) ||
+        !asText(raw?.origin) ||
+        !asText(raw?.destination) ||
+        !asText(raw?.channel) ||
+        !asText(raw?.status) ||
+        !asText(raw?.eta) ||
+        Number(raw?.reliability) <= 0
+      ) {
+        return null;
+      }
       return {
         id: raw?.id,
         content: asText(raw?.content),
@@ -964,7 +1267,15 @@ import integratedStyles from './styles-integrated.raw?raw';
     const resolvedHooks = new Set(asArray(source.resolve_hook_ids).map(String));
     state.hooks = asArray(state.hooks).filter(item => !resolvedHooks.has(String(item.id)));
     state.hooks = upsertById(state.hooks, source.upsert_hooks, LIMITS.hooks, 'HOOK', raw => {
-      if (!asText(raw?.title) && !asText(raw?.summary)) return null;
+      if (
+        !asText(raw?.title) ||
+        !asText(raw?.summary) ||
+        !asText(raw?.stage) ||
+        !asText(raw?.trigger) ||
+        !asText(raw?.fail_condition)
+      ) {
+        return null;
+      }
       return {
         id: raw?.id,
         title: asText(raw?.title),
@@ -1039,13 +1350,15 @@ import integratedStyles from './styles-integrated.raw?raw';
       formatBulletSection('当前地点可观察后果', packet.localConsequences),
       knowledge ? `相关人物知识边界:\n${knowledge}` : '',
       formatBulletSection('正在施压的世界事件', packet.activePressures),
-      formatBulletSection('平行世界候选镜头', packet.cameraCandidates),
       formatBulletSection('本轮约束', packet.constraints),
-      `使用规则：
-- 正文只允许人物使用其有合理渠道知道的内容；模型知道不等于人物知道。
-- <平行世界>可以描写客观世界真相，并延续既有远方事件；允许创造日常动作、对话和无名小人物。
-- 未经上下文许可，不得突然确定城池陷落、人物死亡、军队胜败等重大结果。
-- 玩家本轮输入仍须由正文判定成败，本上下文不能替代行动判定。`,
+      `主模型联动协议：
+ - 正文只允许人物使用其有合理渠道知道的内容；模型知道不等于人物知道。
+ - 只负责玩家当前视角内的正文、变量更新、状态栏与行动选项，不要生成、续写或仿写 <平行世界> 标签块。
+ - 平行世界由天下演化副模型在本轮正文与 MVU 更新完成后独立生成，并由脚本追加到当前消息末尾。
+ - 不得让远方人物知晓尚未通过合理渠道传播的玩家秘密；世界不是围着玩家运转。
+ - 未经上下文许可，不得突然确定城池陷落、人物死亡、军队胜败等重大结果。
+ - 玩家本轮输入仍须由正文判定成败，本上下文不能替代行动判定。
+ - 上一轮消息中的 <平行世界> 是已经发生的客观旁线，可作为世界因果参考，但不可视为当前人物自动知情。`,
       '</天下演化上下文>',
     ].filter(Boolean);
     return sections.join('\n\n');
@@ -1064,7 +1377,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 
   function refreshInjection(state = getChatState()) {
     clearInjection();
-    if (!settings.enabled || !state.revision) return;
+    if (!settings.enabled) return;
     const inject = api('injectPrompts');
     if (typeof inject !== 'function') return;
     inject([
@@ -1086,18 +1399,67 @@ import integratedStyles from './styles-integrated.raw?raw';
     return sameMessageKey(current, job.messageKey);
   }
 
-  async function waitForMessageVariables(messageId, job, timeoutMs = 6000) {
+  async function waitForMessageVariables(messageId, job, timeoutMs = 12000) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
-      if (!jobStillValid(job)) return;
-      const message = api('getChatMessages')?.(messageId)?.[0];
-      if (message?.data?.stat_data) return;
+      if (!jobStillValid(job)) return null;
+      const statData = getMessageStatData(messageId);
+      if (statData) return statData;
       await new Promise(resolve => setTimeout(resolve, 200));
     }
     console.warn(`[天下演化] 第 ${messageId} 楼在等待期内未发现 stat_data，将使用现有正文继续结算。`);
+    return {};
+  }
+
+  function normalizeParallelWorldText(value) {
+    return asText(value)
+      .replace(/^\s*<平行世界(?:\s[^>]*)?>/i, '')
+      .replace(/<\/平行世界>\s*$/i, '')
+      .replace(/^\s*(?:与此同时|玩家不知道的是|镜头转向)[：:，,\s]*/gm, '')
+      .trim()
+      .slice(0, 12000);
+  }
+
+  function messageWithParallelWorld(message, parallelWorld) {
+    const mainOutput = String(message || '')
+      .replace(/<平行世界(?:\s[^>]*)?>[\s\S]*?<\/平行世界>\s*$/i, '')
+      .trimEnd();
+    return `${mainOutput}\n\n<平行世界>\n${parallelWorld}\n</平行世界>`;
+  }
+
+  async function writeParallelWorldToMessage(messageKey, result) {
+    const parallelWorld = normalizeParallelWorldText(result?.parallel_world);
+    if (!parallelWorld) throw new Error('副模型没有生成可回写的平行世界正文。');
+    const setMessages = api('setChatMessages');
+    if (typeof setMessages !== 'function') throw new Error('未找到聊天消息回写接口，无法追加平行世界。');
+
+    const current = currentMessageKey(messageKey.messageId);
+    if (!sameMessageKey(current, messageKey)) throw new Error('正文版本已经改变，本次平行世界不会写入。');
+    const message = messageWithParallelWorld(current.message, parallelWorld);
+    const expectedHash = hashText(message);
+    runtime.selfWrittenMessageHashes.set(messageKey.messageId, expectedHash);
+    try {
+      await setMessages([{ message_id: messageKey.messageId, message }], { refresh: 'affected' });
+    } catch (error) {
+      runtime.selfWrittenMessageHashes.delete(messageKey.messageId);
+      throw error;
+    }
+
+    const updatedKey = currentMessageKey(messageKey.messageId);
+    if (!updatedKey || updatedKey.swipeId !== messageKey.swipeId || updatedKey.message !== message) {
+      throw new Error('平行世界回写后未能确认消息内容，请检查酒馆助手版本。');
+    }
+    return updatedKey;
   }
 
   async function processMessage(messageId, { force = false, source = 'auto' } = {}) {
+    if (isFirstFloor(messageId) && source !== 'manual') {
+      runtime.pendingMessageId = null;
+      runtime.pendingForce = false;
+      runtime.lastNotice = '首楼是开场初始化内容，自动推演已忽略。';
+      renderPanel();
+      return getChatState();
+    }
     if (runtime.busy) throw new Error('已有天下推演正在进行。');
     const chatId = getCurrentChatId();
     if (!chatId) throw new Error('当前没有可用的聊天文件。');
@@ -1117,21 +1479,22 @@ import integratedStyles from './styles-integrated.raw?raw';
     runtime.activeJob = job;
     runtime.busy = true;
     runtime.lastError = '';
-    runtime.lastNotice = source === 'manual' ? '正在手动推演天下……' : `正在结算第 ${messageId} 楼……`;
+    runtime.lastNotice = source === 'manual' ? '正在重新推演本轮天下……' : `正在结算第 ${messageId} 楼……`;
     updateLampState();
     renderPanel();
 
     try {
-      await waitForMessageVariables(messageId, job);
+      const currentStat = await waitForMessageVariables(messageId, job);
       if (!jobStillValid(job)) throw new Error('聊天或回复版本已经改变，本次推演结果已作废。');
-      const payload = buildRequestPayload(baseState, messageKey);
+      const payload = buildRequestPayload(baseState, messageKey, currentStat || {});
       const result = await callWorldModel(payload, generationId);
       if (!jobStillValid(job)) throw new Error('聊天或回复版本已经改变，本次推演结果已作废。');
-      const selected = api('getChatMessages')(messageId)?.[0];
-      const nextState = applyTransition(baseState, result, messageKey, selected?.data?.stat_data || {});
+      const updatedMessageKey = await writeParallelWorldToMessage(messageKey, result);
+      const nextState = applyTransition(baseState, result, updatedMessageKey, currentStat || {});
       const saved = saveChatState(nextState);
       refreshInjection(saved);
-      runtime.lastNotice = `第 ${messageId} 楼结算完成，新增 ${saved.lastRun?.newFactCount ?? 0} 条事实。`;
+      runtime.pendingMessageId = null;
+      runtime.lastNotice = `第 ${messageId} 楼推演完成，平行世界已追加，新增 ${saved.lastRun?.newFactCount ?? 0} 条事实。`;
       console.info('[天下演化] 结算完成', { chatId, messageId, revision: saved.revision });
       return saved;
     } catch (error) {
@@ -1161,12 +1524,18 @@ import integratedStyles from './styles-integrated.raw?raw';
     runtime.lastNotice = reason;
   }
 
-  function scheduleProcess(messageId, { force = false, source = 'auto' } = {}) {
+  function scheduleProcess(messageId, { force = false, source = 'auto', delayMs = settings.settleDelayMs } = {}) {
     clearTimeout(runtime.scheduledTimer);
+    if (isFirstFloor(messageId) && source !== 'manual') {
+      runtime.pendingMessageId = null;
+      runtime.pendingForce = false;
+      return;
+    }
+    runtime.pendingMessageId = Number(messageId);
     runtime.scheduledTimer = setTimeout(() => {
       if (!settings.enabled || (!settings.autoRun && source === 'auto')) return;
       processMessage(messageId, { force, source }).catch(() => {});
-    }, settings.settleDelayMs);
+    }, delayMs);
   }
 
   async function waitForBusyJob(timeoutMs = 45000) {
@@ -1180,7 +1549,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     if (dryRun || !settings.enabled || !settings.autoRun) return;
     if (['regenerate', 'swipe', 'continue', 'impersonate'].includes(String(generationType || '').toLowerCase())) return;
     const messageId = findLatestAssistantMessageId();
-    if (messageId < 0) return;
+    if (messageId <= 0) return;
     const key = currentMessageKey(messageId);
     if (!key || sameMessageKey(getChatState().lastProcessed, key)) return;
     clearTimeout(runtime.scheduledTimer);
@@ -1284,7 +1653,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       <section class="cwe-overview-lead">
         <div class="cwe-world-brief">
           <div class="cwe-brief-kicker"><span>今日天下</span><span>${escapeHtml(state.clock.date || '未定年月')}</span></div>
-          <h2>${escapeHtml(shortText(state.worldSummary || '天下档案尚未开始结算。', 360))}</h2>
+          <h2>${escapeHtml(state.worldSummary || '天下档案尚未开始结算。')}</h2>
           <p>${escapeHtml([state.clock.location || '地点未明', state.clock.time, `第 ${state.revision} 次演化`, processed].filter(Boolean).join(' · '))}</p>
         </div>
         <div class="cwe-overview-status">
@@ -1437,6 +1806,16 @@ import integratedStyles from './styles-integrated.raw?raw';
     }
   }
 
+  function effectiveConnection() {
+    if (settings.connectionMode === 'custom') {
+      return {
+        source: '独立 API',
+        model: settings.model || '尚未选择模型',
+      };
+    }
+    return currentTavernConnection();
+  }
+
   function modelOptions(selectedModel = '') {
     return runtime.availableModels
       .map(
@@ -1537,7 +1916,7 @@ import integratedStyles from './styles-integrated.raw?raw';
           </div>
           <div class="cwe-connection-pane" data-connection-pane="tavern" ${useTavern ? '' : 'hidden'}>
             <div class="cwe-current-connection"><div><small>当前接口</small><strong data-current-source>${escapeHtml(tavernConnection.source)}</strong></div><div><small>当前模型</small><strong data-current-model>${escapeHtml(tavernConnection.model)}</strong></div><button type="button" data-action="refresh-tavern-connection">重新读取</button></div>
-            <p class="cwe-help">请求直接交给酒馆当前连接处理，脚本不会读取或保存酒馆密钥；副模型仍使用天下演化自己的结构化提示词，不会调用正文写作预设。</p>
+          <p class="cwe-help">请求直接交给酒馆当前连接与当前模型处理，脚本不会读取或保存酒馆密钥；副模型只使用天下演化的结构化提示词，不调用正文写作预设。这里与主界面显示的是同一份实时连接信息。</p>
           </div>
           <div class="cwe-connection-pane" data-connection-pane="custom" ${useTavern ? 'hidden' : ''}>
             <label class="cwe-field"><span>API 地址</span><input data-setting="apiUrl" value="${escapeHtml(settings.apiUrl)}" placeholder="https://example.com/v1/chat/completions"></label>
@@ -1548,7 +1927,7 @@ import integratedStyles from './styles-integrated.raw?raw';
         </section>
         <section class="cwe-settings-section">
           <header><div><small>运行方式</small><h3>自动结算</h3></div><label class="cwe-switch"><input type="checkbox" data-setting="enabled" ${settings.enabled ? 'checked' : ''}><i></i></label></header>
-          <label class="cwe-check"><input type="checkbox" data-setting="autoRun" ${settings.autoRun ? 'checked' : ''}><span>主模型回复后自动调用副模型</span></label>
+          <label class="cwe-check"><input type="checkbox" data-setting="autoRun" ${settings.autoRun ? 'checked' : ''}><span>正文与 MVU 更新完成后，由副模型推演并把平行世界追加到本楼末尾</span></label>
           <div class="cwe-field-row"><label><span>回看最近几轮</span><input type="number" min="1" max="8" data-setting="lookbackRounds" value="${settings.lookbackRounds}"></label><label><span>等待 MVU 完成（毫秒）</span><input type="number" min="400" max="5000" step="100" data-setting="settleDelayMs" value="${settings.settleDelayMs}"></label></div>
           <p class="cwe-help">最新一轮可产生新事实，回看的旧轮次只负责理解“他”“那封信”等承接关系。</p>
         </section>
@@ -1569,7 +1948,7 @@ import integratedStyles from './styles-integrated.raw?raw';
   }
 
   function frameMarkup(state) {
-    const tavernConnection = currentTavernConnection();
+    const connection = effectiveConnection();
     const tabs = [
       ['overview', '总览'],
       ['events', '世事'],
@@ -1579,21 +1958,21 @@ import integratedStyles from './styles-integrated.raw?raw';
       <header class="cwe-header">
         <div class="cwe-brand"><img class="cwe-brand-mark" src="${compassSeal}" alt=""><div class="cwe-brand-title"><div><h1>天下演化</h1><span class="cwe-title-seal" aria-hidden="true">演</span></div><p>${escapeHtml([state.clock.date || '未定年月', state.clock.location, state.clock.time].filter(Boolean).join(' · '))}</p></div></div>
         <div class="cwe-header-actions">
-          <span class="cwe-connection"><i></i><span>模型：${escapeHtml(tavernConnection.model)}</span><b>连接：${escapeHtml(tavernConnection.source)}</b></span>
+          <span class="cwe-connection"><i></i><span>模型：${escapeHtml(connection.model)}</span><b>连接：${escapeHtml(connection.source)}</b></span>
           <span class="cwe-live ${runtime.busy ? 'busy' : runtime.lastError ? 'error' : settings.enabled ? 'on' : ''}"><i></i>${runtime.busy ? '副模型推演中' : runtime.lastError ? '值房有误' : settings.enabled ? '值房运转中' : '值房未启用'}</span>
           <button type="button" class="cwe-close-button" data-action="close" aria-label="关闭天下演化"><span aria-hidden="true">×</span></button>
         </div>
       </header>
       <div class="cwe-shell">
-        <section class="cwe-content">${panelBody(state)}</section>
+        <section class="cwe-content cwe-content-${runtime.activeTab}">${panelBody(state)}</section>
         <footer class="cwe-command-bar">
           <div class="cwe-command-main">
             <nav class="cwe-tabs" aria-label="天下演化栏目">${tabs.map(([id, label]) => `<button type="button" data-tab="${id}" class="${runtime.activeTab === id ? 'active' : ''}">${label}</button>`).join('')}</nav>
             <button type="button" class="cwe-settings-button ${runtime.activeTab === 'settings' ? 'active' : ''}" data-tab="settings">设置</button>
-            <button type="button" class="cwe-run-button primary" data-action="run-now" ${runtime.busy ? 'disabled' : ''}>${runtime.busy ? '推演中…' : '立即推演'}</button>
+            <button type="button" class="cwe-run-button primary" data-action="rerun-current" ${runtime.busy ? 'disabled' : ''}>${runtime.busy ? '推演中…' : '重新推演'}</button>
           </div>
           <div class="cwe-command-meta">
-            <p><span>手动推演：${runtime.busy ? '执行中' : '待命'}</span><span>联动简报：${state.nextTurnPacket.hardFacts.length + state.nextTurnPacket.activePressures.length} 条</span><span>注入状态：${settings.enabled ? '已启用' : '未启用'}</span></p>
+            <p><span>本轮重演：${runtime.busy ? '执行中' : '待命'}</span><span>联动简报：${state.nextTurnPacket.hardFacts.length + state.nextTurnPacket.activePressures.length} 条</span><span>平行世界：${settings.enabled ? '同楼回写' : '未启用'}</span></p>
             <button type="button" class="cwe-rebuild-link" data-action="refresh-injection">重建联动</button>
           </div>
         </footer>
@@ -1689,7 +2068,7 @@ import integratedStyles from './styles-integrated.raw?raw';
         renderPanel();
         return;
       }
-      if (action === 'run-now') {
+      if (action === 'rerun-current') {
         const messageId = findLatestAssistantMessageId();
         if (messageId < 0) {
           runtime.lastError = '没有可供推演的主模型回复。';
@@ -1800,10 +2179,10 @@ import integratedStyles from './styles-integrated.raw?raw';
     const compact = width <= 980;
     const panelWidth = isMobile()
       ? Math.round(width * 0.96)
-      : Math.min(Math.round(width * (compact ? 0.94 : 0.9)), 1480);
+      : Math.min(Math.round(width * (compact ? 0.92 : 0.8)), 1180);
     const panelHeight = isMobile()
       ? Math.round(height * 0.92)
-      : Math.min(Math.round(height * (compact ? 0.92 : 0.89)), 790);
+      : Math.min(Math.round(height * (compact ? 0.9 : 0.8)), 680);
     Object.assign(frame.style, {
       display: '',
       position: 'fixed',
@@ -1979,28 +2358,70 @@ import integratedStyles from './styles-integrated.raw?raw';
 
     on(events.MESSAGE_RECEIVED, (messageId, type) => {
       if (!settings.enabled || !settings.autoRun) return;
-      if (type === 'first_message' || type === 'quiet' || type === 'extension') return;
-      scheduleProcess(Number(messageId), { force: ['regenerate', 'swipe'].includes(type), source: 'auto' });
+      if (isFirstFloor(messageId) || type === 'first_message' || type === 'quiet' || type === 'extension') return;
+      runtime.pendingMessageId = Number(messageId);
+      runtime.pendingForce = ['regenerate', 'swipe'].includes(type);
+      if (runtime.mvuReady) {
+        // 正常路径由 VARIABLE_UPDATE_ENDED 接手；较长兜底只防止第三方 MVU 没有发出结束事件。
+        scheduleProcess(Number(messageId), {
+          force: runtime.pendingForce,
+          source: 'mvu-fallback',
+          delayMs: Math.max(settings.settleDelayMs + 12000, 15000),
+        });
+      } else {
+        scheduleProcess(Number(messageId), { force: runtime.pendingForce, source: 'auto' });
+      }
     });
+    const mvu = api('Mvu');
+    if (mvu?.events?.VARIABLE_UPDATE_ENDED) {
+      on(mvu.events.VARIABLE_UPDATE_ENDED, () => {
+        if (!settings.enabled || !settings.autoRun) return;
+        const messageId =
+          runtime.pendingMessageId != null && currentMessageKey(runtime.pendingMessageId)
+            ? runtime.pendingMessageId
+            : findLatestAssistantMessageId();
+        if (messageId <= 0) {
+          runtime.pendingMessageId = null;
+          runtime.pendingForce = false;
+          return;
+        }
+        scheduleProcess(messageId, { force: runtime.pendingForce, source: 'mvu', delayMs: 120 });
+        runtime.pendingForce = false;
+      });
+    }
     on(events.GENERATION_AFTER_COMMANDS, (generationType, _options, dryRun) =>
       ensureLatestTurnSettledBeforeMainGeneration(generationType, dryRun),
     );
     on(events.MESSAGE_SWIPED, messageId => {
       if (!settings.enabled || !settings.autoRun) return;
+      if (isFirstFloor(messageId)) return;
       scheduleProcess(Number(messageId), { force: true, source: 'auto' });
     });
     on(events.MESSAGE_EDITED, messageId => {
       if (!settings.enabled || !settings.autoRun) return;
+      if (isFirstFloor(messageId)) return;
       const key = currentMessageKey(Number(messageId));
+      const selfWrittenHash = runtime.selfWrittenMessageHashes.get(Number(messageId));
+      if (key && selfWrittenHash === key.hash) {
+        runtime.selfWrittenMessageHashes.delete(Number(messageId));
+        return;
+      }
+      runtime.selfWrittenMessageHashes.delete(Number(messageId));
       if (key) scheduleProcess(Number(messageId), { force: true, source: 'auto' });
     });
     on(events.MESSAGE_DELETED, () => {
       clearTimeout(runtime.scheduledTimer);
+      runtime.pendingMessageId = null;
+      runtime.pendingForce = false;
+      runtime.selfWrittenMessageHashes.clear();
       setTimeout(reconcileAfterHistoryChange, 250);
     });
     on(events.CHAT_CHANGED, chatId => {
       cancelActiveJob('已切换聊天，旧聊天的推演结果将被丢弃。');
       clearTimeout(runtime.scheduledTimer);
+      runtime.pendingMessageId = null;
+      runtime.pendingForce = false;
+      runtime.selfWrittenMessageHashes.clear();
       clearInjection();
       runtime.currentChatId = String(chatId || getCurrentChatId());
       runtime.lastError = '';
@@ -2032,6 +2453,10 @@ import integratedStyles from './styles-integrated.raw?raw';
   }
 
   async function bootstrap() {
+    const waitForGlobal = api('waitGlobalInitialized');
+    if (typeof waitForGlobal !== 'function') throw new Error('未找到酒馆助手全局初始化接口。');
+    await waitForGlobal('Mvu');
+    runtime.mvuReady = Boolean(api('Mvu'));
     runtime.currentChatId = getCurrentChatId();
     mountUi();
     runtime.themeTimer = setInterval(syncStatusbarTheme, 600);
