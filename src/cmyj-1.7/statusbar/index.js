@@ -1,7 +1,7 @@
 import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.7.2';
+const STATUSBAR_VERSION = '1.7.3';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
@@ -7735,6 +7735,14 @@ async function bootstrap() {
   const parentDocument = window.parent?.document ?? document;
   const parentWindow = window.parent ?? window;
   exposeStatusbarActions();
+  try {
+    // 角色卡启动时就把历史遗留的“旧主书 + 附加书”纠正为单主世界书，
+    // 避免玩家必须再次点击“使用原版开局”才能停止重复注入。
+    await resolveBuiltinTongchengWorldbook();
+  } catch (error) {
+    // 不让世界书修复失败阻断状态栏；安装原版开局时仍会显示完整错误。
+    console.warn('[残明余烬] 自动校正单主世界书失败:', error);
+  }
   const portraitLibrary = getPortraitLibrary();
   window.CanmingPortraitLibrary = portraitLibrary;
   if (window.parent && window.parent !== window) window.parent.CanmingPortraitLibrary = portraitLibrary;

@@ -13,7 +13,7 @@ const cardPath = path.resolve(
 );
 const checkOnly = process.argv.includes('--check');
 const remoteMode = process.argv.includes('--remote');
-const remoteLoaderUrl = 'https://cmyj-frontend.pages.dev/cmyj-1.7/loader/index.js?v=1.7.2';
+const remoteLoaderUrl = 'https://cmyj-frontend.pages.dev/cmyj-1.7/loader/index.js?v=1.7.3';
 const scriptBundles = [
   ['变量结构', 'schema'],
   ['旧档兼容', 'legacy'],
