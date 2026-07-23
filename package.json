@@ -3,6 +3,8 @@
   "scripts": {
     "build:dev": "webpack --mode development",
     "build": "webpack --mode production",
+    "build:beta": "node scripts/build-channel.mjs cmyj-1.7-beta",
+    "build:release": "node scripts/build-channel.mjs cmyj-1.7",
     "build:pages": "pnpm build && node scripts/prepare-pages.mjs",
     "watch": "webpack --mode development --watch --progress",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,css,scss,html,vue}\" --no-error-on-unmatched-pattern",
@@ -11,7 +13,11 @@
     "dump": "node dump_schema.ts",
     "sync": "node tavern_sync.mjs",
     "check:cmyj": "node scripts/check-cmyj.mjs",
-    "smoke:cmyj": "node scripts/smoke-cmyj.mjs"
+    "smoke:cmyj": "node scripts/smoke-cmyj.mjs",
+    "test:scenario-generator": "node scripts/test-scenario-generator.mjs cmyj-1.7-beta",
+    "test:scenario-generator:release": "node scripts/test-scenario-generator.mjs cmyj-1.7",
+    "package:release-card": "node scripts/package-release-card.mjs",
+    "check:release-card": "node scripts/package-release-card.mjs --check"
   },
   "browserslist": [
     "defaults and partially supports es6-module"

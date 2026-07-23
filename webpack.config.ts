@@ -50,8 +50,10 @@ function common_path(lhs: string, rhs: string) {
 
 function glob_script_files() {
   const results: string[] = [];
+  const selectedChannel = String(process.env.CMYJ_CHANNEL || '').trim();
 
   fs.globSync(`src/**/index.{ts,tsx,js,jsx}`)
+    .filter(file => !selectedChannel || file.split(/[\\/]/).includes(selectedChannel))
     .filter(
       file => process.env.CI !== 'true' || !fs.readFileSync(path.join(import.meta.dirname, file)).includes('@no-ci'),
     )
@@ -108,6 +110,7 @@ function watch_tavern_helper(compiler: webpack.Compiler) {
 
 let watcher: FSWatcher;
 const dump = () => {
+  if (process.env.CMYJ_CHANNEL) return;
   exec('pnpm dump', { cwd: import.meta.dirname });
   console.info('\x1b[36m[schema_dump]\x1b[0m 已将所有 schema.ts 转换为 schema.json');
 };
@@ -135,6 +138,7 @@ const bundle = () => {
 };
 const bundle_debounced = _.debounce(bundle, 500, { leading: true, trailing: false });
 function tavern_sync(compiler: webpack.Compiler) {
+  if (process.env.CMYJ_CHANNEL) return;
   if (!compiler.options.watch) {
     bundle_debounced();
     return;

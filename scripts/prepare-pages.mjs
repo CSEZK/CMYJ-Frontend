@@ -4,17 +4,21 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist');
-const loader = path.join(dist, 'cmyj-1.6', 'loader', 'index.js');
+const channels = ['cmyj-1.6', 'cmyj-1.7-beta', 'cmyj-1.7'];
 
-await access(loader);
+await Promise.all(channels.map(channel => access(path.join(dist, channel, 'loader', 'index.js'))));
 await mkdir(dist, { recursive: true });
 await writeFile(
   path.join(dist, '_headers'),
-  `/cmyj-1.6/*
+  channels
+    .map(
+      channel => `/${channel}/*
   Access-Control-Allow-Origin: *
   Cache-Control: public, max-age=0, must-revalidate
   X-Content-Type-Options: nosniff
 `,
+    )
+    .join('\n'),
   'utf8',
 );
 

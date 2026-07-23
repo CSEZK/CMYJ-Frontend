@@ -8,6 +8,8 @@ Actions 自动生成 `dist/` 产物。
 
 - `src/cmyj-1.6/`：可阅读、可审计的脚本源码。
 - `dist/cmyj-1.6/`：模板自动构建、供角色卡远程加载的产物。
+- `src/cmyj-1.7-beta/`：DLC 架构测试通道，只允许连接 staging 后端。
+- `dist/cmyj-1.7-beta/`：Cloudflare Pages 预览分支使用的测试产物；正式角色卡不得引用。
 - `src/cmyj-1.6/loader/`：共享加载器，负责依赖顺序、去重和错误恢复。
 
 角色卡通过以下固定入口加载：
@@ -49,6 +51,10 @@ pnpm smoke:cmyj
 
 `build:pages` 会生成 `dist/_headers`，让 `/cmyj-1.6/*`
 每次加载时重新验证版本，并允许酒馆页面跨域加载脚本。作品封面、动图和作品包仍由 R2 保存，不进入本仓库。
+
+测试环境从非生产分支使用 Pages 预览别名，例如
+`https://develop.cmyj-frontend.pages.dev/cmyj-1.7-beta/loader/index.js`。测试版固定连接
+`cm-yj-workshop-staging`，不得连接生产工坊；完成验收前不得让正式角色卡引用该入口。
 
 ## 内容说明
 
