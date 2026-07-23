@@ -322,7 +322,9 @@ function scenarioPackageSummary(raw,file={}){
   if(!openings.length||openings.length>20)throw Error('身份 DLC 必须包含 1～20 个开场白。');
   if(openings.some(item=>!item?.id||!item?.name||!item?.content))throw Error('至少一个开场白缺少 ID、名称或正文。');
   if(!entries.length||entries.length>200)throw Error('身份 DLC 必须包含 1～200 个世界书条目。');
-  if(portraits.length>60||portraits.some(item=>!item?.name||!item?.portraits||!Object.keys(item.portraits).length))throw Error('DLC 人物志资料不完整或数量超过 60 人。');
+  if(portraits.length>60)throw Error('DLC 人物志最多包含 60 人。');
+  if(portraits.some(item=>!item?.name))throw Error('DLC 人物志中有角色缺少姓名。');
+  if(portraits.some(item=>Object.prototype.hasOwnProperty.call(item,'portraits')&&(!item.portraits||typeof item.portraits!=='object'||!Object.keys(item.portraits).length)))throw Error('DLC 人物志中有自定义立绘资料为空。');
   let bytes=Number(file.size)||new TextEncoder().encode(JSON.stringify(bundle)).length;
   if(bytes>SCENARIO_MAX_BYTES)throw Error('DLC 作品包超过 1.4MB 上限。');
   return{bundle,resource,scenario,openings,entries,relationships,portraits,bytes,fileName:file.name||''};
