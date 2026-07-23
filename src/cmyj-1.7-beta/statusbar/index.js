@@ -1,7 +1,7 @@
 import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.7.0-beta.8';
+const STATUSBAR_VERSION = '1.7.0-beta.9';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
@@ -4545,7 +4545,7 @@ async function installBuiltinTongchengScenario() {
       name: '原版·桐城皂隶篇',
       scenario: {
         id: 'cmyj.original.tongcheng',
-        version: '1.0.0',
+        version: '1.0.1',
         baseCard: 'cmyj.base',
         minBaseVersion: STATUSBAR_VERSION,
         exclusiveGroup: 'player-origin',

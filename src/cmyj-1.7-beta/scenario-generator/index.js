@@ -672,7 +672,7 @@ import { Schema } from '../schema/definition.js';
         id,
         version: project.packageVersion || '0.1.0',
         baseCard: 'cmyj.base',
-        minBaseVersion: '1.7.0-beta.8',
+        minBaseVersion: '1.7.0-beta.9',
         exclusiveGroup: 'player-origin',
         allowMidChatSwitch: false,
         newChatRequired: true,
