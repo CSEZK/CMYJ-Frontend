@@ -175,8 +175,10 @@ assert.ok(releaseLoader.length > 300_000, '1.7 正式版共享加载器未包含
 assert.match(releaseLoader, /__CMYJRemoteScriptsV17/);
 assert.doesNotMatch(releaseLoader, /__CMYJRemoteScriptsV17Beta/);
 assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.6'/);
-assert.match(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps\/world_1634\.js/);
-assert.match(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps\/world_1634_overview\.js/);
+assert.match(releaseStatusbarSource, /MAP_ASSET_REVISION = '49ceb3121f5e64c14b07dfaf43a7aac152b127ea'/);
+assert.match(releaseStatusbarSource, /assets\/maps\/world_1634\.js/);
+assert.match(releaseStatusbarSource, /assets\/maps\/world_1634_overview\.js/);
+assert.doesNotMatch(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps/);
 assert.match(releaseStatusbarSource, /east_asia_1634_provinces/);
 assert.doesNotMatch(releaseStatusbarSource, /GooYi-C\/History@main\/world_1629\.js/);
 const releaseMapOverview = JSON.parse(
