@@ -14,6 +14,7 @@
     "sync": "node tavern_sync.mjs",
     "check:cmyj": "node scripts/check-cmyj.mjs",
     "smoke:cmyj": "node scripts/smoke-cmyj.mjs",
+    "optimize:map": "node scripts/optimize-map-overview.mjs",
     "test:scenario-generator": "node scripts/test-scenario-generator.mjs cmyj-1.7-beta",
     "test:scenario-generator:release": "node scripts/test-scenario-generator.mjs cmyj-1.7",
     "package:release-card": "node scripts/package-release-card.mjs",
