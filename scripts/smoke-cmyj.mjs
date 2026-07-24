@@ -26,6 +26,10 @@ const releaseScenarioSource = await readFile(
 );
 const releaseGeneratorSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'generator', 'index.js'), 'utf8');
 const releaseWorldEngineSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'world-engine', 'index.js'), 'utf8');
+const releaseWorldEngineStyle = await readFile(
+  path.join(root, 'src', 'cmyj-1.7', 'world-engine', 'styles-integrated.raw'),
+  'utf8',
+);
 const releaseSchemaSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'schema', 'definition.js'), 'utf8');
 const originalTongchengAdaptations = JSON.parse(
   await readFile(
@@ -200,7 +204,16 @@ assert.match(releaseStatusbarSource, /自动校正单主世界书失败/);
 assert.match(releaseGeneratorSource, /STORAGE_KEY_API = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /API_SETTINGS_KEY = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /minBaseVersion: '1\.7\.0'/);
-assert.match(releaseWorldEngineSource, /VERSION = '1\.0\.0'/);
+assert.match(releaseWorldEngineSource, /VERSION = '1\.1\.0'/);
+assert.match(releaseWorldEngineSource, /settingsVersion: 3/);
+assert.match(releaseWorldEngineSource, /temperature: 1/);
+assert.match(releaseWorldEngineSource, /maxTokens: 10000/);
+assert.match(releaseWorldEngineSource, /cmyj_world_engine_increment_v2/);
+assert.match(releaseWorldEngineSource, /buildTransitionFromOperations/);
+assert.match(releaseWorldEngineSource, /renderParallelWorld/);
+assert.match(releaseWorldEngineSource, /queuedProcess/);
+assert.doesNotMatch(releaseWorldEngineSource, /setChatMessages/);
+assert.match(releaseWorldEngineStyle, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
 for (const source of [
   releaseLoader,
   releaseWorkshopSource,

@@ -6,7 +6,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 (() => {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -27,7 +27,7 @@ import integratedStyles from './styles-integrated.raw?raw';
   if (hostWindow[RUNTIME_KEY]?.mounted) return;
 
   const DEFAULT_SETTINGS = Object.freeze({
-    settingsVersion: 2,
+    settingsVersion: 3,
     enabled: true,
     autoRun: true,
     lookbackRounds: 3,
@@ -37,8 +37,8 @@ import integratedStyles from './styles-integrated.raw?raw';
     apiKey: '',
     apiSource: 'openai',
     model: '',
-    temperature: 0.45,
-    maxTokens: 5200,
+    temperature: 1,
+    maxTokens: 10000,
     maxFacts: 240,
   });
 
@@ -49,6 +49,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     hooks: 16,
     facts: 240,
     cameraHistory: 18,
+    parallelTurns: 24,
     checkpoints: 8,
   });
 
@@ -64,7 +65,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     scheduledTimer: null,
     pendingMessageId: null,
     pendingForce: false,
-    selfWrittenMessageHashes: new Map(),
+    queuedProcess: null,
     mvuReady: false,
     themeTimer: null,
     isOpen: false,
@@ -187,18 +188,27 @@ import integratedStyles from './styles-integrated.raw?raw';
 
   function loadSettings() {
     const raw = readJsonLocal('settings', {});
+    const settingsVersion = Number(raw?.settingsVersion || 0);
     const connectionMode = raw?.connectionMode === 'custom' ? 'custom' : 'tavern';
-    const enabled = Number(raw?.settingsVersion || 0) >= 2 ? raw?.enabled !== false : true;
+    const enabled = settingsVersion >= 2 ? raw?.enabled !== false : true;
+    const migratedTemperature =
+      settingsVersion < 3 && (raw?.temperature == null || Number(raw.temperature) === 0.45)
+        ? DEFAULT_SETTINGS.temperature
+        : raw?.temperature;
+    const migratedMaxTokens =
+      settingsVersion < 3 && (raw?.maxTokens == null || Number(raw.maxTokens) === 5200)
+        ? DEFAULT_SETTINGS.maxTokens
+        : raw?.maxTokens;
     return {
       ...DEFAULT_SETTINGS,
       ...(raw && typeof raw === 'object' ? raw : {}),
-      settingsVersion: 2,
+      settingsVersion: 3,
       enabled,
       connectionMode,
       lookbackRounds: Math.round(clamp(raw?.lookbackRounds ?? DEFAULT_SETTINGS.lookbackRounds, 1, 8)),
       settleDelayMs: Math.round(clamp(raw?.settleDelayMs ?? DEFAULT_SETTINGS.settleDelayMs, 400, 5000)),
-      temperature: clamp(raw?.temperature ?? DEFAULT_SETTINGS.temperature, 0, 1.5),
-      maxTokens: Math.round(clamp(raw?.maxTokens ?? DEFAULT_SETTINGS.maxTokens, 1800, 16000)),
+      temperature: clamp(migratedTemperature ?? DEFAULT_SETTINGS.temperature, 0, 1.5),
+      maxTokens: Math.round(clamp(migratedMaxTokens ?? DEFAULT_SETTINGS.maxTokens, 1800, 16000)),
       maxFacts: Math.round(clamp(raw?.maxFacts ?? DEFAULT_SETTINGS.maxFacts, 60, LIMITS.facts)),
     };
   }
@@ -209,7 +219,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     settings = {
       ...DEFAULT_SETTINGS,
       ...next,
-      settingsVersion: 2,
+      settingsVersion: 3,
       connectionMode: next.connectionMode === 'custom' ? 'custom' : 'tavern',
       lookbackRounds: Math.round(clamp(next.lookbackRounds, 1, 8)),
       settleDelayMs: Math.round(clamp(next.settleDelayMs, 400, 5000)),
@@ -248,6 +258,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       intelPackets: [],
       hooks: [],
       cameraHistory: [],
+      parallelTurns: [],
       nextTurnPacket: {
         hardFacts: [],
         arrivedIntel: [],
@@ -342,6 +353,30 @@ import integratedStyles from './styles-integrated.raw?raw';
       )
       .slice(-LIMITS.hooks);
     state.cameraHistory = asArray(state.cameraHistory).slice(-LIMITS.cameraHistory);
+    state.parallelTurns = asArray(state.parallelTurns)
+      .map(turn => ({
+        messageId: Number(turn?.messageId ?? -1),
+        swipeId: Number(turn?.swipeId ?? 0),
+        revision: Number(turn?.revision ?? 0),
+        createdAt: asText(turn?.createdAt),
+        acceptedOperations: Math.max(0, Number(turn?.acceptedOperations) || 0),
+        rejectedOperations: Math.max(0, Number(turn?.rejectedOperations) || 0),
+        scenes: asArray(turn?.scenes)
+          .map(scene => ({
+            location: asText(scene?.location),
+            time: asText(scene?.time),
+            actors: asArray(scene?.actors)
+              .map(value => asText(value))
+              .filter(Boolean)
+              .slice(0, 12),
+            action: asText(scene?.action),
+            body: asText(scene?.body).slice(0, 8000),
+          }))
+          .filter(scene => scene.body)
+          .slice(0, 2),
+      }))
+      .filter(turn => turn.messageId >= 0 && turn.scenes.length)
+      .slice(-LIMITS.parallelTurns);
     state.checkpoints = asArray(state.checkpoints).slice(-LIMITS.checkpoints);
     state.nextTurnPacket = normalizePacket(state.nextTurnPacket);
     return state;
@@ -383,6 +418,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       intelPackets: state.intelPackets,
       hooks: state.hooks,
       cameraHistory: state.cameraHistory,
+      parallelTurns: state.parallelTurns,
       nextTurnPacket: state.nextTurnPacket,
       lastRun: state.lastRun,
       checkpoints: [],
@@ -487,12 +523,15 @@ import integratedStyles from './styles-integrated.raw?raw';
       output.push({ path: path || '/', before: compact(oldValue), after: compact(newValue) });
       return output;
     }
-    const keys = new Set([
-      ...Object.keys(oldObject ? oldValue : {}),
-      ...Object.keys(newObject ? newValue : {}),
-    ]);
+    const keys = new Set([...Object.keys(oldObject ? oldValue : {}), ...Object.keys(newObject ? newValue : {})]);
     for (const key of keys) {
-      deepDiff(oldObject ? oldValue[key] : undefined, newObject ? newValue[key] : undefined, `${path}/${key}`, output, limit);
+      deepDiff(
+        oldObject ? oldValue[key] : undefined,
+        newObject ? newValue[key] : undefined,
+        `${path}/${key}`,
+        output,
+        limit,
+      );
       if (output.length >= limit) break;
     }
     return output;
@@ -585,50 +624,57 @@ import integratedStyles from './styles-integrated.raw?raw';
       .map(item => item.fact);
   }
 
-  function compactStateForPrompt(state, currentText) {
-    return {
-      clock: state.clock,
-      worldSummary: state.worldSummary,
-      activeEvents: state.activeEvents,
-      actors: state.actors,
-      intelPackets: state.intelPackets,
-      hooks: state.hooks,
-      recentFacts: asArray(state.facts).slice(-36),
-      retrievedMemories: relevantMemories(state, currentText),
-      cameraHistory: state.cameraHistory,
-    };
+  function selectRelevantRecords(records, currentText, limit, fields) {
+    const haystack = String(currentText || '');
+    return asArray(records)
+      .map((record, index) => {
+        const searchable = fields
+          .flatMap(field => {
+            const value = record?.[field];
+            return Array.isArray(value) ? value : [value];
+          })
+          .filter(Boolean)
+          .join(' ');
+        const terms = searchable
+          .split(/[\s，。；、：·／/]/)
+          .map(value => value.trim())
+          .filter(value => value.length >= 2);
+        const relevance = terms.reduce(
+          (score, term) => score + (haystack.includes(term) ? Math.min(term.length, 8) : 0),
+          0,
+        );
+        return { record, score: relevance + Math.max(0, index - records.length + limit) * 0.01 };
+      })
+      .sort((left, right) => right.score - left.score)
+      .slice(0, limit)
+      .map(item => item.record);
   }
 
-  function systemPrompt() {
-    return `你是《残明余烬》的“天下演化史官”。主模型已写完玩家视角正文；你负责核账、推进视野外因果，并亲自写出本轮平行世界正文。脚本会把 parallel_world 直接追加到这一楼主模型消息末尾，主模型不会代写。
-
-一、输入权限
-1. CURRENT_TURN.assistantOutput 与本轮 currentClock、mvuChanges 是唯一主要新增证据。玩家输入只是意图，不能当作成功结果。
-2. RECENT_CONTEXT 只用于承接称谓、动作和时间，严禁把旧内容当成本轮新事实重复入档。
-3. CANONICAL_STATE 是只读旧档案：同一事件、人物、驿报、伏线必须沿用稳定 ID 推进或结案，不得换名重建。
-4. currentKnowledgeReference 是角色资料和玩家认知参考，不是客观事实清单；不得把名册照抄进人物行动，也不得把秘密自动变成全员已知。
-
-二、事实与知识铁律
-1. 只有正文或平行世界叙述明确发生的 occurred 才是硬事实。planned、ordered、reported、rumor、failed、aborted、descriptive 均不得写入 new_facts。
-2. 对话只证明某人说过这句话，不证明话中内容真实。人物获知信息必须有目击、告知、公文、书信、驿传、商旅或流言渠道。
-3. 回合不等于日期推进。时间未推进时只能发展同一时刻可完成的细小行动，不得让军队瞬移、工程骤成或城池无因易手。
-4. 历史只是未受干预时的惯性，不是强制剧本；重大结果必须有已入档前因。
-
-三、各字段只能填写以下内容
-- world_summary：70—140 字的“当前天下态势快照”。只写已确认且仍有效的局势，不复述本楼玩家场景，不写未经证据支持的宏大推测；天下态势没有实质变化时沿用旧摘要并只做最小修订。
-- new_facts：仅写本轮新发生且可举证的客观事实。每条 evidence 指明来自“主模型正文”“MVU 变化”或“本轮平行世界”的哪一项结果。
-- upsert_events：仅写需要跨回合追踪的持续因果过程；普通对话和一次性动作不是事件。必须有阶段、地点、摘要和下一触发条件。完成后用 resolve_event_ids 结案。
-- upsert_actors：仅写本轮确有行动、位置、目标、知识或下一决策变化的重要 NPC。current_action 与 updated_reason 必须具体；严禁仅因角色出现在资料或名册中就建档。
-- upsert_intel：仅写“正在传播”的信息包，必须同时有起点、终点、传播渠道、状态、预计到达时间、可靠度和当前知情者。静态秘密、人物背景、债务关系、私人心意不是驿报；已到达者从队列移除并写入 next_turn_packet.arrivedIntel。
-- upsert_hooks：仅写尚未显化但具备具体触发条件与失效条件的潜在因果线；氛围描写和泛泛风险不是伏线。
-- camera_history：只写本轮两个平行场景的简短“地点—人物—行动”标签，用于下轮避免重复，不写正文。
-- next_turn_packet：只给下一轮主模型提供可用信息。hardFacts 是已发生且与下一轮有关的事实；arrivedIntel 是本轮实际到达的信息；localConsequences 是玩家所在地可观察后果；npcKnowledge 严格区分知道与不知道；activePressures 是眼前压力；constraints 是不能违背的事实边界；cameraCandidates 是可继续观察的视野外线索。没有内容就输出空数组，禁止拿其他字段凑数。
-- parallel_world：写 2 个玩家当前视角之外、可以直接展示的电影式场景。每段以【地名·地点·时辰】单独起行，场景之间空一行；优先推进旧事件、人物行动和真实的信息传播。素材不足时只写低风险日常切片，不能重演玩家场景，也不能凭空制造重大胜负、死亡或政局结果。
-
-四、输出纪律
-1. 顶层字段必须原样使用 snake_case，并严格符合 JSON Schema。
-2. parallel_world 不得再包裹 <平行世界> 标签；不得写“与此同时”“玩家不知道的是”“镜头转向”等元叙事转场，也不要使用星号或破折号分隔线。
-3. 全部内容使用简体中文，简洁、具体、保留因果。不要输出 JSON 之外的任何解释。`;
+  function compactStateForPrompt(state, currentText) {
+    return {
+      revision: state.revision,
+      clock: state.clock,
+      worldSummary: state.worldSummary,
+      activeEvents: selectRelevantRecords(state.activeEvents, currentText, 8, [
+        'id',
+        'title',
+        'location',
+        'actors',
+        'summary',
+      ]),
+      actors: selectRelevantRecords(state.actors, currentText, 12, ['id', 'name', 'location', 'goal', 'currentAction']),
+      intelPackets: selectRelevantRecords(state.intelPackets, currentText, 10, [
+        'id',
+        'content',
+        'origin',
+        'destination',
+        'knownBy',
+      ]),
+      hooks: selectRelevantRecords(state.hooks, currentText, 8, ['id', 'title', 'summary', 'visibleSigns', 'trigger']),
+      recentFacts: asArray(state.facts).slice(-18),
+      retrievedMemories: relevantMemories(state, currentText).slice(0, 8),
+      cameraHistory: asArray(state.cameraHistory).slice(-10),
+    };
   }
 
   function outputSchema() {
@@ -873,13 +919,232 @@ import integratedStyles from './styles-integrated.raw?raw';
     };
   }
 
+  function incrementalSystemPrompt() {
+    return `你是《残明余烬》的天下演化史官。主模型已经完成玩家视角正文；你只提交本轮世界档案的必要变化，并写出最多两个玩家视野外场景。
+
+一、证据边界
+1. CURRENT_TURN.assistantOutput 和最终 MVU 变化是本轮新增事实的主要证据。玩家输入只代表意图。
+2. RECENT_CONTEXT 与 CANONICAL_STATE 仅用于理解和延续，不得把旧资料重复当成新事实。
+3. 只有明确发生的 occurred 结果可以 fact.add。计划、命令、传闻、失败尝试和氛围不得认证为事实。
+4. 平行场景只能展示本轮操作已经支持的变化，不能先写重大结果再用场景认证它。
+
+二、增量原则
+1. 只返回发生变化的内容，不重写完整档案。
+2. patch 必须复用 CANONICAL_STATE 中已有的稳定 ID；目标不存在时不要 patch，应在资料充足时 upsert。
+3. 普通回合不要 summary.replace。只有重大局势改变、日期明显推进或旧摘要失真时才更新摘要。
+4. 人物只有在行动、地点、目标、知识或下一决策确实变化时才更新。
+5. 情报必须有起点、终点、渠道、状态和抵达时间；人物不能无渠道获得消息。
+
+三、旁线场景
+1. parallel_scenes 最多两个，每个包含 location、time、actors、action、body。
+2. 场景必须在玩家当前视野之外，优先表现合法操作推进的事件、人物行动或情报传播。
+3. 不得重演玩家场景，不得凭空制造胜负、死亡、陷城或政局结果。
+4. body 不使用 <平行世界> 标签，不写“与此同时”“玩家不知道的是”“镜头转向”等元叙事。
+
+四、输出
+只返回符合 JSON Schema 的一个 JSON 对象。operations 可以为空；没有变化的字段不得凑数。base_revision 必须原样回传。`;
+  }
+
+  function incrementalOutputSchema() {
+    const text = { type: 'string' };
+    const textArray = { type: 'array', items: text, maxItems: 20 };
+    const factValue = {
+      type: 'object',
+      additionalProperties: false,
+      required: [
+        'content',
+        'status',
+        'scope',
+        'location',
+        'actors',
+        'witnesses',
+        'publicity',
+        'confidence',
+        'importance',
+        'evidence',
+      ],
+      properties: {
+        content: text,
+        status: { type: 'string', enum: ['occurred'] },
+        scope: { type: 'string', enum: ['player_scene', 'parallel_world', 'variable_update'] },
+        location: text,
+        actors: textArray,
+        witnesses: textArray,
+        publicity: text,
+        confidence: { type: 'number', minimum: 0, maximum: 1 },
+        importance: { type: 'number', minimum: 0, maximum: 100 },
+        evidence: text,
+      },
+    };
+    const eventFields = {
+      title: text,
+      stage: text,
+      status: text,
+      location: text,
+      actors: textArray,
+      summary: text,
+      next_trigger: text,
+      source_fact_ids: textArray,
+      impact_domains: textArray,
+    };
+    const actorFields = {
+      name: text,
+      location: text,
+      goal: text,
+      current_action: text,
+      knowledge: textArray,
+      next_decision: text,
+      updated_reason: text,
+    };
+    const intelFields = {
+      content: text,
+      origin: text,
+      destination: text,
+      channel: text,
+      status: text,
+      eta: text,
+      reliability: { type: 'number', minimum: 0, maximum: 1 },
+      known_by: textArray,
+    };
+    const hookFields = {
+      title: text,
+      stage: text,
+      summary: text,
+      visible_signs: textArray,
+      trigger: text,
+      fail_condition: text,
+      source_fact_ids: textArray,
+    };
+    const recordOperation = (type, fields, mode, requiredFields = []) => ({
+      type: 'object',
+      additionalProperties: false,
+      required: mode === 'patch' ? ['type', 'id', 'set'] : ['type', 'id', 'value'],
+      properties: {
+        type: { type: 'string', enum: [type] },
+        id: text,
+        ...(mode === 'patch'
+          ? { set: { type: 'object', additionalProperties: false, properties: fields } }
+          : {
+              value: {
+                type: 'object',
+                additionalProperties: false,
+                required: requiredFields,
+                properties: fields,
+              },
+            }),
+      },
+    });
+    const idOperation = type => ({
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'id'],
+      properties: { type: { type: 'string', enum: [type] }, id: text },
+    });
+    return {
+      name: 'cmyj_world_engine_increment_v2',
+      strict: false,
+      value: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['schema_version', 'base_revision', 'operations', 'parallel_scenes'],
+        properties: {
+          schema_version: { type: 'integer', enum: [2] },
+          base_revision: { type: 'integer', minimum: 0 },
+          operations: {
+            type: 'array',
+            maxItems: 32,
+            items: {
+              anyOf: [
+                {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['type', 'id', 'value'],
+                  properties: {
+                    type: { type: 'string', enum: ['fact.add'] },
+                    id: text,
+                    value: factValue,
+                  },
+                },
+                recordOperation('event.upsert', eventFields, 'upsert', [
+                  'title',
+                  'stage',
+                  'status',
+                  'location',
+                  'actors',
+                  'summary',
+                  'next_trigger',
+                ]),
+                recordOperation('event.patch', eventFields, 'patch'),
+                idOperation('event.resolve'),
+                recordOperation('actor.upsert', actorFields, 'upsert', [
+                  'name',
+                  'location',
+                  'goal',
+                  'current_action',
+                  'updated_reason',
+                ]),
+                recordOperation('actor.patch', actorFields, 'patch'),
+                recordOperation('intel.upsert', intelFields, 'upsert', [
+                  'content',
+                  'origin',
+                  'destination',
+                  'channel',
+                  'status',
+                  'eta',
+                  'reliability',
+                ]),
+                recordOperation('intel.patch', intelFields, 'patch'),
+                idOperation('intel.remove'),
+                recordOperation('hook.upsert', hookFields, 'upsert', [
+                  'title',
+                  'stage',
+                  'summary',
+                  'trigger',
+                  'fail_condition',
+                ]),
+                recordOperation('hook.patch', hookFields, 'patch'),
+                idOperation('hook.resolve'),
+                {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['type', 'value'],
+                  properties: {
+                    type: { type: 'string', enum: ['summary.replace'] },
+                    value: text,
+                  },
+                },
+              ],
+            },
+          },
+          parallel_scenes: {
+            type: 'array',
+            maxItems: 2,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['location', 'time', 'actors', 'action', 'body'],
+              properties: {
+                location: text,
+                time: text,
+                actors: textArray,
+                action: text,
+                body: text,
+              },
+            },
+          },
+        },
+      },
+    };
+  }
+
   function buildRequestPayload(baseState, messageKey, currentStat = getMessageStatData(messageKey.messageId) || {}) {
     const getMessages = api('getChatMessages');
     const current = getMessages(messageKey.messageId)?.[0];
     const previousStat = findPreviousStatData(messageKey.messageId);
     return {
       instruction:
-        '先判定 CURRENT_TURN 中真正发生了什么，再按字段职责提交最小必要增量。RECENT_CONTEXT、CANONICAL_STATE 与角色资料均为只读参考，禁止照抄名册、旧事实或静态秘密凑数。',
+        '先判定 CURRENT_TURN 中真正发生了什么，再只提交必要 operations。CANONICAL_STATE 是只读工作集，patch 必须复用其中已有 ID。',
+      baseRevision: Number(baseState.revision) || 0,
       currentTurn: {
         messageId: messageKey.messageId,
         swipeId: messageKey.swipeId,
@@ -896,7 +1161,10 @@ import integratedStyles from './styles-integrated.raw?raw';
 
   function customApiConfig() {
     if (settings.connectionMode !== 'custom') {
-      return null;
+      return {
+        temperature: settings.temperature,
+        max_tokens: settings.maxTokens,
+      };
     }
     if (!settings.apiUrl) throw new Error('独立 API 模式尚未填写 API 地址。');
     return {
@@ -955,13 +1223,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 
     // 部分兼容 OpenAI 的服务会忽略 json_schema，但仍返回语义完整的常见 camelCase 结构。
     // 在本地归一化它，避免请求成功却被误判成“新增 0 条”。
-    const incrementCandidates = [
-      result.worldStateIncrement,
-      result.transition,
-      result.data,
-      result.result,
-      result,
-    ];
+    const incrementCandidates = [result.worldStateIncrement, result.transition, result.data, result.result, result];
     const increment = incrementCandidates.find(
       item =>
         item &&
@@ -1066,6 +1328,99 @@ import integratedStyles from './styles-integrated.raw?raw';
     });
   }
 
+  function normalizeParallelScenes(value) {
+    const cleanBody = value =>
+      asText(value)
+        .replace(/<\/?(?:平行世界|parallel[_ -]?world)(?:\s[^>]*)?>/gi, '')
+        .trim();
+    const direct = asArray(value)
+      .map(scene =>
+        typeof scene === 'string'
+          ? { location: '', time: '', actors: [], action: '', body: cleanBody(scene) }
+          : {
+              location: asText(scene?.location),
+              time: asText(scene?.time),
+              actors: asArray(scene?.actors)
+                .map(item => asText(item))
+                .filter(Boolean)
+                .slice(0, 12),
+              action: asText(scene?.action),
+              body: cleanBody(scene?.body || scene?.content || scene?.text),
+            },
+      )
+      .filter(scene => scene.body)
+      .slice(0, 2);
+    return direct;
+  }
+
+  function legacyParallelScene(result) {
+    const body = asText(
+      result?.parallel_world ||
+        result?.parallelWorld ||
+        result?.parallelWorldText ||
+        result?.parallel_world_text ||
+        result?.worldStateIncrement?.parallelWorld ||
+        result?.transition?.parallelWorld,
+    )
+      .replace(/^\s*<平行世界(?:\s[^>]*)?>/i, '')
+      .replace(/<\/平行世界>\s*$/i, '')
+      .trim();
+    return body ? [{ location: '', time: '', actors: [], action: '', body }] : [];
+  }
+
+  function legacyOperations(result) {
+    const operations = [];
+    const addRecords = (type, records) => {
+      asArray(records).forEach((value, index) => {
+        operations.push({
+          type,
+          id: asText(value?.id) || `${type}-${index + 1}`,
+          value,
+        });
+      });
+    };
+    if (asText(result?.world_summary || result?.worldSummary)) {
+      operations.push({ type: 'summary.replace', value: asText(result.world_summary || result.worldSummary) });
+    }
+    addRecords('fact.add', result?.new_facts || result?.newFacts || result?.extractedFacts);
+    addRecords('event.upsert', result?.upsert_events || result?.upsertEvents || result?.newOrUpdatedEvents);
+    addRecords('actor.upsert', result?.upsert_actors || result?.upsertActors || result?.newOrUpdatedActors);
+    addRecords('intel.upsert', result?.upsert_intel || result?.upsertIntel || result?.newIntelPackets);
+    addRecords('hook.upsert', result?.upsert_hooks || result?.upsertHooks || result?.newOrUpdatedHooks);
+    asArray(result?.resolve_event_ids || result?.resolveEventIds).forEach(id =>
+      operations.push({ type: 'event.resolve', id }),
+    );
+    asArray(result?.remove_intel_ids || result?.removeIntelIds).forEach(id =>
+      operations.push({ type: 'intel.remove', id }),
+    );
+    asArray(result?.resolve_hook_ids || result?.resolveHookIds).forEach(id =>
+      operations.push({ type: 'hook.resolve', id }),
+    );
+    return operations;
+  }
+
+  function normalizeIncrementalResult(result, expectedRevision) {
+    if (!result || typeof result !== 'object' || Array.isArray(result)) {
+      throw new Error('副模型输出缺少可用的结构化对象。');
+    }
+    const operations = asArray(result.operations || result.ops);
+    const declaredSchemaVersion = result.schema_version ?? result.schemaVersion;
+    if (operations.length && declaredSchemaVersion != null && Number(declaredSchemaVersion) !== 2) {
+      throw new Error(`副模型输出的 schema_version=${declaredSchemaVersion}，当前仅接受版本 2。`);
+    }
+    const scenes = normalizeParallelScenes(result.parallel_scenes || result.parallelScenes || result.scenes);
+    const normalized = {
+      schema_version: Number(result.schema_version || result.schemaVersion || 2),
+      base_revision: Number(result.base_revision ?? result.baseRevision ?? expectedRevision),
+      operations: operations.length ? operations.slice(0, 32) : legacyOperations(result).slice(0, 32),
+      parallel_scenes: scenes.length ? scenes : legacyParallelScene(result),
+    };
+    if (!normalized.operations.length && !normalized.parallel_scenes.length) {
+      throw new Error('副模型结构中既没有增量操作，也没有可用的旁线场景。');
+    }
+    return normalized;
+  }
+
   async function callWorldModel(payload, generationId) {
     const generateRaw = api('generateRaw');
     const generate = api('generate');
@@ -1080,12 +1435,12 @@ import integratedStyles from './styles-integrated.raw?raw';
         generation_id: generationId,
         should_silence: true,
         ordered_prompts: [
-          { role: 'system', content: systemPrompt() },
+          { role: 'system', content: incrementalSystemPrompt() },
           { role: 'user', content: `${userPrompt}${retryHint}` },
         ],
-        json_schema: outputSchema(),
+        json_schema: incrementalOutputSchema(),
       };
-      if (customApi) config.custom_api = customApi;
+      config.custom_api = customApi;
       try {
         const request =
           typeof generateRaw === 'function'
@@ -1093,24 +1448,25 @@ import integratedStyles from './styles-integrated.raw?raw';
             : generate({
                 generation_id: generationId,
                 should_silence: true,
-                user_input: `${systemPrompt()}\n\n${userPrompt}${retryHint}`,
-                json_schema: outputSchema(),
-                ...(customApi ? { custom_api: customApi } : {}),
+                user_input: `${incrementalSystemPrompt()}\n\n${userPrompt}${retryHint}`,
+                json_schema: incrementalOutputSchema(),
+                custom_api: customApi,
               });
+        let timeoutId;
         const raw = await Promise.race([
-          request,
-          new Promise((_, reject) =>
-            setTimeout(() => {
+          Promise.resolve(request).finally(() => clearTimeout(timeoutId)),
+          new Promise((_, reject) => {
+            timeoutId = setTimeout(() => {
               try {
                 api('stopGenerationById')?.(generationId);
               } catch {
                 /* 请求超时后停止失败也要正常释放界面 */
               }
               reject(new Error('副模型请求超过 90 秒仍未返回，请检查当前连接或更换模型。'));
-            }, 90000),
-          ),
+            }, 90000);
+          }),
         ]);
-        return normalizeModelResult(parseAiResult(raw));
+        return normalizeIncrementalResult(parseAiResult(raw), payload.baseRevision);
       } catch (error) {
         lastError = error;
         const message = error instanceof Error ? error.message : String(error);
@@ -1143,15 +1499,257 @@ import integratedStyles from './styles-integrated.raw?raw';
     return [...map.values()].slice(-limit);
   }
 
+  function eventInput(raw, id = raw?.id) {
+    return {
+      id,
+      title: asText(raw?.title),
+      stage: asText(raw?.stage),
+      status: asText(raw?.status, 'active'),
+      location: asText(raw?.location),
+      actors: asArray(raw?.actors),
+      summary: asText(raw?.summary),
+      next_trigger: asText(raw?.next_trigger || raw?.nextTrigger),
+      source_fact_ids: asArray(raw?.source_fact_ids || raw?.sourceFactIds),
+      impact_domains: asArray(raw?.impact_domains || raw?.impactDomains),
+    };
+  }
+
+  function actorInput(raw, id = raw?.id) {
+    return {
+      id,
+      name: asText(raw?.name),
+      location: asText(raw?.location),
+      goal: asText(raw?.goal),
+      current_action: asText(raw?.current_action || raw?.currentAction),
+      knowledge: asArray(raw?.knowledge),
+      next_decision: asText(raw?.next_decision || raw?.nextDecision),
+      updated_reason: asText(raw?.updated_reason || raw?.updatedReason),
+    };
+  }
+
+  function intelInput(raw, id = raw?.id) {
+    return {
+      id,
+      content: asText(raw?.content),
+      origin: asText(raw?.origin),
+      destination: asText(raw?.destination),
+      channel: asText(raw?.channel),
+      status: asText(raw?.status),
+      eta: asText(raw?.eta),
+      reliability: Number(raw?.reliability),
+      known_by: asArray(raw?.known_by || raw?.knownBy),
+    };
+  }
+
+  function hookInput(raw, id = raw?.id) {
+    return {
+      id,
+      title: asText(raw?.title),
+      stage: asText(raw?.stage),
+      summary: asText(raw?.summary),
+      visible_signs: asArray(raw?.visible_signs || raw?.visibleSigns),
+      trigger: asText(raw?.trigger),
+      fail_condition: asText(raw?.fail_condition || raw?.failCondition),
+      source_fact_ids: asArray(raw?.source_fact_ids || raw?.sourceFactIds),
+    };
+  }
+
+  function cameraLabel(scene) {
+    const actors = asArray(scene?.actors)
+      .map(value => asText(value))
+      .filter(Boolean)
+      .join('、');
+    return [asText(scene?.location), actors, asText(scene?.action)].filter(Boolean).join('—').slice(0, 240);
+  }
+
+  function deriveNextTurnPacket(legacy, scenes, currentStat) {
+    const currentLocation = asText(currentStat?.世界运转?.当前地点);
+    const arrived = asArray(legacy.upsert_intel)
+      .filter(item => /抵达|已达|公开|送达|arrived|delivered/i.test(asText(item?.status)))
+      .map(item => asText(item?.content))
+      .filter(Boolean);
+    const changedEvents = asArray(legacy.upsert_events);
+    const changedActors = asArray(legacy.upsert_actors);
+    return {
+      hardFacts: asArray(legacy.new_facts)
+        .map(item => asText(item?.content))
+        .filter(Boolean)
+        .slice(0, 12),
+      arrivedIntel: arrived.slice(0, 12),
+      localConsequences: changedEvents
+        .filter(
+          item =>
+            !currentLocation ||
+            asText(item?.location).includes(currentLocation) ||
+            currentLocation.includes(asText(item?.location)),
+        )
+        .map(item => asText(item?.summary))
+        .filter(Boolean)
+        .slice(0, 12),
+      npcKnowledge: changedActors
+        .filter(item => asText(item?.name) && asArray(item?.knowledge).length)
+        .map(item => ({
+          name: asText(item.name),
+          knows: asArray(item.knowledge)
+            .map(value => asText(value))
+            .filter(Boolean)
+            .slice(0, 12),
+          doesNotKnow: [],
+        }))
+        .slice(0, 12),
+      activePressures: changedEvents
+        .map(item => asText(item?.summary || item?.next_trigger))
+        .filter(Boolean)
+        .slice(0, 12),
+      cameraCandidates: asArray(scenes).map(cameraLabel).filter(Boolean),
+      constraints: [],
+    };
+  }
+
+  function buildTransitionFromOperations(baseState, result, currentStat) {
+    const transition = {
+      world_summary: '',
+      new_facts: [],
+      upsert_events: [],
+      resolve_event_ids: [],
+      upsert_actors: [],
+      upsert_intel: [],
+      remove_intel_ids: [],
+      upsert_hooks: [],
+      resolve_hook_ids: [],
+      camera_history: asArray(result.parallel_scenes).map(cameraLabel).filter(Boolean),
+      next_turn_packet: {},
+      parallel_scenes: normalizeParallelScenes(result.parallel_scenes),
+      operation_stats: { accepted: 0, rejected: 0, warnings: [] },
+    };
+    const stats = transition.operation_stats;
+    const reject = (operation, reason) => {
+      stats.rejected += 1;
+      stats.warnings.push(`${asText(operation?.type, 'unknown')}：${reason}`.slice(0, 300));
+    };
+    const accept = () => {
+      stats.accepted += 1;
+    };
+    const existingById = (collection, id) => asArray(collection).find(item => String(item?.id) === String(id));
+
+    for (const operation of asArray(result.operations)) {
+      const type = asText(operation?.type);
+      const id = asText(operation?.id);
+      const value = operation?.value && typeof operation.value === 'object' ? operation.value : {};
+      const patch = operation?.set && typeof operation.set === 'object' ? operation.set : {};
+      try {
+        if (type === 'summary.replace') {
+          const summary = asText(operation?.value).replace(/\s+/g, ' ').slice(0, 600);
+          if (!summary) reject(operation, '摘要为空');
+          else {
+            transition.world_summary = summary;
+            accept();
+          }
+          continue;
+        }
+        if (type === 'fact.add') {
+          const fact = { ...value, id: id || value?.id };
+          if (
+            !asText(fact.content) ||
+            asText(fact.status) !== 'occurred' ||
+            !asText(fact.location) ||
+            !asText(fact.publicity) ||
+            !asText(fact.evidence) ||
+            Number(fact.confidence) < 0.6
+          ) {
+            reject(operation, '事实字段不完整或可信度不足');
+          } else {
+            transition.new_facts.push(fact);
+            accept();
+          }
+          continue;
+        }
+        if (['event.resolve', 'intel.remove', 'hook.resolve'].includes(type)) {
+          if (!id) {
+            reject(operation, '缺少目标 ID');
+            continue;
+          }
+          const mapping = {
+            'event.resolve': ['activeEvents', 'resolve_event_ids'],
+            'intel.remove': ['intelPackets', 'remove_intel_ids'],
+            'hook.resolve': ['hooks', 'resolve_hook_ids'],
+          };
+          const [collection, output] = mapping[type];
+          if (!existingById(baseState[collection], id)) reject(operation, `目标 ${id} 不存在`);
+          else {
+            transition[output].push(id);
+            accept();
+          }
+          continue;
+        }
+
+        const descriptors = {
+          'event.upsert': ['activeEvents', 'upsert_events', eventInput],
+          'event.patch': ['activeEvents', 'upsert_events', eventInput],
+          'actor.upsert': ['actors', 'upsert_actors', actorInput],
+          'actor.patch': ['actors', 'upsert_actors', actorInput],
+          'intel.upsert': ['intelPackets', 'upsert_intel', intelInput],
+          'intel.patch': ['intelPackets', 'upsert_intel', intelInput],
+          'hook.upsert': ['hooks', 'upsert_hooks', hookInput],
+          'hook.patch': ['hooks', 'upsert_hooks', hookInput],
+        };
+        const descriptor = descriptors[type];
+        if (!descriptor) {
+          reject(operation, '未知操作类型');
+          continue;
+        }
+        if (!id) {
+          reject(operation, '缺少稳定 ID');
+          continue;
+        }
+        const [collection, output, normalizer] = descriptor;
+        const isPatch = type.endsWith('.patch');
+        const existing = existingById(baseState[collection], id);
+        if (isPatch && !Object.keys(patch).length) {
+          reject(operation, 'patch 没有提交任何变化字段');
+          continue;
+        }
+        if (isPatch && !existing) {
+          reject(operation, `patch 目标 ${id} 不存在`);
+          continue;
+        }
+        const merged = normalizer({ ...(existing || {}), ...(isPatch ? patch : value) }, id);
+        if (isPatch && JSON.stringify(merged) === JSON.stringify(normalizer(existing, id))) {
+          reject(operation, 'patch 没有产生有效变化');
+          continue;
+        }
+        const valid = type.startsWith('event.')
+          ? merged.title && merged.stage && merged.location && merged.summary && merged.next_trigger
+          : type.startsWith('actor.')
+            ? merged.name && merged.current_action && merged.updated_reason
+            : type.startsWith('intel.')
+              ? merged.content &&
+                merged.origin &&
+                merged.destination &&
+                merged.channel &&
+                merged.status &&
+                merged.eta &&
+                merged.reliability > 0
+              : merged.title && merged.stage && merged.summary && merged.trigger && merged.fail_condition;
+        if (!valid) reject(operation, '合并后的记录缺少必填字段');
+        else {
+          transition[output].push(merged);
+          accept();
+        }
+      } catch (error) {
+        reject(operation, error instanceof Error ? error.message : String(error));
+      }
+    }
+    transition.next_turn_packet = deriveNextTurnPacket(transition, transition.parallel_scenes, currentStat);
+    return transition;
+  }
+
   function applyTransition(baseState, result, messageKey, currentStat) {
     const state = clone(baseState);
     const source = result && typeof result === 'object' ? result : {};
     state.revision = Number(state.revision || 0) + 1;
     state.clock = clockFromStatData(currentStat || {});
-    state.worldSummary = asText(source.world_summary, state.worldSummary)
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 600);
+    state.worldSummary = asText(source.world_summary, state.worldSummary).replace(/\s+/g, ' ').trim().slice(0, 600);
 
     const newFacts = asArray(source.new_facts)
       .map(raw => ({
@@ -1210,6 +1808,10 @@ import integratedStyles from './styles-integrated.raw?raw';
           .slice(0, 20),
         summary: asText(raw?.summary).slice(0, 1200),
         nextTrigger: asText(raw?.next_trigger),
+        impactDomains: asArray(raw?.impact_domains)
+          .map(value => asText(value))
+          .filter(Boolean)
+          .slice(0, 12),
         sourceFactIds: asArray(raw?.source_fact_ids)
           .map(value => asText(value))
           .filter(Boolean)
@@ -1301,12 +1903,37 @@ import integratedStyles from './styles-integrated.raw?raw';
         .filter(Boolean),
     ].slice(-LIMITS.cameraHistory);
     state.nextTurnPacket = normalizePacket(source.next_turn_packet);
+    const scenes = normalizeParallelScenes(source.parallel_scenes);
+    if (scenes.length) {
+      state.parallelTurns = [
+        ...asArray(state.parallelTurns).filter(
+          turn =>
+            Number(turn?.messageId) !== Number(messageKey.messageId) ||
+            Number(turn?.swipeId) !== Number(messageKey.swipeId),
+        ),
+        {
+          messageId: messageKey.messageId,
+          swipeId: messageKey.swipeId,
+          revision: state.revision,
+          createdAt: nowIso(),
+          acceptedOperations: Number(source.operation_stats?.accepted) || 0,
+          rejectedOperations: Number(source.operation_stats?.rejected) || 0,
+          scenes,
+        },
+      ].slice(-LIMITS.parallelTurns);
+    }
     state.lastProcessed = { messageId: messageKey.messageId, swipeId: messageKey.swipeId, hash: messageKey.hash };
     state.lastRun = {
       at: nowIso(),
       newFactCount: newFacts.length,
       sourceMessageId: messageKey.messageId,
       sourceSwipeId: messageKey.swipeId,
+      acceptedOperations: Number(source.operation_stats?.accepted) || 0,
+      rejectedOperations: Number(source.operation_stats?.rejected) || 0,
+      warnings: asArray(source.operation_stats?.warnings)
+        .map(value => asText(value))
+        .filter(Boolean)
+        .slice(0, 12),
     };
     const checkpoint = {
       messageId: messageKey.messageId,
@@ -1352,13 +1979,12 @@ import integratedStyles from './styles-integrated.raw?raw';
       formatBulletSection('正在施压的世界事件', packet.activePressures),
       formatBulletSection('本轮约束', packet.constraints),
       `主模型联动协议：
- - 正文只允许人物使用其有合理渠道知道的内容；模型知道不等于人物知道。
- - 只负责玩家当前视角内的正文、变量更新、状态栏与行动选项，不要生成、续写或仿写 <平行世界> 标签块。
- - 平行世界由天下演化副模型在本轮正文与 MVU 更新完成后独立生成，并由脚本追加到当前消息末尾。
- - 不得让远方人物知晓尚未通过合理渠道传播的玩家秘密；世界不是围着玩家运转。
- - 未经上下文许可，不得突然确定城池陷落、人物死亡、军队胜败等重大结果。
- - 玩家本轮输入仍须由正文判定成败，本上下文不能替代行动判定。
- - 上一轮消息中的 <平行世界> 是已经发生的客观旁线，可作为世界因果参考，但不可视为当前人物自动知情。`,
+  - 正文只允许人物使用其有合理渠道知道的内容；模型知道不等于人物知道。
+  - 只负责玩家当前视角内的正文、变量更新、状态栏与行动选项，不要生成平行世界、远景旁白或 <平行世界> 标签。
+  - 玩家视野外的旁线由天下演化独立保存和展示，不属于聊天正文格式。
+  - 不得让远方人物知晓尚未通过合理渠道传播的玩家秘密；世界不是围着玩家运转。
+  - 未经上下文许可，不得突然确定城池陷落、人物死亡、军队胜败等重大结果。
+  - 玩家本轮输入仍须由正文判定成败，本上下文不能替代行动判定。`,
       '</天下演化上下文>',
     ].filter(Boolean);
     return sections.join('\n\n');
@@ -1411,47 +2037,6 @@ import integratedStyles from './styles-integrated.raw?raw';
     return {};
   }
 
-  function normalizeParallelWorldText(value) {
-    return asText(value)
-      .replace(/^\s*<平行世界(?:\s[^>]*)?>/i, '')
-      .replace(/<\/平行世界>\s*$/i, '')
-      .replace(/^\s*(?:与此同时|玩家不知道的是|镜头转向)[：:，,\s]*/gm, '')
-      .trim()
-      .slice(0, 12000);
-  }
-
-  function messageWithParallelWorld(message, parallelWorld) {
-    const mainOutput = String(message || '')
-      .replace(/<平行世界(?:\s[^>]*)?>[\s\S]*?<\/平行世界>\s*$/i, '')
-      .trimEnd();
-    return `${mainOutput}\n\n<平行世界>\n${parallelWorld}\n</平行世界>`;
-  }
-
-  async function writeParallelWorldToMessage(messageKey, result) {
-    const parallelWorld = normalizeParallelWorldText(result?.parallel_world);
-    if (!parallelWorld) throw new Error('副模型没有生成可回写的平行世界正文。');
-    const setMessages = api('setChatMessages');
-    if (typeof setMessages !== 'function') throw new Error('未找到聊天消息回写接口，无法追加平行世界。');
-
-    const current = currentMessageKey(messageKey.messageId);
-    if (!sameMessageKey(current, messageKey)) throw new Error('正文版本已经改变，本次平行世界不会写入。');
-    const message = messageWithParallelWorld(current.message, parallelWorld);
-    const expectedHash = hashText(message);
-    runtime.selfWrittenMessageHashes.set(messageKey.messageId, expectedHash);
-    try {
-      await setMessages([{ message_id: messageKey.messageId, message }], { refresh: 'affected' });
-    } catch (error) {
-      runtime.selfWrittenMessageHashes.delete(messageKey.messageId);
-      throw error;
-    }
-
-    const updatedKey = currentMessageKey(messageKey.messageId);
-    if (!updatedKey || updatedKey.swipeId !== messageKey.swipeId || updatedKey.message !== message) {
-      throw new Error('平行世界回写后未能确认消息内容，请检查酒馆助手版本。');
-    }
-    return updatedKey;
-  }
-
   async function processMessage(messageId, { force = false, source = 'auto' } = {}) {
     if (isFirstFloor(messageId) && source !== 'manual') {
       runtime.pendingMessageId = null;
@@ -1489,12 +2074,17 @@ import integratedStyles from './styles-integrated.raw?raw';
       const payload = buildRequestPayload(baseState, messageKey, currentStat || {});
       const result = await callWorldModel(payload, generationId);
       if (!jobStillValid(job)) throw new Error('聊天或回复版本已经改变，本次推演结果已作废。');
-      const updatedMessageKey = await writeParallelWorldToMessage(messageKey, result);
-      const nextState = applyTransition(baseState, result, updatedMessageKey, currentStat || {});
+      if (Number(result.base_revision) !== Number(baseState.revision)) {
+        throw new Error(`副模型基线 revision ${result.base_revision} 与当前档案 ${baseState.revision} 不一致。`);
+      }
+      const transition = buildTransitionFromOperations(baseState, result, currentStat || {});
+      const nextState = applyTransition(baseState, transition, messageKey, currentStat || {});
       const saved = saveChatState(nextState);
       refreshInjection(saved);
       runtime.pendingMessageId = null;
-      runtime.lastNotice = `第 ${messageId} 楼推演完成，平行世界已追加，新增 ${saved.lastRun?.newFactCount ?? 0} 条事实。`;
+      const sceneCount =
+        saved.parallelTurns.at(-1)?.messageId === messageId ? saved.parallelTurns.at(-1).scenes.length : 0;
+      runtime.lastNotice = `第 ${messageId} 楼推演完成：接受 ${saved.lastRun?.acceptedOperations ?? 0} 项变化，忽略 ${saved.lastRun?.rejectedOperations ?? 0} 项，收录 ${sceneCount} 段旁线。`;
       console.info('[天下演化] 结算完成', { chatId, messageId, revision: saved.revision });
       return saved;
     } catch (error) {
@@ -1506,6 +2096,11 @@ import integratedStyles from './styles-integrated.raw?raw';
       runtime.busy = false;
       updateLampState();
       renderPanel();
+      const queued = runtime.queuedProcess;
+      runtime.queuedProcess = null;
+      if (queued && settings.enabled) {
+        scheduleProcess(queued.messageId, queued.options);
+      }
     }
   }
 
@@ -1534,18 +2129,18 @@ import integratedStyles from './styles-integrated.raw?raw';
     runtime.pendingMessageId = Number(messageId);
     runtime.scheduledTimer = setTimeout(() => {
       if (!settings.enabled || (!settings.autoRun && source === 'auto')) return;
+      if (runtime.busy) {
+        runtime.queuedProcess = {
+          messageId: Number(messageId),
+          options: { force, source, delayMs: 180 },
+        };
+        return;
+      }
       processMessage(messageId, { force, source }).catch(() => {});
     }, delayMs);
   }
 
-  async function waitForBusyJob(timeoutMs = 45000) {
-    const startedAt = Date.now();
-    while (runtime.busy && Date.now() - startedAt < timeoutMs) {
-      await new Promise(resolve => setTimeout(resolve, 150));
-    }
-  }
-
-  async function ensureLatestTurnSettledBeforeMainGeneration(generationType, dryRun) {
+  function ensureLatestTurnSettledBeforeMainGeneration(generationType, dryRun) {
     if (dryRun || !settings.enabled || !settings.autoRun) return;
     if (['regenerate', 'swipe', 'continue', 'impersonate'].includes(String(generationType || '').toLowerCase())) return;
     const messageId = findLatestAssistantMessageId();
@@ -1553,15 +2148,9 @@ import integratedStyles from './styles-integrated.raw?raw';
     const key = currentMessageKey(messageId);
     if (!key || sameMessageKey(getChatState().lastProcessed, key)) return;
     clearTimeout(runtime.scheduledTimer);
-    if (runtime.busy) {
-      await waitForBusyJob();
-      return;
-    }
-    try {
-      await processMessage(messageId, { force: false, source: 'pre-generation' });
-    } catch {
-      // 天下演化失败不能阻止玩家取得主模型回复；错误会留在悬浮窗中供检查。
-    }
+    if (runtime.busy) return;
+    // 天下演化不再阻塞下一轮正文。完成后刷新联动包，供之后的轮次使用。
+    processMessage(messageId, { force: false, source: 'pre-generation' }).catch(() => {});
   }
 
   function reconcileAfterHistoryChange() {
@@ -1615,6 +2204,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       state.intelPackets.at(-1)?.content ||
       '';
     const packetSize = state.nextTurnPacket.hardFacts.length + state.nextTurnPacket.activePressures.length;
+    const operationWarnings = asArray(state.lastRun?.warnings).slice(0, 3);
     const eventLabels = ['方才', '稍前', '先前', '在案'];
     const events = recentEvents.length
       ? recentEvents
@@ -1641,7 +2231,10 @@ import integratedStyles from './styles-integrated.raw?raw';
           ['待察', '伏线与后果仍在暗处', '启用值房后，玩家视角之外的因果会逐回合积累。'],
         ]
           .map(
-            ([label, title, summary], index) => `<article class="cwe-event-row is-empty ${index === 1 ? 'busy' : 'safe'}">
+            (
+              [label, title, summary],
+              index,
+            ) => `<article class="cwe-event-row is-empty ${index === 1 ? 'busy' : 'safe'}">
               <div class="cwe-event-when"><i></i><strong>${label}</strong><b>未定</b><span>尚未入档</span></div>
               <div class="cwe-event-story"><header><h4>${title}</h4>${tag('待命')}</header><p>${summary}</p></div>
               <dl class="cwe-event-detail"><div><dt>因由</dt><dd>天下档案尚未结算</dd></div><div><dt>状态</dt><dd>等待首次推演</dd></div><div><dt>影响</dt><dd>不影响当前正文</dd></div></dl>
@@ -1667,6 +2260,7 @@ import integratedStyles from './styles-integrated.raw?raw';
         </div>
       </section>
       ${runtime.lastError || runtime.lastNotice ? `<section class="cwe-notice ${runtime.lastError ? 'danger' : ''}"><i></i><div><b>${runtime.lastError ? '最近一次错误' : '值房消息'}</b><p>${escapeHtml(runtime.lastError || runtime.lastNotice)}</p></div></section>` : ''}
+      ${operationWarnings.length ? `<section class="cwe-notice danger"><i></i><div><b>本轮忽略的操作</b><p>${operationWarnings.map(value => escapeHtml(value)).join('；')}</p></div></section>` : ''}
       <section class="cwe-ledger-layout">
         <div class="cwe-ledger-main">
           <header class="cwe-ledger-head"><div><small>正在发生</small><h3>天下事次</h3></div><button type="button" data-tab="events">查看全部 ${state.activeEvents.length} 件</button></header>
@@ -1716,6 +2310,44 @@ import integratedStyles from './styles-integrated.raw?raw';
         <div class="cwe-ledger-column"><header><h3>活跃世事</h3><span>${state.activeEvents.length} 件</span></header><div class="cwe-stack">${events}</div></div>
         <div class="cwe-ledger-column"><header><h3>在途驿报</h3><span>${state.intelPackets.length} 封</span></header><div class="cwe-stack">${intel}</div></div>
       </section>`;
+  }
+
+  function renderParallelWorld(state) {
+    const turns = asArray(state.parallelTurns).slice().reverse();
+    if (!turns.length) {
+      return `<section class="cwe-section-head"><div><p>视野之外</p><h2>平行世界</h2></div><span>旁线原文只保存在天下演化档案中</span></section>
+        <section class="cwe-parallel-empty">${emptyBlock('完成一次推演后，玩家视野之外的场景会收录于此')}</section>`;
+    }
+    const content = turns
+      .map((turn, turnIndex) => {
+        const scenes = asArray(turn.scenes)
+          .map((scene, sceneIndex) => {
+            const paragraphs = asText(scene.body)
+              .split(/\n{2,}/)
+              .map(paragraph => `<p>${escapeHtml(paragraph).replace(/\n/g, '<br>')}</p>`)
+              .join('');
+            return `<article class="cwe-parallel-scene">
+              <header>
+                <div><small>镜头 ${sceneIndex + 1}</small><h3>${escapeHtml(scene.location || '地点未明')}</h3></div>
+                <span>${escapeHtml(scene.time || '与此刻相近')}</span>
+              </header>
+              ${scene.action ? `<blockquote>${escapeHtml(scene.action)}</blockquote>` : ''}
+              <div class="cwe-parallel-prose">${paragraphs}</div>
+              ${scene.actors.length ? `<footer>${scene.actors.map(actor => tag(actor)).join('')}</footer>` : ''}
+            </article>`;
+          })
+          .join('');
+        return `<section class="cwe-parallel-turn ${turnIndex === 0 ? 'is-latest' : ''}">
+          <header class="cwe-parallel-turn-head">
+            <div><small>${turnIndex === 0 ? '最新旁线' : '往期旁线'}</small><h3>第 ${turn.messageId} 楼 · 页 ${turn.swipeId + 1}</h3></div>
+            <p><span>档案修订 ${turn.revision}</span><span>接受 ${turn.acceptedOperations} 项</span>${turn.rejectedOperations ? `<span class="danger">忽略 ${turn.rejectedOperations} 项</span>` : ''}</p>
+          </header>
+          <div class="cwe-parallel-scenes">${scenes}</div>
+        </section>`;
+      })
+      .join('');
+    return `<section class="cwe-section-head"><div><p>视野之外</p><h2>平行世界</h2></div><span>只在值房中留档，不进入主模型聊天历史</span></section>
+      <section class="cwe-parallel-board">${content}</section>`;
   }
 
   function renderMemory(state) {
@@ -1927,7 +2559,7 @@ import integratedStyles from './styles-integrated.raw?raw';
         </section>
         <section class="cwe-settings-section">
           <header><div><small>运行方式</small><h3>自动结算</h3></div><label class="cwe-switch"><input type="checkbox" data-setting="enabled" ${settings.enabled ? 'checked' : ''}><i></i></label></header>
-          <label class="cwe-check"><input type="checkbox" data-setting="autoRun" ${settings.autoRun ? 'checked' : ''}><span>正文与 MVU 更新完成后，由副模型推演并把平行世界追加到本楼末尾</span></label>
+          <label class="cwe-check"><input type="checkbox" data-setting="autoRun" ${settings.autoRun ? 'checked' : ''}><span>正文与 MVU 更新完成后，由副模型提交世界变化并把旁线收录到天下演化档案</span></label>
           <div class="cwe-field-row"><label><span>回看最近几轮</span><input type="number" min="1" max="8" data-setting="lookbackRounds" value="${settings.lookbackRounds}"></label><label><span>等待 MVU 完成（毫秒）</span><input type="number" min="400" max="5000" step="100" data-setting="settleDelayMs" value="${settings.settleDelayMs}"></label></div>
           <p class="cwe-help">最新一轮可产生新事实，回看的旧轮次只负责理解“他”“那封信”等承接关系。</p>
         </section>
@@ -1943,6 +2575,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 
   function panelBody(state) {
     if (runtime.activeTab === 'events') return renderEvents(state);
+    if (runtime.activeTab === 'parallel') return renderParallelWorld(state);
     if (runtime.activeTab === 'memory') return renderMemory(state);
     return renderOverview(state);
   }
@@ -1952,6 +2585,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     const tabs = [
       ['overview', '总览'],
       ['events', '世事'],
+      ['parallel', '旁线'],
       ['memory', '档案'],
     ];
     return `<main class="cwe-panel theme-${currentStatusbarTheme()}">
@@ -1972,7 +2606,7 @@ import integratedStyles from './styles-integrated.raw?raw';
             <button type="button" class="cwe-run-button primary" data-action="rerun-current" ${runtime.busy ? 'disabled' : ''}>${runtime.busy ? '推演中…' : '重新推演'}</button>
           </div>
           <div class="cwe-command-meta">
-            <p><span>本轮重演：${runtime.busy ? '执行中' : '待命'}</span><span>联动简报：${state.nextTurnPacket.hardFacts.length + state.nextTurnPacket.activePressures.length} 条</span><span>平行世界：${settings.enabled ? '同楼回写' : '未启用'}</span></p>
+            <p><span>本轮重演：${runtime.busy ? '执行中' : '待命'}</span><span>联动简报：${state.nextTurnPacket.hardFacts.length + state.nextTurnPacket.activePressures.length} 条</span><span>旁线留档：${state.parallelTurns.length} 轮</span></p>
             <button type="button" class="cwe-rebuild-link" data-action="refresh-injection">重建联动</button>
           </div>
         </footer>
@@ -2147,7 +2781,7 @@ import integratedStyles from './styles-integrated.raw?raw';
   }
 
   function isMobile() {
-    return hostWindow.innerWidth <= 720;
+    return (hostWindow.visualViewport?.width || hostWindow.innerWidth) <= 720;
   }
 
   function applyLampLayout() {
@@ -2174,14 +2808,15 @@ import integratedStyles from './styles-integrated.raw?raw';
       if (runtime.lamp) runtime.lamp.style.display = 'grid';
       return;
     }
-    const width = hostWindow.innerWidth;
-    const height = hostWindow.innerHeight;
+    const viewport = hostWindow.visualViewport;
+    const width = Math.round(viewport?.width || hostWindow.innerWidth);
+    const height = Math.round(viewport?.height || hostWindow.innerHeight);
     const compact = width <= 980;
     const panelWidth = isMobile()
-      ? Math.round(width * 0.96)
+      ? Math.max(280, width - 12)
       : Math.min(Math.round(width * (compact ? 0.92 : 0.8)), 1180);
     const panelHeight = isMobile()
-      ? Math.round(height * 0.92)
+      ? Math.max(360, height - 12)
       : Math.min(Math.round(height * (compact ? 0.9 : 0.8)), 680);
     Object.assign(frame.style, {
       display: '',
@@ -2191,8 +2826,8 @@ import integratedStyles from './styles-integrated.raw?raw';
       zIndex: '100001',
       width: `${panelWidth}px`,
       height: `${panelHeight}px`,
-      left: `${Math.max(8, Math.round((width - panelWidth) / 2))}px`,
-      top: `${Math.max(8, Math.round((height - panelHeight) / 2))}px`,
+      left: `${Math.max(6, Math.round((width - panelWidth) / 2) + Math.round(viewport?.offsetLeft || 0))}px`,
+      top: `${Math.max(6, Math.round((height - panelHeight) / 2) + Math.round(viewport?.offsetTop || 0))}px`,
     });
     if (runtime.lamp) runtime.lamp.style.display = 'none';
   }
@@ -2340,6 +2975,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     hostWindow.addEventListener('pointerup', onUp);
     hostWindow.addEventListener('touchend', onUp);
     hostWindow.addEventListener('resize', onResize);
+    hostWindow.visualViewport?.addEventListener('resize', onResize);
     lamp.addEventListener('click', onClick);
     lamp.addEventListener('keydown', onKeyDown);
     runtime.cleanupFns.push(() => {
@@ -2348,6 +2984,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       hostWindow.removeEventListener('pointerup', onUp);
       hostWindow.removeEventListener('touchend', onUp);
       hostWindow.removeEventListener('resize', onResize);
+      hostWindow.visualViewport?.removeEventListener('resize', onResize);
     });
   }
 
@@ -2376,10 +3013,8 @@ import integratedStyles from './styles-integrated.raw?raw';
     if (mvu?.events?.VARIABLE_UPDATE_ENDED) {
       on(mvu.events.VARIABLE_UPDATE_ENDED, () => {
         if (!settings.enabled || !settings.autoRun) return;
-        const messageId =
-          runtime.pendingMessageId != null && currentMessageKey(runtime.pendingMessageId)
-            ? runtime.pendingMessageId
-            : findLatestAssistantMessageId();
+        if (runtime.pendingMessageId == null) return;
+        const messageId = currentMessageKey(runtime.pendingMessageId) ? runtime.pendingMessageId : -1;
         if (messageId <= 0) {
           runtime.pendingMessageId = null;
           runtime.pendingForce = false;
@@ -2401,19 +3036,13 @@ import integratedStyles from './styles-integrated.raw?raw';
       if (!settings.enabled || !settings.autoRun) return;
       if (isFirstFloor(messageId)) return;
       const key = currentMessageKey(Number(messageId));
-      const selfWrittenHash = runtime.selfWrittenMessageHashes.get(Number(messageId));
-      if (key && selfWrittenHash === key.hash) {
-        runtime.selfWrittenMessageHashes.delete(Number(messageId));
-        return;
-      }
-      runtime.selfWrittenMessageHashes.delete(Number(messageId));
       if (key) scheduleProcess(Number(messageId), { force: true, source: 'auto' });
     });
     on(events.MESSAGE_DELETED, () => {
       clearTimeout(runtime.scheduledTimer);
       runtime.pendingMessageId = null;
       runtime.pendingForce = false;
-      runtime.selfWrittenMessageHashes.clear();
+      runtime.queuedProcess = null;
       setTimeout(reconcileAfterHistoryChange, 250);
     });
     on(events.CHAT_CHANGED, chatId => {
@@ -2421,7 +3050,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       clearTimeout(runtime.scheduledTimer);
       runtime.pendingMessageId = null;
       runtime.pendingForce = false;
-      runtime.selfWrittenMessageHashes.clear();
+      runtime.queuedProcess = null;
       clearInjection();
       runtime.currentChatId = String(chatId || getCurrentChatId());
       runtime.lastError = '';
