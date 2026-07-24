@@ -1691,7 +1691,7 @@ select:focus-visible {
     width: 100%;
     min-width: 0;
     grid-column: 1 / -1;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .cwe-command-main > .cwe-tabs,
@@ -2373,4 +2373,16 @@ select:focus-visible {
     min-width: 0;
     padding-inline: 5px;
   }
+}
+
+/* 栏目导航在任何窗口宽度下都固定为四列单行。 */
+.cwe-command-main > .cwe-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: minmax(38px, auto);
+}
+
+.cwe-command-main > .cwe-tabs button {
+  min-width: 0;
+  white-space: nowrap;
 }

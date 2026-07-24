@@ -214,6 +214,10 @@ assert.match(releaseWorldEngineSource, /renderParallelWorld/);
 assert.match(releaseWorldEngineSource, /queuedProcess/);
 assert.doesNotMatch(releaseWorldEngineSource, /setChatMessages/);
 assert.match(releaseWorldEngineStyle, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
+assert.doesNotMatch(
+  releaseWorldEngineStyle,
+  /\.cwe-command-main > \.cwe-tabs\s*\{[^}]*grid-template-columns: repeat\(3,/s,
+);
 for (const source of [
   releaseLoader,
   releaseWorkshopSource,
