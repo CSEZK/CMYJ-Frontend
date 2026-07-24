@@ -2,6 +2,7 @@ import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-chara
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
 const STATUSBAR_VERSION = '1.7.6';
+const MAP_ASSET_REVISION = '49ceb3121f5e64c14b07dfaf43a7aac152b127ea';
 const FORMAL_WORLDBOOK_NAME = '残明余烬1.7';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
@@ -5279,11 +5280,12 @@ function loadIframeScripts() {
 
   script1.onload = () => {
     const script2 = doc.createElement('script');
-    script2.src = 'https://testingcf.jsdelivr.net/gh/CSEZK/CMYJ-Frontend@main/assets/maps/world_1634.js?v=1.7.6';
+    script2.src =
+      `https://testingcf.jsdelivr.net/gh/CSEZK/CMYJ-Frontend@${MAP_ASSET_REVISION}/assets/maps/world_1634.js`;
     script2.onload = () => {
       const script3 = doc.createElement('script');
       script3.src =
-        'https://testingcf.jsdelivr.net/gh/CSEZK/CMYJ-Frontend@main/assets/maps/world_1634_overview.js?v=1.7.6';
+        `https://testingcf.jsdelivr.net/gh/CSEZK/CMYJ-Frontend@${MAP_ASSET_REVISION}/assets/maps/world_1634_overview.js`;
       script3.onload = () => {
         echartsReady = true;
         // 如果已在地图标签页，初始化
