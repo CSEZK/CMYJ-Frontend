@@ -20,6 +20,7 @@ const betaScenarioSource = await readFile(
 const releaseLoader = await readFile(path.join(root, 'dist', 'cmyj-1.7', 'loader', 'index.js'), 'utf8');
 const releaseWorkshopSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'workshop', 'index.js'), 'utf8');
 const releaseStatusbarSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'statusbar', 'index.js'), 'utf8');
+const releaseMapOverviewSource = await readFile(path.join(root, 'assets', 'maps', 'world_1634_overview.js'), 'utf8');
 const releaseScenarioSource = await readFile(
   path.join(root, 'src', 'cmyj-1.7', 'scenario-generator', 'index.js'),
   'utf8',
@@ -173,11 +174,24 @@ for (const [name, anchor] of Object.entries(experienceAnchors)) {
 assert.ok(releaseLoader.length > 300_000, '1.7 正式版共享加载器未包含完整脚本集');
 assert.match(releaseLoader, /__CMYJRemoteScriptsV17/);
 assert.doesNotMatch(releaseLoader, /__CMYJRemoteScriptsV17Beta/);
-assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.5'/);
+assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.6'/);
 assert.match(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps\/world_1634\.js/);
 assert.match(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps\/world_1634_overview\.js/);
 assert.match(releaseStatusbarSource, /east_asia_1634_provinces/);
 assert.doesNotMatch(releaseStatusbarSource, /GooYi-C\/History@main\/world_1629\.js/);
+const releaseMapOverview = JSON.parse(
+  releaseMapOverviewSource.replace(/^var WORLD_1634_OVERVIEW=/, '').replace(/;\s*$/, ''),
+);
+const releaseMapNames = new Set(releaseMapOverview.features.map(feature => feature.properties.name));
+assert.ok(releaseMapNames.has('莫卧儿'), '正式版地图缺少莫卧儿');
+assert.ok(releaseMapNames.has('澳洲'), '正式版地图缺少澳洲');
+for (const feature of releaseMapOverview.features) {
+  const polygons = feature.geometry.type === 'Polygon' ? [feature.geometry.coordinates] : feature.geometry.coordinates;
+  assert.ok(
+    polygons.every(polygon => polygon.length === 1),
+    `${feature.properties.name} 仍有概览伪内环`,
+  );
+}
 assert.match(releaseWorkshopSource, /const API='https:\/\/cm-yj-workshop\.canming-cloud\.workers\.dev'/);
 assert.match(releaseWorkshopSource, /TK='canming-workshop:token'/);
 assert.match(releaseWorkshopSource, /UK='canming-workshop:user'/);
