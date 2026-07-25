@@ -38,6 +38,9 @@ const originalTongchengAdaptations = JSON.parse(
     'utf8',
   ),
 );
+const originalTongchengProfiles = JSON.parse(
+  await readFile(path.join(root, 'src', 'cmyj-1.7', 'statusbar', 'original-tongcheng-character-profiles.json'), 'utf8'),
+);
 
 assert.ok(loader.length > 300_000, '共享加载器未包含完整脚本集');
 assert.match(loader, /CanmingWorkshop/);
@@ -174,11 +177,29 @@ for (const [name, anchor] of Object.entries(experienceAnchors)) {
 assert.ok(releaseLoader.length > 300_000, '1.7 正式版共享加载器未包含完整脚本集');
 assert.match(releaseLoader, /__CMYJRemoteScriptsV17/);
 assert.doesNotMatch(releaseLoader, /__CMYJRemoteScriptsV17Beta/);
-assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.9'/);
+assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.10'/);
 assert.match(releaseStatusbarSource, /MAP_ASSET_REVISION = 'd697affd3ed71c09e8278cc2ac37b5d3b5dc2ded'/);
 assert.match(releaseStatusbarSource, /assets\/maps\/world_1634\.js/);
 assert.match(releaseStatusbarSource, /assets\/maps\/world_1634_overview\.js/);
 assert.doesNotMatch(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps/);
+assert.equal(originalTongchengProfiles.version, 1);
+assert.equal(originalTongchengProfiles.profiles.length, 15);
+assert.equal(
+  new Set(originalTongchengProfiles.profiles.map(profile => profile.entryName)).size,
+  originalTongchengProfiles.profiles.length,
+);
+for (const profile of originalTongchengProfiles.profiles) {
+  assert.ok(profile.entryName.endsWith('_SFW'));
+  assert.equal(typeof profile.content, 'string');
+  assert.ok(profile.content.length > 1500, `${profile.entryName} 的原版完整人设异常短`);
+  assert.match(profile.content, new RegExp(`<${profile.entryName}>`));
+  assert.doesNotMatch(profile.content, /CANMING_CHARACTER_ADAPTATION_START/);
+}
+assert.match(releaseStatusbarSource, /async function applyScenarioCharacterProfiles\(profiles\)/);
+assert.match(releaseStatusbarSource, /async function restoreScenarioCharacterProfiles\(backups\)/);
+assert.match(releaseStatusbarSource, /characterProfileBackups/);
+assert.match(releaseLoader, /原版完整人设资源不完整/);
+assert.match(releaseLoader, /Trébuchet/);
 assert.match(releaseStatusbarSource, /east_asia_1634_provinces/);
 assert.doesNotMatch(releaseStatusbarSource, /GooYi-C\/History@main\/world_1629\.js/);
 const releaseMapOverview = JSON.parse(
