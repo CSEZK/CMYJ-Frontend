@@ -193,6 +193,9 @@ assert.match(
 );
 assert.doesNotMatch(releaseCardPackagerSource, /remoteLoaderUrl\s*=\s*['"][^'"]+\?v=/);
 assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.10'/);
+assert.match(releaseScenarioSource, /isOfficialDeepSeekApi\(custom\)/);
+assert.match(releaseScenarioSource, /deepSeekJsonSchemaPrompt\(schema\)/);
+assert.match(releaseScenarioSource, /usePromptJsonSchema \? \{\} : \{ json_schema: schema \}/);
 assert.match(releaseStatusbarSource, /MAP_ASSET_REVISION = 'd697affd3ed71c09e8278cc2ac37b5d3b5dc2ded'/);
 assert.match(releaseStatusbarSource, /assets\/maps\/world_1634\.js/);
 assert.match(releaseStatusbarSource, /assets\/maps\/world_1634_overview\.js/);

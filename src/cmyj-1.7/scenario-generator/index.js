@@ -1,5 +1,6 @@
 import YAML from 'yaml';
 import { Schema } from '../schema/definition.js';
+import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from './api-compat.js';
 
 (() => {
   'use strict';
@@ -796,13 +797,15 @@ import { Schema } from '../schema/definition.js';
     if (typeof generateRaw !== 'function' && typeof generate !== 'function')
       throw new Error('未找到酒馆 AI 生成接口。');
     const custom = customAiConfig();
+    const usePromptJsonSchema = isOfficialDeepSeekApi(custom);
+    const schemaPrompt = usePromptJsonSchema ? deepSeekJsonSchemaPrompt(schema) : '';
     const config = {
       should_silence: true,
       ordered_prompts: [
         { role: 'system', content: system },
-        { role: 'user', content: user },
+        { role: 'user', content: `${user}${schemaPrompt}` },
       ],
-      json_schema: schema,
+      ...(usePromptJsonSchema ? {} : { json_schema: schema }),
       ...(custom ? { custom_api: custom } : {}),
     };
     let lastError;
@@ -813,15 +816,16 @@ import { Schema } from '../schema/definition.js';
           : '';
         config.ordered_prompts = [
           { role: 'system', content: system },
-          { role: 'user', content: `${user}${retrySuffix}` },
+          { role: 'user', content: `${user}${schemaPrompt}${retrySuffix}` },
         ];
         const raw =
           typeof generateRaw === 'function'
             ? await generateRaw(config)
             : await generate({
                 should_silence: true,
-                user_input: `${system}\n\n${user}${retrySuffix}`,
-                json_schema: schema,
+                user_input: `${system}\n\n${user}${schemaPrompt}${retrySuffix}`,
+                ...(usePromptJsonSchema ? {} : { json_schema: schema }),
+                ...(custom ? { custom_api: custom } : {}),
               });
         return normalizeGeneratedValue(parseAi(raw));
       } catch (error) {

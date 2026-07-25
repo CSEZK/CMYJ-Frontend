@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import YAML from 'yaml';
+import {
+  deepSeekJsonSchemaPrompt,
+  isOfficialDeepSeekApi,
+} from '../src/cmyj-1.7/scenario-generator/api-compat.js';
 
 globalThis.window = {};
 window.parent = window;
@@ -8,6 +12,22 @@ globalThis.document = {};
 const channel = process.argv[2] || 'cmyj-1.7-beta';
 if (!['cmyj-1.7-beta', 'cmyj-1.7'].includes(channel)) throw new Error(`不支持的开局生成器通道：${channel}`);
 await import(`../src/${channel}/scenario-generator/index.js`);
+
+assert.equal(isOfficialDeepSeekApi({ apiurl: 'https://api.deepseek.com' }), true);
+assert.equal(isOfficialDeepSeekApi({ apiurl: 'https://api.deepseek.com/v1/chat/completions' }), true);
+assert.equal(isOfficialDeepSeekApi({ apiurl: 'https://example.com/v1/chat/completions' }), false);
+const deepSeekSchemaPrompt = deepSeekJsonSchemaPrompt({
+  name: 'compat_test',
+  value: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['ok'],
+    properties: { ok: { type: 'boolean' } },
+  },
+});
+assert.match(deepSeekSchemaPrompt, /DeepSeek JSON 兼容模式/);
+assert.match(deepSeekSchemaPrompt, /"required": \[/);
+assert.match(deepSeekSchemaPrompt, /"ok"/);
 
 const era = {
   格式: 'canming-era-preset',
