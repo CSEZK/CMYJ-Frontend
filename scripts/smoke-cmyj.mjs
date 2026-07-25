@@ -27,6 +27,7 @@ const releaseScenarioSource = await readFile(
 );
 const releaseGeneratorSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'generator', 'index.js'), 'utf8');
 const releaseWorldEngineSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'world-engine', 'index.js'), 'utf8');
+const releaseCardPackagerSource = await readFile(path.join(root, 'scripts', 'package-release-card.mjs'), 'utf8');
 const releaseWorldEngineStyle = await readFile(
   path.join(root, 'src', 'cmyj-1.7', 'world-engine', 'styles-integrated.raw'),
   'utf8',
@@ -186,6 +187,11 @@ for (const [name, anchor] of Object.entries(experienceAnchors)) {
 assert.ok(releaseLoader.length > 300_000, '1.7 正式版共享加载器未包含完整脚本集');
 assert.match(releaseLoader, /__CMYJRemoteScriptsV17/);
 assert.doesNotMatch(releaseLoader, /__CMYJRemoteScriptsV17Beta/);
+assert.match(
+  releaseCardPackagerSource,
+  /remoteLoaderUrl = 'https:\/\/cmyj-frontend\.pages\.dev\/cmyj-1\.7\/loader\/index\.js'/,
+);
+assert.doesNotMatch(releaseCardPackagerSource, /remoteLoaderUrl\s*=\s*['"][^'"]+\?v=/);
 assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.10'/);
 assert.match(releaseStatusbarSource, /MAP_ASSET_REVISION = 'd697affd3ed71c09e8278cc2ac37b5d3b5dc2ded'/);
 assert.match(releaseStatusbarSource, /assets\/maps\/world_1634\.js/);

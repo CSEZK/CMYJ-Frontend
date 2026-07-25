@@ -21,7 +21,7 @@
 3. 备份正式 D1，再应用身份 DLC 类型迁移。
 4. 部署正式 Worker，并验证旧作品浏览、登录、下载和安装。
 5. 合并前端候选分支，让 Pages 发布 `/cmyj-1.7/`。
-6. 将正式角色卡脚本切换为 `https://cmyj-frontend.pages.dev/cmyj-1.7/loader/index.js?v=1.7.0`。
+6. 将正式角色卡脚本切换为固定映射地址 `https://cmyj-frontend.pages.dev/cmyj-1.7/loader/index.js`；版本更新时不得追加或修改查询参数。
 
 正式 D1 迁移、Worker 部署与 Pages 生产发布必须在候选卡验收后执行。
 
