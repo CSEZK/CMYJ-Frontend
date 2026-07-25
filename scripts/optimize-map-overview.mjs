@@ -8,7 +8,14 @@ const overviewPath = path.join(root, 'assets', 'maps', 'world_1634_overview.js')
 const worldPath = path.join(root, 'assets', 'maps', 'world_1634.js');
 const variablePrefix = 'var WORLD_1634_OVERVIEW=';
 const minimumPolygonArea = 0.001;
-const supplementalRegionNames = new Set(['印度教与伊斯兰诸邦']);
+const supplementalRegionNames = new Set([
+  '印度教与伊斯兰诸邦',
+  '比达尔苏丹国',
+  '比贾布尔苏丹国',
+  '艾哈迈德讷格尔苏丹国',
+  '戈尔康达苏丹国',
+  '维查耶那伽罗残余',
+]);
 
 function ringArea(ring) {
   let twiceArea = 0;
