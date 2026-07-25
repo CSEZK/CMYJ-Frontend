@@ -174,8 +174,8 @@ for (const [name, anchor] of Object.entries(experienceAnchors)) {
 assert.ok(releaseLoader.length > 300_000, '1.7 正式版共享加载器未包含完整脚本集');
 assert.match(releaseLoader, /__CMYJRemoteScriptsV17/);
 assert.doesNotMatch(releaseLoader, /__CMYJRemoteScriptsV17Beta/);
-assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.8'/);
-assert.match(releaseStatusbarSource, /MAP_ASSET_REVISION = 'a3d5295e8e7c7b088149e69f58038386390f8c6d'/);
+assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.9'/);
+assert.match(releaseStatusbarSource, /MAP_ASSET_REVISION = 'd697affd3ed71c09e8278cc2ac37b5d3b5dc2ded'/);
 assert.match(releaseStatusbarSource, /assets\/maps\/world_1634\.js/);
 assert.match(releaseStatusbarSource, /assets\/maps\/world_1634_overview\.js/);
 assert.doesNotMatch(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps/);

@@ -1,8 +1,8 @@
 import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.7.8';
-const MAP_ASSET_REVISION = 'a3d5295e8e7c7b088149e69f58038386390f8c6d';
+const STATUSBAR_VERSION = '1.7.9';
+const MAP_ASSET_REVISION = 'd697affd3ed71c09e8278cc2ac37b5d3b5dc2ded';
 const FORMAL_WORLDBOOK_NAME = '残明余烬1.7';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
