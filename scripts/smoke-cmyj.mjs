@@ -174,8 +174,8 @@ for (const [name, anchor] of Object.entries(experienceAnchors)) {
 assert.ok(releaseLoader.length > 300_000, '1.7 正式版共享加载器未包含完整脚本集');
 assert.match(releaseLoader, /__CMYJRemoteScriptsV17/);
 assert.doesNotMatch(releaseLoader, /__CMYJRemoteScriptsV17Beta/);
-assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.6'/);
-assert.match(releaseStatusbarSource, /MAP_ASSET_REVISION = '49ceb3121f5e64c14b07dfaf43a7aac152b127ea'/);
+assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.7'/);
+assert.match(releaseStatusbarSource, /MAP_ASSET_REVISION = '3bf6e05b1b91f3ce21ce52aa682864e1d73a6bf4'/);
 assert.match(releaseStatusbarSource, /assets\/maps\/world_1634\.js/);
 assert.match(releaseStatusbarSource, /assets\/maps\/world_1634_overview\.js/);
 assert.doesNotMatch(releaseStatusbarSource, /CMYJ-Frontend@main\/assets\/maps/);
@@ -186,6 +186,7 @@ const releaseMapOverview = JSON.parse(
 );
 const releaseMapNames = new Set(releaseMapOverview.features.map(feature => feature.properties.name));
 assert.ok(releaseMapNames.has('莫卧儿'), '正式版地图缺少莫卧儿');
+assert.ok(releaseMapNames.has('印度教与伊斯兰诸邦'), '正式版地图缺少莫卧儿南侧的印度诸邦');
 assert.ok(releaseMapNames.has('澳洲'), '正式版地图缺少澳洲');
 for (const feature of releaseMapOverview.features) {
   const polygons = feature.geometry.type === 'Polygon' ? [feature.geometry.coordinates] : feature.geometry.coordinates;
