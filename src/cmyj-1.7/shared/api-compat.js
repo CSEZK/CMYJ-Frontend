@@ -8,6 +8,11 @@ export function isOfficialDeepSeekApi(customApi) {
   }
 }
 
+export function shouldFallbackFromJsonSchema(error) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /\bbad request\b|(?:^|\D)400(?:\D|$)/i.test(message);
+}
+
 export function deepSeekJsonSchemaPrompt(schema) {
   const definition = schema?.value ?? schema;
   if (!definition || typeof definition !== 'object') return '';

@@ -1,6 +1,6 @@
 import YAML from 'yaml';
 import { Schema } from '../schema/definition.js';
-import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from './api-compat.js';
+import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-compat.js';
 
 (() => {
   'use strict';

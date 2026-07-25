@@ -2,6 +2,11 @@ import compassSeal from './assets/compass-seal-v2.webp?url';
 import ledgerStyles from './styles.raw?raw';
 import faithfulStyles from './styles-faithful.raw?raw';
 import integratedStyles from './styles-integrated.raw?raw';
+import {
+  deepSeekJsonSchemaPrompt,
+  isOfficialDeepSeekApi,
+  shouldFallbackFromJsonSchema,
+} from '../shared/api-compat.js';
 
 (() => {
   'use strict';
@@ -1428,17 +1433,26 @@ import integratedStyles from './styles-integrated.raw?raw';
       throw new Error('未找到 generateRaw/generate 接口。');
     const userPrompt = `以下内容分为可结算的 CURRENT_TURN 与只读历史。请完成事实提取和世界增量。\n\n${JSON.stringify(payload, null, 2)}`;
     const customApi = customApiConfig();
+    const schema = incrementalOutputSchema();
+    let forcePromptJsonSchema = isOfficialDeepSeekApi(customApi);
     let lastError;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const retryHint = attempt ? '\n\n上次输出未通过解析。此次必须严格只返回符合 Schema 的 JSON。' : '';
+      const usePromptJsonSchema = forcePromptJsonSchema;
+      const schemaPrompt = usePromptJsonSchema ? deepSeekJsonSchemaPrompt(schema) : '';
+      const retryHint = attempt
+        ? forcePromptJsonSchema
+          ? '\n\n上次请求不兼容严格 JSON Schema 或输出未通过解析。此次只返回满足上述 Schema 的 JSON 对象。'
+          : '\n\n上次输出未通过解析。此次必须严格只返回符合 Schema 的 JSON。'
+        : '';
+      const requestUserPrompt = `${userPrompt}${schemaPrompt}${retryHint}`;
       const config = {
         generation_id: generationId,
         should_silence: true,
         ordered_prompts: [
           { role: 'system', content: incrementalSystemPrompt() },
-          { role: 'user', content: `${userPrompt}${retryHint}` },
+          { role: 'user', content: requestUserPrompt },
         ],
-        json_schema: incrementalOutputSchema(),
+        ...(usePromptJsonSchema ? {} : { json_schema: schema }),
       };
       config.custom_api = customApi;
       try {
@@ -1448,8 +1462,8 @@ import integratedStyles from './styles-integrated.raw?raw';
             : generate({
                 generation_id: generationId,
                 should_silence: true,
-                user_input: `${incrementalSystemPrompt()}\n\n${userPrompt}${retryHint}`,
-                json_schema: incrementalOutputSchema(),
+                user_input: `${incrementalSystemPrompt()}\n\n${requestUserPrompt}`,
+                ...(usePromptJsonSchema ? {} : { json_schema: schema }),
                 custom_api: customApi,
               });
         let timeoutId;
@@ -1469,6 +1483,10 @@ import integratedStyles from './styles-integrated.raw?raw';
         return normalizeIncrementalResult(parseAiResult(raw), payload.baseRevision);
       } catch (error) {
         lastError = error;
+        if (!usePromptJsonSchema && shouldFallbackFromJsonSchema(error)) {
+          forcePromptJsonSchema = true;
+          continue;
+        }
         const message = error instanceof Error ? error.message : String(error);
         const canRetry = /JSON|Schema|结构|工具调用|解析/i.test(message);
         if (!canRetry) break;

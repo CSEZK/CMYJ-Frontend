@@ -3,7 +3,8 @@ import YAML from 'yaml';
 import {
   deepSeekJsonSchemaPrompt,
   isOfficialDeepSeekApi,
-} from '../src/cmyj-1.7/scenario-generator/api-compat.js';
+  shouldFallbackFromJsonSchema,
+} from '../src/cmyj-1.7/shared/api-compat.js';
 
 globalThis.window = {};
 window.parent = window;
@@ -16,6 +17,9 @@ await import(`../src/${channel}/scenario-generator/index.js`);
 assert.equal(isOfficialDeepSeekApi({ apiurl: 'https://api.deepseek.com' }), true);
 assert.equal(isOfficialDeepSeekApi({ apiurl: 'https://api.deepseek.com/v1/chat/completions' }), true);
 assert.equal(isOfficialDeepSeekApi({ apiurl: 'https://example.com/v1/chat/completions' }), false);
+assert.equal(shouldFallbackFromJsonSchema(new Error('Bad Request')), true);
+assert.equal(shouldFallbackFromJsonSchema(new Error('Request failed with status 400')), true);
+assert.equal(shouldFallbackFromJsonSchema(new Error('Unauthorized')), false);
 const deepSeekSchemaPrompt = deepSeekJsonSchemaPrompt({
   name: 'compat_test',
   value: {
