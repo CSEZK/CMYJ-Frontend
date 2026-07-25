@@ -1,0 +1,257 @@
+{
+  "version": 1,
+  "categories": [
+    { "name": "和济堂", "color": "#c04040", "symbol": "roundRect" },
+    { "name": "桐城县衙", "color": "#5a8fb5", "symbol": "diamond" },
+    { "name": "林记米铺", "color": "#c49750", "symbol": "roundRect" },
+    { "name": "沈记肉铺", "color": "#b5654b", "symbol": "roundRect" },
+    { "name": "桐城方氏", "color": "#7b6a9a", "symbol": "roundRect" },
+    { "name": "游方", "color": "#6f8a67", "symbol": "triangle" },
+    { "name": "紫禁城", "color": "#c08040", "symbol": "diamond" },
+    { "name": "江南", "color": "#b46a81", "symbol": "circle" },
+    { "name": "安庆白莲", "color": "#8b8b8b", "symbol": "triangle" },
+    { "name": "流寇", "color": "#c05040", "symbol": "triangle" },
+    { "name": "主角", "color": "#9f302d", "symbol": "circle" }
+  ],
+  "nodes": [
+    {
+      "id": "主角",
+      "name": "主角",
+      "category": 10,
+      "symbolSize": 64,
+      "symbol": "circle",
+      "desc": "桐城县衙皂吏，和济堂药铺少东家。"
+    },
+    {
+      "id": "苏晚棠",
+      "name": "苏晚棠",
+      "category": 0,
+      "symbolSize": 54,
+      "desc": "和济堂药铺主母，主角的生母。"
+    },
+    {
+      "id": "苏晚月",
+      "name": "苏晚月",
+      "category": 0,
+      "symbolSize": 42,
+      "desc": "苏晚棠的胞妹，主角的姨娘，守寡后在和济堂帮衬杂务。"
+    },
+    {
+      "id": "栖云",
+      "name": "栖云",
+      "category": 0,
+      "symbolSize": 36,
+      "desc": "和济堂养女，主角的养妹，栖月的双胞胎姐姐，河南流民出身。"
+    },
+    {
+      "id": "栖月",
+      "name": "栖月",
+      "category": 0,
+      "symbolSize": 36,
+      "desc": "和济堂养女，主角的养妹，栖云的双胞胎妹妹，河南流民出身。"
+    },
+    {
+      "id": "赵砚",
+      "name": "赵砚",
+      "category": 0,
+      "symbolSize": 36,
+      "desc": "和济堂养子，主角的养弟。"
+    },
+    {
+      "id": "翠儿",
+      "name": "翠儿",
+      "category": 0,
+      "symbolSize": 30,
+      "desc": "和济堂内宅粗使丫鬟，签有死契。"
+    },
+    {
+      "id": "杨尔铭",
+      "name": "杨尔铭",
+      "category": 1,
+      "symbolSize": 54,
+      "desc": "四川叙州府筠连县人，崇祯七年甲戌科进士，桐城知县。"
+    },
+    {
+      "id": "常彪",
+      "name": "常彪",
+      "category": 1,
+      "symbolSize": 46,
+      "desc": "桐城县衙快班捕役，主角的结拜大哥。"
+    },
+    {
+      "id": "顾明远",
+      "name": "顾明远",
+      "category": 1,
+      "symbolSize": 42,
+      "desc": "桐城秀才，以替人写状子为生，主角的结拜三弟。"
+    },
+    {
+      "id": "林知夏",
+      "name": "林知夏",
+      "category": 2,
+      "symbolSize": 54,
+      "desc": "林记米铺独女，主角自幼定下婚约的未婚妻。"
+    },
+    {
+      "id": "周氏",
+      "name": "周氏（林母）",
+      "category": 2,
+      "symbolSize": 40,
+      "desc": "林广源之妻、林知夏之母，林记米铺老板娘。"
+    },
+    {
+      "id": "沈大柱",
+      "name": "沈大柱",
+      "category": 3,
+      "symbolSize": 40,
+      "desc": "桐城西街沈记肉铺老板、屠户，沈清晏之父。"
+    },
+    {
+      "id": "柳氏",
+      "name": "柳氏",
+      "category": 3,
+      "symbolSize": 40,
+      "desc": "沈大柱之妻、沈清晏之母，沈记肉铺老板娘，昔年江南书香门第之女。"
+    },
+    {
+      "id": "沈清晏",
+      "name": "沈清晏",
+      "category": 3,
+      "symbolSize": 42,
+      "desc": "沈大柱与柳氏的独女，在沈记肉铺代笔记账。"
+    },
+    {
+      "id": "方孔炤",
+      "name": "方孔炤",
+      "category": 4,
+      "symbolSize": 46,
+      "desc": "都察院右佥都御史，桐城方氏长房，方以智与方子衿之父。"
+    },
+    {
+      "id": "方以智",
+      "name": "方以智",
+      "category": 4,
+      "symbolSize": 42,
+      "desc": "方孔炤长子，字密之，复社成员。"
+    },
+    {
+      "id": "方子衿",
+      "name": "方子衿",
+      "category": 4,
+      "symbolSize": 42,
+      "desc": "桐城方氏长房嫡孙女，方孔炤之女、方以智之妹。"
+    },
+    {
+      "id": "陆挽星",
+      "name": "陆挽星",
+      "category": 5,
+      "symbolSize": 42,
+      "desc": "北直隶游方武师，暂居桐城。"
+    },
+    {
+      "id": "周皇后",
+      "name": "周皇后",
+      "category": 6,
+      "symbolSize": 48,
+      "desc": "苏州人，崇祯皇帝朱由检的皇后，居坤宁宫。"
+    },
+    {
+      "id": "朱徽媞",
+      "name": "朱徽媞",
+      "category": 6,
+      "symbolSize": 40,
+      "desc": "明光宗朱常洛之女、朱由检同父异母妹，封乐安公主，居十王府。"
+    },
+    {
+      "id": "张嫣",
+      "name": "张嫣",
+      "category": 6,
+      "symbolSize": 36,
+      "desc": "明熹宗朱由校遗孀、朱由检皇嫂，尊懿安皇后，居慈庆宫。"
+    },
+    {
+      "id": "柳如是",
+      "name": "柳如是",
+      "category": 7,
+      "symbolSize": 42,
+      "desc": "本名杨爱，别号河东君，秦淮乐籍女子。"
+    },
+    {
+      "id": "陈圆圆",
+      "name": "陈圆圆",
+      "category": 7,
+      "symbolSize": 42,
+      "desc": "本姓邢、幼名沅沅，苏州梨园女乐。"
+    },
+    {
+      "id": "安娜",
+      "name": "安娜·库普曼",
+      "category": 7,
+      "symbolSize": 36,
+      "desc": "荷兰东印度公司高级商务员之女，随父居南京。"
+    },
+    {
+      "id": "白瑶",
+      "name": "白瑶",
+      "category": 8,
+      "symbolSize": 46,
+      "desc": "安庆府白莲教女教首，教内称“白莲圣女”。"
+    },
+    {
+      "id": "温素弦",
+      "name": "温素弦",
+      "category": 9,
+      "symbolSize": 42,
+      "desc": "陕西更夫之女，流寇小股头领、高迎祥部下属分营头目。"
+    }
+  ],
+  "links": [
+    { "source": "主角", "target": "苏晚棠", "label": "母子", "lineStyle": { "width": 3 } },
+    { "source": "主角", "target": "栖云", "label": "义兄妹" },
+    { "source": "主角", "target": "栖月", "label": "义兄妹" },
+    { "source": "主角", "target": "赵砚", "label": "养兄弟" },
+    { "source": "主角", "target": "翠儿", "label": "主仆", "lineStyle": { "type": "dashed" } },
+    { "source": "主角", "target": "苏晚月", "label": "姨甥", "lineStyle": { "type": "dashed" } },
+    { "source": "主角", "target": "杨尔铭", "label": "上下属", "lineStyle": { "width": 2, "type": "dashed" } },
+    { "source": "主角", "target": "常彪", "label": "结拜大哥", "lineStyle": { "width": 3 } },
+    { "source": "主角", "target": "顾明远", "label": "结拜三弟", "lineStyle": { "width": 3 } },
+    {
+      "source": "主角",
+      "target": "林知夏",
+      "label": "未婚夫妻",
+      "lineStyle": { "width": 3, "color": "#c04040" }
+    },
+    { "source": "主角", "target": "周氏", "label": "准丈母娘", "lineStyle": { "type": "dashed" } },
+    { "source": "苏晚棠", "target": "栖云", "label": "收养" },
+    { "source": "苏晚棠", "target": "栖月", "label": "收养" },
+    { "source": "苏晚棠", "target": "赵砚", "label": "收养" },
+    { "source": "苏晚棠", "target": "翠儿", "label": "主仆", "lineStyle": { "type": "dashed" } },
+    {
+      "source": "苏晚棠",
+      "target": "苏晚月",
+      "label": "姐妹",
+      "lineStyle": { "width": 2, "color": "#b46a81" }
+    },
+    {
+      "source": "栖云",
+      "target": "栖月",
+      "label": "双胞胎",
+      "lineStyle": { "width": 2, "color": "#b46a81" }
+    },
+    {
+      "source": "沈大柱",
+      "target": "柳氏",
+      "label": "夫妻",
+      "lineStyle": { "width": 2, "color": "#c04040" }
+    },
+    { "source": "沈大柱", "target": "沈清晏", "label": "父女" },
+    { "source": "柳氏", "target": "沈清晏", "label": "母女" },
+    { "source": "周氏", "target": "林知夏", "label": "母女", "lineStyle": { "width": 2 } },
+    { "source": "方孔炤", "target": "方以智", "label": "父子" },
+    { "source": "方孔炤", "target": "方子衿", "label": "父女" },
+    { "source": "方以智", "target": "方子衿", "label": "兄妹" },
+    { "source": "周皇后", "target": "朱徽媞", "label": "姑嫂", "lineStyle": { "type": "dashed" } },
+    { "source": "周皇后", "target": "张嫣", "label": "妯娌", "lineStyle": { "type": "dashed" } },
+    { "source": "柳如是", "target": "陈圆圆", "label": "相识", "lineStyle": { "type": "dotted" } }
+  ]
+}

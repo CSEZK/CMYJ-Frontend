@@ -1,4 +1,6 @@
 import ORIGINAL_TONGCHENG_CHARACTER_PROFILES from './original-tongcheng-character-profiles.json';
+import ORIGINAL_TONGCHENG_CHARACTER_OVERVIEW from './original-tongcheng-character-overview.json';
+import ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH from './original-tongcheng-relationship-graph.json';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
 const STATUSBAR_VERSION = '1.7.10';
@@ -4455,30 +4457,39 @@ async function restoreScenarioCharacterProfiles(backups) {
   await replaceWorldbook(worldbookName, next, { render: 'immediate' });
 }
 
-function builtinTongchengOverviewEntry(overviews) {
-  const data = JSON.stringify(overviews, null, 2);
+function builtinTongchengOverviewEntry() {
   return {
-    name: '人物概览',
+    name: ORIGINAL_TONGCHENG_CHARACTER_OVERVIEW.entryName,
     enabled: true,
-    content: `@@preprocessing
-<%_
-var characterOverviews = ${data};
-var openingId = getvar('stat_data.世界运转._开场标识', { defaults: '' });
-var people = characterOverviews[openingId] || [];
-if (people.length > 0) {
-_%>
-<人物概览>
-<%_ for (var i = 0; i < people.length; i++) { _%>
-- <%- people[i].name %>：<%- people[i].summary %>
-<%_ } _%>
-</人物概览>
-<%_ } _%>`,
+    content: ORIGINAL_TONGCHENG_CHARACTER_OVERVIEW.content,
     strategy: { type: 'constant', keys: [], keys_secondary: { logic: 'and_any', keys: [] } },
     position: { type: 'after_character_definition', role: 'system', depth: 0, order: 0 },
     recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
     probability: 100,
     effect: { sticky: null, cooldown: null, delay: null },
   };
+}
+
+function hasBuiltinTongchengOverview(entries) {
+  const expected = builtinTongchengOverviewEntry();
+  return (entries || []).some(
+    entry => entry?.name === expected.name && String(entry?.content || '') === expected.content,
+  );
+}
+
+async function upsertBuiltinTongchengOverview() {
+  const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
+  const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
+  if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function')
+    throw new Error('原版人物概览更新需要世界书读写接口。');
+  const worldbookName = getWorldbookName();
+  const current = (await worldbook(worldbookName)) || [];
+  const expected = builtinTongchengOverviewEntry();
+  const index = current.findIndex(entry => entry?.name === expected.name);
+  const next = [...current];
+  if (index >= 0) next[index] = expected;
+  else next.push(expected);
+  await replaceWorldbook(worldbookName, next, { render: 'immediate' });
 }
 
 async function getInstalledScenarioInfo() {
@@ -4518,9 +4529,17 @@ async function repairBuiltinTongchengCharacterProfiles() {
   if (extension.characterAdaptationBackups?.length)
     await restoreScenarioCharacterAdaptations(extension.characterAdaptationBackups);
   const characterProfileBackups = await applyScenarioCharacterProfiles(ORIGINAL_TONGCHENG_CHARACTER_PROFILES.profiles);
+  await upsertBuiltinTongchengOverview();
   const context = {
     ...(extension.context || {}),
     characterAdaptations: [],
+    characterOverviewVersion: ORIGINAL_TONGCHENG_CHARACTER_OVERVIEW.version,
+    characterOverviews: {},
+    relationshipGraphVersion: ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH.version,
+    ui: {
+      ...(extension.context?.ui || {}),
+      relationshipGraph: ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH,
+    },
     originalCharacterProfileVersion: ORIGINAL_TONGCHENG_CHARACTER_PROFILES.version,
     originalCharacterProfileCount: ORIGINAL_TONGCHENG_CHARACTER_PROFILES.profiles.length,
   };
@@ -4590,14 +4609,17 @@ async function installBuiltinTongchengScenario() {
       installed?.id === 'cmyj.original.tongcheng' &&
       installed?.context?.originalCharacterProfileVersion === ORIGINAL_TONGCHENG_CHARACTER_PROFILES.version &&
       installedProfileCount === originalProfileCount &&
-      hasScenarioCharacterProfiles(entries, ORIGINAL_TONGCHENG_CHARACTER_PROFILES.profiles)
+      hasScenarioCharacterProfiles(entries, ORIGINAL_TONGCHENG_CHARACTER_PROFILES.profiles) &&
+      installed?.context?.characterOverviewVersion === ORIGINAL_TONGCHENG_CHARACTER_OVERVIEW.version &&
+      hasBuiltinTongchengOverview(entries) &&
+      installed?.context?.relationshipGraphVersion === ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH.version
     ) {
       showToast('原版桐城开局已经安装，无需重复安装。', 'ok');
       return { scenarioId: installed.id, alreadyInstalled: true };
     }
     if (installed?.id === 'cmyj.original.tongcheng') {
       const repaired = await repairBuiltinTongchengCharacterProfiles();
-      showToast(`✓ 已切换原版桐城开局的 ${repaired.characterProfileCount} 份完整人设`, 'ok');
+      showToast(`✓ 已切换 ${repaired.characterProfileCount} 份完整人设并补全原版人物概览`, 'ok');
       return repaired;
     }
     const openings = BUILTIN_TONGCHENG_OPENINGS.map(definition => {
@@ -4609,99 +4631,13 @@ async function installBuiltinTongchengScenario() {
       );
       return { id: definition.id, name: definition.name, subtitle: definition.subtitle, content };
     });
-    const peopleByName = Object.fromEntries(
-      [
-        ['苏晚棠', '和济堂当家妇人，栖云、栖月与赵砚的养母。'],
-        ['栖云', '苏晚棠养女、栖月的双胞胎姐姐，沉稳护家。'],
-        ['栖月', '苏晚棠养女、栖云的双胞胎妹妹，心细寡言。'],
-        ['赵砚', '苏晚棠养子，机灵沉默而重情。'],
-        ['苏元庆', '苏家长辈，在桐城经营家业与人情往来。'],
-        ['苏晚月', '苏晚棠之妹，嘴利手稳的边镇遗孀。'],
-        ['林知夏', '林记米铺独女，活泼温善。'],
-        ['翠儿', '贫家出身的年轻丫鬟，嘴碎心热。'],
-        ['常彪', '桐城快班捕役，莽直仗义。'],
-        ['顾明远', '落魄秀才，言辞刻薄而心思缜密。'],
-        ['沈清晏', '沈家独女，嘴利心细，擅长识字记账。'],
-        ['沈大柱', '沈记肉铺屠户，沈清晏之父。'],
-        ['柳氏', '沈大柱之妻、沈清晏之母。'],
-        ['周氏', '林记米铺女掌柜，林知夏之母。'],
-        ['陈茂林', '桐城市井人物，熟悉本地门路与消息。'],
-        ['方仲嘉', '桐城方氏子弟，牵涉地方士绅事务。'],
-        ['杨尔铭', '年少谨慎的桐城知县。'],
-        ['方孔炤', '桐城方氏仕宦，方子衿之父。'],
-        ['周拥田', '桐城地方人物，与城中差役事务有关。'],
-        ['赵老六', '桐城基层差役，熟悉衙门与街面。'],
-        ['马会', '桐城基层差役，参与城中巡捕事务。'],
-        ['方应乾', '桐城方氏人物，卷入凤阳惊变前后的地方局势。'],
-      ].map(([name, summary]) => [name, { name, summary }]),
-    );
-    const overviewNames = {
-      'tongcheng-rebirth': [
-        '苏晚棠',
-        '栖云',
-        '栖月',
-        '赵砚',
-        '苏元庆',
-        '苏晚月',
-        '林知夏',
-        '翠儿',
-        '常彪',
-        '顾明远',
-        '沈清晏',
-        '沈大柱',
-        '柳氏',
-        '周氏',
-        '陈茂林',
-      ],
-      'tongcheng-yunjisi': [
-        '苏晚棠',
-        '栖云',
-        '栖月',
-        '赵砚',
-        '苏元庆',
-        '苏晚月',
-        '林知夏',
-        '翠儿',
-        '常彪',
-        '顾明远',
-        '沈清晏',
-        '沈大柱',
-        '柳氏',
-        '周氏',
-        '陈茂林',
-        '方仲嘉',
-        '杨尔铭',
-        '方孔炤',
-      ],
-      'tongcheng-fengyang': [
-        '杨尔铭',
-        '苏晚棠',
-        '苏元庆',
-        '栖云',
-        '栖月',
-        '赵砚',
-        '林知夏',
-        '翠儿',
-        '常彪',
-        '顾明远',
-        '周拥田',
-        '赵老六',
-        '马会',
-        '沈清晏',
-        '方仲嘉',
-        '方应乾',
-      ],
-    };
-    const overviews = Object.fromEntries(
-      openings.map(opening => [opening.id, (overviewNames[opening.id] || []).map(name => peopleByName[name])]),
-    );
     const resource = {
       id: 'cmyj.original.tongcheng',
       kind: 'scenario',
       name: '原版·桐城皂隶篇',
       scenario: {
         id: 'cmyj.original.tongcheng',
-        version: '1.1.0',
+        version: '1.3.0',
         baseCard: 'cmyj.base',
         minBaseVersion: STATUSBAR_VERSION,
         exclusiveGroup: 'player-origin',
@@ -4709,16 +4645,19 @@ async function installBuiltinTongchengScenario() {
         newChatRequired: true,
       },
       openings,
-      worldbookEntries: [builtinTongchengOverviewEntry(overviews)],
+      worldbookEntries: [builtinTongchengOverviewEntry()],
       initialRelationships: [],
       portraitProfiles: [],
-      characterOverviewVersion: 1,
-      characterOverviews: overviews,
+      characterOverviewVersion: ORIGINAL_TONGCHENG_CHARACTER_OVERVIEW.version,
+      characterOverviews: {},
       characterAdaptationVersion: 3,
       characterAdaptations: [],
       originalCharacterProfileVersion: ORIGINAL_TONGCHENG_CHARACTER_PROFILES.version,
       originalCharacterProfiles: ORIGINAL_TONGCHENG_CHARACTER_PROFILES.profiles,
-      ui: {},
+      relationshipGraphVersion: ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH.version,
+      ui: {
+        relationshipGraph: ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH,
+      },
     };
     const bundle = {
       format: WORKSHOP_PACKAGE_FORMAT,
@@ -4871,6 +4810,7 @@ async function importScenarioWorkshopPackage(bundle) {
     portraitProfiles: resource.portraitProfiles || [],
     characterOverviewVersion: resource.characterOverviewVersion || 0,
     characterOverviews: resource.characterOverviews || {},
+    relationshipGraphVersion: resource.relationshipGraphVersion || 0,
     characterAdaptations: resource.characterAdaptations || [],
     originalCharacterProfileVersion: resource.originalCharacterProfileVersion || 0,
     originalCharacterProfileCount: (resource.originalCharacterProfiles || []).length,

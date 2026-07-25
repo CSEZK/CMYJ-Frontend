@@ -41,6 +41,15 @@ const originalTongchengAdaptations = JSON.parse(
 const originalTongchengProfiles = JSON.parse(
   await readFile(path.join(root, 'src', 'cmyj-1.7', 'statusbar', 'original-tongcheng-character-profiles.json'), 'utf8'),
 );
+const originalTongchengOverview = JSON.parse(
+  await readFile(path.join(root, 'src', 'cmyj-1.7', 'statusbar', 'original-tongcheng-character-overview.json'), 'utf8'),
+);
+const originalTongchengRelationshipGraph = JSON.parse(
+  await readFile(
+    path.join(root, 'src', 'cmyj-1.7', 'statusbar', 'original-tongcheng-relationship-graph.json'),
+    'utf8',
+  ),
+);
 
 assert.ok(loader.length > 300_000, '共享加载器未包含完整脚本集');
 assert.match(loader, /CanmingWorkshop/);
@@ -200,6 +209,44 @@ assert.match(releaseStatusbarSource, /async function restoreScenarioCharacterPro
 assert.match(releaseStatusbarSource, /characterProfileBackups/);
 assert.match(releaseLoader, /原版完整人设资源不完整/);
 assert.match(releaseLoader, /Trébuchet/);
+assert.equal(originalTongchengOverview.version, 2);
+assert.equal(originalTongchengOverview.entryName, '人物概览');
+assert.match(originalTongchengOverview.content, /<原版人物概览>/);
+for (const name of ['苏晚棠', '方子衿', '陆挽星', '周皇后', '柳如是', '安娜', '温素弦'])
+  assert.match(originalTongchengOverview.content, new RegExp(name), `原版人物概览缺少：${name}`);
+assert.equal([...originalTongchengOverview.content.matchAll(/·\s*[^：\n]+：/g)].length, 27);
+assert.doesNotMatch(originalTongchengOverview.content, /约?[一二三四五六七八九十]+岁/);
+for (const forbidden of [
+  '性子',
+  '嘴毒',
+  '心软',
+  '沉默寡言',
+  '仗义莽直',
+  '性情',
+  '精明泼辣',
+  '为人憨直',
+  '诗才锋利',
+  '色艺双绝',
+  '剑法高明',
+  '冷傲矜贵',
+])
+  assert.doesNotMatch(originalTongchengOverview.content, new RegExp(forbidden), `人物概览残留性格描述：${forbidden}`);
+assert.doesNotMatch(releaseStatusbarSource, /var characterOverviews =/);
+assert.match(releaseStatusbarSource, /function hasBuiltinTongchengOverview\(entries\)/);
+assert.match(releaseLoader, /<原版人物概览>/);
+assert.equal(originalTongchengRelationshipGraph.version, 1);
+assert.equal(originalTongchengRelationshipGraph.nodes.length, 27);
+assert.equal(originalTongchengRelationshipGraph.links.length, 27);
+assert.ok(originalTongchengRelationshipGraph.nodes.some(node => node.id === '主角'));
+assert.ok(
+  originalTongchengRelationshipGraph.links.some(
+    link => link.source === '主角' && link.target === '苏晚棠' && link.label === '母子',
+  ),
+);
+assert.doesNotMatch(JSON.stringify(originalTongchengRelationshipGraph.nodes), /约?[一二三四五六七八九十]+岁/);
+assert.match(releaseStatusbarSource, /ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH/);
+assert.match(releaseStatusbarSource, /relationshipGraphVersion/);
+assert.match(releaseLoader, /未婚夫妻/);
 assert.match(releaseStatusbarSource, /east_asia_1634_provinces/);
 assert.doesNotMatch(releaseStatusbarSource, /GooYi-C\/History@main\/world_1629\.js/);
 const releaseMapOverview = JSON.parse(
