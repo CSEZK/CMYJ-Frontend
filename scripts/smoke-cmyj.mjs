@@ -186,15 +186,23 @@ const releaseMapOverview = JSON.parse(
 );
 const releaseMapNames = new Set(releaseMapOverview.features.map(feature => feature.properties.name));
 assert.ok(releaseMapNames.has('莫卧儿'), '正式版地图缺少莫卧儿');
-assert.ok(releaseMapNames.has('印度教与伊斯兰诸邦'), '正式版地图缺少莫卧儿南侧的印度诸邦');
-for (const southIndiaName of [
+const mergedMughal = releaseMapOverview.features.find(feature => feature.properties.name === '莫卧儿');
+const mergedSouthIndiaNames = [
+  '印度教与伊斯兰诸邦',
   '比达尔苏丹国',
   '比贾布尔苏丹国',
   '艾哈迈德讷格尔苏丹国',
   '戈尔康达苏丹国',
   '维查耶那伽罗残余',
-]) {
-  assert.ok(releaseMapNames.has(southIndiaName), `正式版地图缺少南印度政权：${southIndiaName}`);
+];
+assert.equal(mergedMughal.geometry.type, 'Polygon', '莫卧儿与南印度没有融合为单一多边形');
+assert.equal(mergedMughal.properties.detail_count, 23, '莫卧儿合并区域的明细数量不正确');
+for (const southIndiaName of mergedSouthIndiaNames) {
+  assert.ok(!releaseMapNames.has(southIndiaName), `南印度政权仍作为独立概览地区存在：${southIndiaName}`);
+  assert.ok(
+    mergedMughal.properties.merged_overview_regions.includes(southIndiaName),
+    `莫卧儿合并元数据缺少：${southIndiaName}`,
+  );
 }
 assert.ok(releaseMapNames.has('澳洲'), '正式版地图缺少澳洲');
 for (const feature of releaseMapOverview.features) {
