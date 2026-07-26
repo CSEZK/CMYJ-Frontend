@@ -7,7 +7,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 (() => {
   'use strict';
 
-  const VERSION = '1.7.1';
+  const VERSION = '1.7.2';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -1579,12 +1579,48 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     return (text.split(/[。！？!?\n]/)[0] || text).trim().slice(0, maxLength);
   }
 
+  const OPERATION_PAYLOAD_KEYS = Object.freeze([
+    'value',
+    'record',
+    'data',
+    'payload',
+    'fields',
+    'attributes',
+    'properties',
+    'details',
+    'params',
+    'arguments',
+  ]);
+
+  function unwrapOperationPayload(value, entityKey) {
+    let current = operationObject(value);
+    if (!current) return null;
+    current = { ...current };
+    for (let depth = 0; depth < 3; depth += 1) {
+      const nestedKey = [entityKey, ...OPERATION_PAYLOAD_KEYS].find(
+        key => key && operationObject(current?.[key]),
+      );
+      if (!nestedKey) break;
+      const nested = current[nestedKey];
+      delete current[nestedKey];
+      current = { ...current, ...nested };
+    }
+    return current;
+  }
+
   function inferOperationType(operation, declaredType) {
     if (SUPPORTED_OPERATION_TYPES.has(declaredType)) return declaredType;
+    const source =
+      OPERATION_PAYLOAD_KEYS.map(key => operationObject(operation?.[key])).find(Boolean) || operation || {};
     const id = asText(
-      operation?.id || operation?.target_id || operation?.targetId || operation?.record_id || operation?.recordId,
+      operation?.id ||
+        operation?.target_id ||
+        operation?.targetId ||
+        operation?.record_id ||
+        operation?.recordId ||
+        source?.id,
     ).toLowerCase();
-    const hasText = (...keys) => keys.some(key => asText(operation?.[key]));
+    const hasText = (...keys) => keys.some(key => asText(source?.[key] ?? operation?.[key]));
     if (
       /^event[_.-]/.test(id) ||
       (hasText('name', 'title') && hasText('description', 'summary') && hasText('location') && hasText('status'))
@@ -1680,11 +1716,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 
     const entityKey = type.split('.')[0];
     const explicitValue =
-      operationObject(operation.value) ||
-      operationObject(operation.record) ||
-      operationObject(operation.data) ||
-      operationObject(operation.payload) ||
-      operationObject(operation.fields) ||
+      OPERATION_PAYLOAD_KEYS.map(key => operationObject(operation[key])).find(Boolean) ||
       operationObject(operation[entityKey]);
     const flatValue = { ...operation };
     [
@@ -1703,17 +1735,17 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       'data',
       'payload',
       'fields',
+      'attributes',
+      'properties',
+      'details',
+      'params',
+      'arguments',
       'set',
       'changes',
       'patch',
     ].forEach(key => delete flatValue[key]);
     if (asText(flatValue.action) === type) delete flatValue.action;
-    let value = explicitValue || flatValue;
-    const nestedEntity = operationObject(value?.[entityKey]);
-    if (nestedEntity) {
-      value = { ...value, ...nestedEntity };
-      delete value[entityKey];
-    }
+    let value = unwrapOperationPayload(explicitValue || flatValue, entityKey) || {};
     if (type.startsWith('event.') && type !== declaredType && !asText(value.stage || value.category)) {
       value = { ...value, category: declaredType };
     }
@@ -1742,11 +1774,10 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 
     const effectiveId =
       id || asText(value?.id) || (type.endsWith('.upsert') || type === 'fact.add' ? deriveUpsertId(type, value) : '');
+    const patchSource =
+      operationObject(operation.set) || operationObject(operation.changes) || operationObject(operation.patch);
     const patch =
-      operationObject(operation.set) ||
-      operationObject(operation.changes) ||
-      operationObject(operation.patch) ||
-      (type.endsWith('.patch') ? value : null);
+      unwrapOperationPayload(patchSource, entityKey) || (type.endsWith('.patch') ? value : null);
     return {
       ...operation,
       type,
@@ -2728,6 +2759,19 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         throw new Error(`副模型基线 revision ${result.base_revision} 与当前档案 ${baseState.revision} 不一致。`);
       }
       const transition = buildTransitionFromOperations(baseState, result, currentStat || {});
+      if (transition.operation_stats.rejected > 0) {
+        console.warn('[天下演化] 部分 operations 未通过校验', {
+          accepted: transition.operation_stats.accepted,
+          rejected: transition.operation_stats.rejected,
+          warnings: transition.operation_stats.warnings,
+          shapes: asArray(result.operations).map(operation => ({
+            type: asText(operation?.type),
+            id: asText(operation?.id),
+            keys: Object.keys(operation || {}).slice(0, 16),
+            payloadKeys: Object.keys(operation?.value || operation?.set || {}).slice(0, 24),
+          })),
+        });
+      }
       if (
         asArray(result.operations).length &&
         transition.operation_stats.accepted === 0 &&

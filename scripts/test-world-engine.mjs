@@ -1,16 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
-import { shouldFallbackFromJsonSchema } from '../src/cmyj-1.7/shared/api-compat.js';
 
 const fullSource = await readFile(new URL('../src/cmyj-1.7/world-engine/index.js', import.meta.url), 'utf8');
-const styles = await readFile(new URL('../src/cmyj-1.7/world-engine/styles-integrated.raw', import.meta.url), 'utf8');
-let source = fullSource;
-source = source.slice(source.indexOf('(() =>'));
+let source = fullSource.slice(fullSource.indexOf('(() =>'));
 const end = source.lastIndexOf('})();');
 source =
   source.slice(0, end) +
-  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel, statusLabel, noticeLabel };\n' +
+  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel };\n' +
   source.slice(end);
 
 const sandbox = {
@@ -38,357 +35,148 @@ sandbox.window.parent = sandbox;
 sandbox.globalThis = sandbox;
 vm.runInNewContext(source, sandbox);
 
-const { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel, statusLabel, noticeLabel } =
-  sandbox.__cweTest;
-assert.equal(statusLabel('occurred'), '已发生');
-assert.equal(statusLabel('resolved'), '已了结');
-assert.equal(statusLabel('social_dispute'), '纷争中');
-assert.equal(statusLabel('unexpected_model_state'), '状态未明');
-assert.equal(statusLabel('潜伏'), '潜伏');
-assert.equal(noticeLabel('fact.add：缺少 evidence'), '事实登记：缺少 依据');
-for (const key of ['type', 'operationType', 'operation_type', 'op', 'operation', 'action']) {
-  const normalized = normalizeIncrementalResult(
-    {
-      schema_version: 2,
-      base_revision: 0,
-      operations: [{ [key]: 'summary.replace', value: '天下态势未变。' }],
-      parallel_scenes: [],
-    },
-    0,
-  );
-  assert.equal(normalized.operations[0].type, 'summary.replace', `未兼容操作类型字段 ${key}`);
-}
+const { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel } = sandbox.__cweTest;
+const emptyState = () => ({ activeEvents: [], actors: [], intelPackets: [], hooks: [] });
+const currentStat = { 世界运转: { 当前地点: '桐城县和济堂药铺' } };
 
-assert.throws(
-  () =>
-    normalizeIncrementalResult(
-      {
-        schema_version: 2,
-        base_revision: 0,
-        operations: [{ id: 'EV-1', value: {} }],
-        parallel_scenes: [],
-      },
-      0,
-    ),
-  /operations 结构无效/,
-);
-
-const mixed = normalizeIncrementalResult(
+// 2026-07-26 酒馆实测：Gemini 忽略 value 约定，把全部实体放进 attributes。
+const liveAttributesResult = normalizeIncrementalResult(
   {
-    schema_version: 2,
-    base_revision: 0,
+    baseRevision: 0,
     operations: [
-      { op: 'summary.replace', value: '天下态势未变。' },
-      { id: 'EV-1', value: {} },
-    ],
-    parallel_scenes: [],
-  },
-  0,
-);
-const transition = buildTransitionFromOperations(
-  { activeEvents: [], actors: [], intelPackets: [], hooks: [], facts: [] },
-  mixed,
-  {},
-);
-assert.equal(transition.operation_stats.accepted, 1);
-assert.equal(transition.operation_stats.rejected, 1);
-assert.match(transition.operation_stats.warnings[0], /缺少 type/);
-
-const compatibleShapes = normalizeIncrementalResult(
-  {
-    schema_version: 2,
-    base_revision: 0,
-    operations: [
-      { type: 'summary.replace', summary: '江北军情渐趋紧张。' },
       {
-        type: 'fact.add',
-        id: 'F-flat',
-        content: '驿卒已经抵达桐城。',
-        status: 'occurred',
-        place: '桐城',
-        visibility: '仅县衙知晓',
-        confidence: 82,
-        source: '本轮正文中驿卒当面交付文书',
-      },
-      {
-        type: 'fact.add',
-        id: 'F-nested',
-        fact: {
-          content: '县衙已经封存文书。',
-          location: '桐城县衙',
-          publicity: '内部知情',
-          evidence: '本轮正文明确写出封存动作',
+        type: 'event.upsert',
+        id: 'event_hejitang_crisis_1634',
+        attributes: {
+          name: '和济堂生存危机',
+          type: '经营',
+          description: '和济堂正面临药材短缺、信誉受损及外部债务逼迫。',
+          status: '进行中',
+          startTime: '崇祯七年七月初二日',
         },
       },
-    ],
-    parallel_scenes: [],
-  },
-  0,
-);
-assert.equal(compatibleShapes.operations[0].value, '江北军情渐趋紧张。');
-assert.equal(compatibleShapes.operations[1].value.location, '桐城');
-assert.equal(compatibleShapes.operations[1].value.publicity, '仅县衙知晓');
-assert.equal(compatibleShapes.operations[1].value.confidence, 0.82);
-assert.equal(compatibleShapes.operations[2].value.status, 'occurred');
-assert.equal(compatibleShapes.operations[2].value.confidence, 0.8);
-const compatibleTransition = buildTransitionFromOperations(
-  { activeEvents: [], actors: [], intelPackets: [], hooks: [], facts: [] },
-  compatibleShapes,
-  {},
-);
-assert.equal(compatibleTransition.operation_stats.accepted, 3);
-assert.equal(compatibleTransition.operation_stats.rejected, 0);
-
-const observedApiShape = normalizeIncrementalResult(
-  {
-    baseRevision: 0,
-    operations: [
-      { type: 'summary.replace', content: '桐城县退婚风波一触即发。' },
-      { type: 'fact.add', content: '苏大郎遭沈大柱击中后脑后昏死。' },
-      { type: 'fact.add', content: '和济堂药库遭水灾受损。' },
-      { type: 'fact.add', content: '周氏登门和济堂意图退婚。' },
       {
-        type: 'actor.upsert',
-        id: 'su_dalang',
-        name: '苏大郎',
-        description: '伤后正在和济堂休养，神志已经改变。',
-        status: 'recover',
-        location: '桐城县和济堂药铺',
+        type: 'event.upsert',
+        id: 'event_marriage_dispute_1634',
+        attributes: {
+          name: '林记米铺逼婚退盟',
+          type: '家事',
+          description: '周氏强行登门要求退回庚帖解除婚约。',
+          status: '进行中',
+        },
       },
       {
         type: 'actor.upsert',
-        id: 'su_wantang',
-        name: '苏晚棠',
-        description: '正在凭大明律与往日恩情抵挡林家退婚。',
-        status: 'angry',
-        location: '和济堂堂屋',
+        id: 'actor_shen_dazhu',
+        attributes: {
+          name: '沈大柱',
+          location: '桐城县西街沈记肉铺',
+          goal: '保住性命与铺子',
+          knowledge: ['苏大郎已经苏醒'],
+          does_not_know: ['常彪正盘算如何敲诈他'],
+        },
       },
       {
         type: 'actor.upsert',
-        id: 'lin_zhixia',
-        name: '林知夏',
-        description: '反对母亲退婚。',
-        status: 'anxious',
-        location: '林记米铺',
-        goal: '保住婚约',
-      },
-      {
-        type: 'actor.upsert',
-        id: 'shen_qingyan',
-        name: '沈清晏',
-        description: '仍在沈记肉铺处理伤人后的余波。',
-        status: 'worried',
-        location: '沈记肉铺',
-      },
-      {
-        type: 'social_dispute',
-        id: 'event_engagement_crisis',
-        name: '和济堂退婚风波',
-        location: '桐城县和济堂',
-        description: '周氏趁苏家势弱登门退婚，苏晚棠竭力周旋。',
-        status: 'happening',
+        id: 'actor_zhou_shi',
+        attributes: {
+          name: '周氏',
+          location: '和济堂药铺堂屋',
+          goal: '彻底断绝婚约',
+          knowledge: ['苏家药库坍塌且欠债'],
+        },
       },
       {
         type: 'intel.upsert',
-        id: 'intel_su_madness_rumor',
-        source: '桐城街坊闲谈',
-        receiver: '林记米铺/周氏',
-        content: '苏大郎被打伤后胡言乱语的传闻已经传到林家。',
-        status: 'delivered',
-        reach_time: '崇祯七年七月初四',
-      },
-    ],
-    parallel_scenes: [],
-  },
-  0,
-);
-assert.equal(observedApiShape.operations[8].type, 'event.upsert');
-const observedTransition = buildTransitionFromOperations(
-  { activeEvents: [], actors: [], intelPackets: [], hooks: [], facts: [] },
-  observedApiShape,
-  {},
-);
-assert.equal(observedTransition.operation_stats.accepted, 10);
-assert.equal(observedTransition.operation_stats.rejected, 0);
-assert.equal(observedTransition.new_facts[0].location, '本轮正文所述地点');
-assert.equal(observedTransition.upsert_events[0].stage, 'social_dispute');
-assert.equal(observedTransition.upsert_actors[0].current_action, '伤后正在和济堂休养，神志已经改变。');
-assert.equal(observedTransition.upsert_intel[0].origin, '桐城街坊闲谈');
-assert.equal(observedTransition.upsert_intel[0].destination, '林记米铺/周氏');
-assert.equal(observedTransition.upsert_intel[0].eta, '崇祯七年七月初四');
-
-const latestLiveApiShape = normalizeIncrementalResult(
-  {
-    baseRevision: 0,
-    operations: [
-      { type: 'summary.replace', content: '桐城民变后，云际寺赃银去向引起各方追查。' },
-      { type: 'fact.add', content: '玩家于云际寺利用草乌毒酒击杀汪国华。' },
-      { type: 'fact.add', content: '三万五千两白银被埋藏于挂车河口荒院。' },
-      { type: 'fact.add', content: '方仲嘉负伤生还并知晓云际寺内情。' },
-      { type: 'fact.add', content: '杨尔铭委任玩家为桐城县快班班头。' },
-      {
-        type: 'actor.upsert',
-        name: '杨尔铭',
-        born_year: 1617,
-        identities: ['桐城知县'],
-        location: '桐城县衙',
-        goal: '平定境内民变',
-        status: '疲惫且焦虑',
-        description: '到任即遇民变，急需政治资本回旋。',
-      },
-      {
-        type: 'actor.upsert',
-        name: '方仲嘉',
-        identities: ['荻港把总', '方氏族人'],
-        location: '桐城凤仪里方宅',
-        goal: '追回失踪白银',
-        status: '负伤养病',
-        description: '方孔炤族弟，因云际寺事变怨恨苏某。',
-      },
-      {
-        type: 'actor.upsert',
-        name: '汪国华',
-        identities: ['乱民副首领'],
-        status: '死亡',
-        description: '于云际寺被玩家斩杀。',
-      },
-      {
-        type: 'intel.upsert',
-        source: '玩家',
-        content: '白银埋藏在挂车河口荒废院落后院。',
-        receivers: ['常彪', '顾明远', '赵砚'],
-        importance: 10,
-      },
-      {
-        type: 'intel.upsert',
-        source: '王兵备',
-        content: '云际寺原藏有巨额赃银，现已不翼而飞。',
-        receivers: ['池州驻军'],
-        importance: 7,
+        id: 'intel_user_madness_rumor',
+        attributes: {
+          content: '和济堂苏大郎被打成了傻子',
+          source: '西街目击百姓',
+          destination: '桐城全县',
+          status: '传播中',
+          arrival_time: '崇祯七年七月初三日',
+        },
       },
       {
         type: 'hook.upsert',
-        content: '方仲嘉的复仇：方家可能利用官府公文或江湖手段算计新任班头。',
-        status: 'active',
+        id: 'hook_yamen_duty_check',
+        attributes: {
+          trigger: '崇祯七年七月初八日',
+          description: '若主角连续七日未去县衙点卯，兵房典吏将考虑革除其皂隶职衔。',
+          status: 'pending',
+        },
       },
     ],
-    parallel_scenes: [],
+    parallel_scenes: [
+      {
+        location: '桐城县西街沈记肉铺',
+        time: '未时七刻',
+        actors: ['沈大柱'],
+        action: '担忧苏家报复',
+        body: '沈大柱在内间来回踱步。',
+      },
+    ],
   },
   0,
 );
-const latestLiveTransition = buildTransitionFromOperations(
-  { activeEvents: [], actors: [], intelPackets: [], hooks: [], facts: [] },
-  latestLiveApiShape,
-  { 世界运转: { 当前地点: '桐城县和济堂药铺' } },
-);
-assert.equal(latestLiveTransition.operation_stats.accepted, 11);
-assert.equal(latestLiveTransition.operation_stats.rejected, 0);
-assert.equal(latestLiveTransition.upsert_intel[0].destination, '常彪、顾明远、赵砚');
-assert.equal(latestLiveTransition.upsert_intel[0].channel, '口耳相传');
-assert.equal(latestLiveTransition.upsert_intel[0].eta, '抵达时间未明');
-assert.match(latestLiveTransition.upsert_hooks[0].title, /方仲嘉的复仇/);
-assert.equal(latestLiveTransition.upsert_hooks[0].trigger, '相关人物获得行动机会时');
 
-const minimalSemanticEvent = normalizeIncrementalResult(
+assert.equal(liveAttributesResult.operations.length, 6);
+assert.equal(liveAttributesResult.operations[0].value.name, '和济堂生存危机');
+assert.equal(liveAttributesResult.operations[2].value.name, '沈大柱');
+assert.equal(liveAttributesResult.operations[4].value.source, '西街目击百姓');
+assert.equal(liveAttributesResult.operations[5].value.description.startsWith('若主角连续七日'), true);
+
+const liveAttributesTransition = buildTransitionFromOperations(
+  emptyState(),
+  liveAttributesResult,
+  currentStat,
+);
+assert.equal(liveAttributesTransition.operation_stats.accepted, 6);
+assert.equal(liveAttributesTransition.operation_stats.rejected, 0);
+assert.equal(liveAttributesTransition.upsert_events[0].title, '和济堂生存危机');
+assert.equal(liveAttributesTransition.upsert_events[0].location, '桐城县和济堂药铺');
+assert.equal(liveAttributesTransition.upsert_actors[0].name, '沈大柱');
+assert.deepEqual(Array.from(liveAttributesTransition.upsert_actors[0].does_not_know), ['常彪正盘算如何敲诈他']);
+assert.equal(liveAttributesTransition.upsert_intel[0].origin, '西街目击百姓');
+assert.equal(liveAttributesTransition.upsert_intel[0].eta, '崇祯七年七月初三日');
+assert.match(liveAttributesTransition.upsert_hooks[0].title, /连续七日未去县衙点卯/);
+assert.equal(liveAttributesTransition.upsert_hooks[0].fail_condition, '伏线被化解或失去现实条件');
+
+// 常见供应商包装层可以相互嵌套，统一在校验前剥离。
+const wrapperVariants = normalizeIncrementalResult(
   {
+    schema_version: 2,
     base_revision: 0,
     operations: [
       {
         type: 'event.upsert',
-        value: {
-          event: { content: '方家开始暗中追查云际寺赃银。', status: 'active' },
-          importance: 8,
-        },
-      },
-    ],
-    parallel_scenes: [],
-  },
-  0,
-);
-const minimalSemanticEventTransition = buildTransitionFromOperations(
-  { activeEvents: [], actors: [], intelPackets: [], hooks: [], facts: [] },
-  minimalSemanticEvent,
-  { 世界运转: { 当前地点: '桐城县' } },
-);
-assert.equal(minimalSemanticEventTransition.operation_stats.accepted, 1);
-assert.equal(minimalSemanticEventTransition.operation_stats.rejected, 0);
-assert.match(minimalSemanticEventTransition.upsert_events[0].title, /方家开始暗中追查/);
-assert.equal(minimalSemanticEventTransition.upsert_events[0].location, '桐城县');
-
-const nestedSemanticShape = normalizeIncrementalResult(
-  {
-    base_revision: 0,
-    operations: [
-      { type: 'summary.replace', new_summary: '苏家正面临药库受损和退婚风波。' },
-      {
-        type: 'fact.add',
-        fact: {
-          id: 'fact_001',
-          content: '现代灵魂已经进入苏大郎体内。',
-          significance: '核心转折',
-        },
-      },
-      {
-        type: 'fact.add',
-        fact: {
-          id: 'fact_002',
-          content: '和济堂药库因水灾坍塌，药铺经营陷入困境。',
-          significance: '家宅危机',
+        data: {
+          attributes: {
+            name: '赃银追查',
+            description: '方家开始暗查赃银去向。',
+          },
         },
       },
       {
         type: 'actor.upsert',
-        actor: {
-          id: 'actor_su_wantang',
-          name: '苏晚棠',
-          status: '健康',
-          location: '桐城县和济堂药铺堂屋',
-          goal: '拒绝林家退婚',
-          knowledge: ['林记米铺借过苏家银子'],
-          description: '正在堂屋与周氏争执。',
-        },
-      },
-      {
-        type: 'actor.upsert',
-        actor: {
-          name: '周氏',
-          status: '亢奋',
-          location: '桐城县和济堂药铺堂屋',
-          goal: '解除婚约',
-          description: '正在强行索要庚帖。',
-        },
-      },
-      {
-        type: 'actor.upsert',
-        actor: {
-          id: 'actor_su_wanyue',
-          name: '苏晚月',
-          status: '警惕',
-          location: '桐城县和济堂药铺',
-          goal: '观察侄儿是否真心改过',
-          description: '正在观察苏大郎伤后的言行。',
-        },
-      },
-      {
-        type: 'event.upsert',
-        event: {
-          id: 'event_hejitang_dispute',
-          name: '苏林悔婚之争',
-          location: '和济堂堂屋',
-          status: '进行中',
-          description: '周氏趁苏家势弱登门退婚。',
-          involved_actors: ['actor_su_wantang'],
+        properties: {
+          name: '方仲嘉',
+          location: '方宅',
+          goal: '追回赃银',
         },
       },
       {
         type: 'intel.upsert',
-        intel: {
-          id: 'intel_crazy_rumor',
-          source: '市井传闻',
-          receiver: '全城百姓',
-          content: '苏大郎被打坏脑子的传闻已经传播。',
-          status: '已传播',
-          arrival_time: '崇祯七年七月初五日',
+        details: {
+          content: '赃银可能在挂车河口',
+          source: '街谈',
+          receivers: ['常彪', '顾明远'],
+        },
+      },
+      {
+        type: 'hook.upsert',
+        params: {
+          content: '方仲嘉准备报复新任班头。',
         },
       },
     ],
@@ -396,120 +184,98 @@ const nestedSemanticShape = normalizeIncrementalResult(
   },
   0,
 );
-assert.equal(nestedSemanticShape.operations[0].value, '苏家正面临药库受损和退婚风波。');
-assert.equal(nestedSemanticShape.operations[3].id, 'actor_su_wantang');
-assert.match(nestedSemanticShape.operations[4].id, /^AC-/);
-assert.equal(nestedSemanticShape.operations[5].id, 'actor_su_wanyue');
-assert.equal(nestedSemanticShape.operations[6].id, 'event_hejitang_dispute');
-assert.equal(nestedSemanticShape.operations[7].id, 'intel_crazy_rumor');
-const movedActor = normalizeIncrementalResult(
+const wrapperTransition = buildTransitionFromOperations(emptyState(), wrapperVariants, currentStat);
+assert.equal(wrapperTransition.operation_stats.accepted, 4);
+assert.equal(wrapperTransition.operation_stats.rejected, 0);
+assert.equal(wrapperTransition.upsert_intel[0].destination, '常彪、顾明远');
+
+// patch 使用 attributes/fields 时同样必须落到 set，而不是被当成空 patch。
+const patchResult = normalizeIncrementalResult(
   {
-    base_revision: 0,
+    schema_version: 2,
+    base_revision: 1,
     operations: [
       {
-        type: 'actor.upsert',
-        actor: {
-          name: '周氏',
-          status: '离开',
-          location: '林记米铺',
-          description: '已经离开和济堂。',
+        type: 'actor.patch',
+        id: 'AC-1',
+        attributes: {
+          goal: '连夜离开桐城',
+          current_action: '收拾细软',
         },
       },
     ],
     parallel_scenes: [],
   },
+  1,
+);
+assert.equal(patchResult.operations[0].set.goal, '连夜离开桐城');
+const patchTransition = buildTransitionFromOperations(
+  {
+    ...emptyState(),
+    actors: [
+      {
+        id: 'AC-1',
+        name: '周氏',
+        location: '林记米铺',
+        goal: '解除婚约',
+        currentAction: '等待消息',
+        knowledge: [],
+        doesNotKnow: [],
+        nextDecision: '',
+        updatedReason: '旧档案',
+      },
+    ],
+  },
+  patchResult,
+  currentStat,
+);
+assert.equal(patchTransition.operation_stats.accepted, 1);
+assert.equal(patchTransition.operation_stats.rejected, 0);
+assert.equal(patchTransition.upsert_actors[0].goal, '连夜离开桐城');
+
+const invalid = normalizeIncrementalResult(
+  {
+    schema_version: 2,
+    base_revision: 0,
+    operations: [{ type: 'actor.upsert', id: 'AC-invalid', attributes: { location: '桐城县' } }],
+    parallel_scenes: [],
+  },
   0,
 );
-assert.equal(movedActor.operations[0].id, nestedSemanticShape.operations[4].id);
-const nestedSemanticTransition = buildTransitionFromOperations(
-  { activeEvents: [], actors: [], intelPackets: [], hooks: [], facts: [] },
-  nestedSemanticShape,
-  {},
-);
-assert.equal(nestedSemanticTransition.operation_stats.accepted, 8);
-assert.equal(nestedSemanticTransition.operation_stats.rejected, 0);
+const invalidTransition = buildTransitionFromOperations(emptyState(), invalid, currentStat);
+assert.equal(invalidTransition.operation_stats.accepted, 0);
+assert.equal(invalidTransition.operation_stats.rejected, 1);
+assert.match(invalidTransition.operation_stats.warnings[0], /缺少人物名称/);
 
 let generationCalls = 0;
-sandbox.generateRaw = async () => {
-  generationCalls += 1;
-  return generationCalls === 1
-    ? {
-        schema_version: 2,
-        base_revision: 0,
-        operations: [{ type: 'event.upsert', id: 'EV-1', value: {} }],
-        parallel_scenes: [],
-      }
-    : {
-        schema_version: 2,
-        base_revision: 0,
-        operations: [{ type: 'summary.replace', value: '天下态势未变。' }],
-        parallel_scenes: [],
-      };
-};
-const retried = await callWorldModel(
-  {
-    baseRevision: 0,
-    canonicalState: { activeEvents: [], actors: [], intelPackets: [], hooks: [], facts: [] },
-  },
-  'cwe-test',
-);
-assert.equal(generationCalls, 2);
-assert.equal(retried.operations[0].type, 'summary.replace');
-
-generationCalls = 0;
 sandbox.generateRaw = async () => {
   generationCalls += 1;
   return {
     schema_version: 2,
     base_revision: 0,
-    operations: [{ type: 'fact.add', id: 'F-incomplete', value: {} }],
-    parallel_scenes: [
+    operations: [
       {
-        location: '安庆',
-        time: '当夜',
-        actors: ['驿卒'],
-        action: '送信',
-        body: '驿卒趁夜色将密信送入城中。',
+        type: 'actor.upsert',
+        attributes: {
+          name: '沈大柱',
+          location: '沈记肉铺',
+          goal: '保住铺子',
+        },
       },
     ],
+    parallel_scenes: [],
   };
 };
-const sceneFallback = await callWorldModel(
+const generated = await callWorldModel(
   {
     baseRevision: 0,
-    canonicalState: { activeEvents: [], actors: [], intelPackets: [], hooks: [], facts: [] },
+    currentTurn: { assistantOutput: '' },
+    canonicalState: emptyState(),
   },
-  'cwe-scene-test',
+  'cwe-attributes-test',
 );
 assert.equal(generationCalls, 1);
-assert.equal(sceneFallback.parallel_scenes.length, 1);
+assert.equal(generated.operations[0].value.name, '沈大柱');
 
-assert.match(fullSource, /data-action="dismiss-notice"/);
-assert.match(fullSource, /action === 'dismiss-notice'/);
-assert.match(styles, /通知匣：脱离正文排版/);
-assert.match(styles, /\.cwe-notice-stack\s*\{[^}]*position: absolute/s);
-assert.match(styles, /\.cwe-notice-stack \.cwe-notice\s*\{[^}]*min-height: 42px/s);
-assert.match(styles, /移动值房：单一内容滚动层/);
-assert.match(styles, /\.cwe-command-main > \.cwe-tabs\s*\{[^}]*display: contents/s);
-assert.match(styles, /\.cwe-content-parallel \.cwe-parallel-board\s*\{[^}]*overflow: visible/s);
-assert.match(
-  styles,
-  /\.cwe-content-overview \.cwe-ledger-layout\s*\{[^}]*margin: 0;[^}]*padding: 0;/s,
-);
-assert.match(
-  styles,
-  /\.cwe-content-overview \.cwe-margin-notes > section:last-child\s*\{[^}]*padding: 12px;/s,
-);
-for (const message of [
-  '400 Bad Request',
-  'HTTP 415 Unsupported Media Type: response_format',
-  '422 Unprocessable Entity',
-  'response_format json_schema is not supported',
-  'invalid_request_error: structured output unavailable',
-]) {
-  assert.equal(shouldFallbackFromJsonSchema(new Error(message)), true, `未降级处理：${message}`);
-}
-assert.equal(shouldFallbackFromJsonSchema(new Error('401 Unauthorized')), false);
-assert.equal(shouldFallbackFromJsonSchema(new Error('403 Forbidden')), false);
-
-console.info('天下演化测试通过：真实 API 载荷兼容、状态中文化、紧凑通知与移动端单层滚动。');
+assert.match(fullSource, /const VERSION = '1\.7\.2'/);
+console.info('天下演化测试通过：真实 attributes 载荷、嵌套包装、字段别名、patch 与无效操作均已覆盖。');
