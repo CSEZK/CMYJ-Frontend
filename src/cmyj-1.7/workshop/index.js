@@ -177,7 +177,15 @@ async function claimWorkshopLogin(nonce,refresh=true){
 }
 async function resumeWorkshopLogin(refresh=true){let pending=pendingWorkshopLogin();if(!pending)return false;try{return!!await claimWorkshopLogin(pending.nonce,refresh)}catch(error){if(error?.authTerminal){clearPendingWorkshopLogin(pending.nonce);if(root)workshopToast(error.message||'Discord 登录失败','err','登录失败')}return false}}
 function workshopAuthHost(){try{return window.parent||window}catch{return window}}
-function workshopAuthOrigin(host){let workerOrigin=new URL(API).origin;try{let value=host.location?.origin||window.location?.origin,origin=new URL(value);if(origin.origin===workerOrigin||['localhost','127.0.0.1','[::1]'].includes(origin.hostname))return origin.origin}catch{}return workerOrigin}
+function workshopAuthOrigin(host){
+  let workerOrigin=new URL(API).origin;
+  try{
+    let value=host.location?.origin||window.location?.origin,origin=new URL(value);
+    if(origin.origin===workerOrigin)return workerOrigin;
+    if(['http:','https:'].includes(origin.protocol)&&['localhost','127.0.0.1','[::1]'].includes(origin.hostname))return origin.origin
+  }catch{}
+  return workerOrigin
+}
 function isTauriTavern(host){try{return Boolean(host?.__TAURITAVERN__||window.__TAURITAVERN__)}catch{return false}}
 async function openWorkshopAuthUrl(url,host=workshopAuthHost()){
   let width=500,height=700,display={};try{display=host.screen||globalThis.screen||{}}catch{}let left=Math.max(0,(Number(display.width||width)-width)/2),top=Math.max(0,(Number(display.height||height)-height)/2),popup=null;
