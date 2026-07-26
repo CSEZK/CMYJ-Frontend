@@ -10,7 +10,14 @@ export function isOfficialDeepSeekApi(customApi) {
 
 export function shouldFallbackFromJsonSchema(error) {
   const message = error instanceof Error ? error.message : String(error || '');
-  return /\bbad request\b|(?:^|\D)400(?:\D|$)/i.test(message);
+  if (/(?:^|\D)(?:401|403)(?:\D|$)|unauthorized|forbidden/i.test(message)) return false;
+  return (
+    /\bbad request\b|(?:^|\D)(?:400|415|422)(?:\D|$)/i.test(message) ||
+    /(?:response[_ -]?format|json[_ -]?schema|structured output)[\s\S]{0,120}(?:unsupported|not supported|invalid|unavailable)/i.test(
+      message,
+    ) ||
+    /invalid_request_error[\s\S]{0,160}(?:response[_ -]?format|json[_ -]?schema|structured output)/i.test(message)
+  );
 }
 
 export function deepSeekJsonSchemaPrompt(schema) {

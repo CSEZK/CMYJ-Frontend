@@ -322,16 +322,23 @@ assert.match(releaseStatusbarSource, /自动校正单主世界书失败/);
 assert.match(releaseGeneratorSource, /STORAGE_KEY_API = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /API_SETTINGS_KEY = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /minBaseVersion: '1\.7\.0'/);
-assert.match(releaseWorldEngineSource, /VERSION = '1\.1\.0'/);
+assert.match(releaseWorldEngineSource, /VERSION = '1\.1\.1'/);
 assert.match(releaseWorldEngineSource, /settingsVersion: 3/);
 assert.match(releaseWorldEngineSource, /temperature: 1/);
 assert.match(releaseWorldEngineSource, /maxTokens: 10000/);
 assert.match(releaseWorldEngineSource, /cmyj_world_engine_increment_v2/);
 assert.match(releaseWorldEngineSource, /buildTransitionFromOperations/);
+assert.match(releaseWorldEngineSource, /SUPPORTED_OPERATION_TYPES/);
+assert.match(releaseWorldEngineSource, /operation\.operation_type/);
+assert.match(releaseWorldEngineSource, /operation\.op/);
+assert.match(releaseWorldEngineSource, /operation\.operation/);
+assert.match(releaseWorldEngineSource, /operations 全部无效，本轮未写入档案/);
 assert.match(releaseWorldEngineSource, /renderParallelWorld/);
 assert.match(releaseWorldEngineSource, /queuedProcess/);
 assert.doesNotMatch(releaseWorldEngineSource, /setChatMessages/);
 assert.match(releaseWorldEngineStyle, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
+assert.match(releaseWorldEngineStyle, /\.cwe-notice-stack/);
+assert.match(releaseWorldEngineStyle, /\.cwe-notice-close/);
 assert.doesNotMatch(
   releaseWorldEngineStyle,
   /\.cwe-command-main > \.cwe-tabs\s*\{[^}]*grid-template-columns: repeat\(3,/s,

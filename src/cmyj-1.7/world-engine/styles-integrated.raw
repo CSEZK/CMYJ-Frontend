@@ -1751,6 +1751,127 @@ select:focus-visible {
   }
 }
 
+/* 值房笺：桌面端成叠停靠，移动端进入文档流；每张消息均可独立关闭。 */
+.cwe-notice-stack {
+  position: static;
+  display: grid;
+  width: 100%;
+  gap: 9px;
+  margin: 10px 0 0;
+}
+
+.cwe-notice-stack .cwe-notice {
+  position: relative;
+  top: auto;
+  right: auto;
+  display: grid;
+  max-width: none;
+  grid-template-columns: 8px minmax(0, 1fr) 34px;
+  align-items: start;
+  gap: 10px;
+  margin: 0;
+  padding: 11px 9px 11px 13px;
+  overflow: hidden;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--accent2) 9%, var(--card) 91%);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--shadow) 24%, transparent);
+}
+
+.cwe-notice-stack .cwe-notice.danger {
+  background: color-mix(in srgb, var(--accent) 9%, var(--card) 91%);
+}
+
+.cwe-notice-stack .cwe-notice > i {
+  margin-top: 6px;
+}
+
+.cwe-notice-body {
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.cwe-notice-body b {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.cwe-notice-body p,
+.cwe-notice-body ul {
+  margin: 4px 0 0;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.cwe-notice-body ul {
+  display: grid;
+  gap: 4px;
+  padding: 0;
+  list-style: none;
+}
+
+.cwe-notice-body li {
+  position: relative;
+  padding-left: 11px;
+}
+
+.cwe-notice-body li::before {
+  position: absolute;
+  top: 0;
+  left: 0;
+  content: "·";
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.cwe-notice-close {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  margin: -5px -3px 0 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    color 0.18s ease,
+    background 0.18s ease,
+    transform 0.18s ease;
+}
+
+.cwe-notice-close span {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.cwe-notice-close:hover,
+.cwe-notice-close:focus-visible {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  outline: none;
+  transform: rotate(4deg);
+}
+
+@media (max-width: 820px) {
+  .cwe-notice-stack {
+    gap: 8px;
+  }
+
+  .cwe-notice-stack .cwe-notice {
+    grid-template-columns: 8px minmax(0, 1fr) 40px;
+    padding: 11px 7px 11px 12px;
+    border-radius: 12px;
+    box-shadow: 0 8px 18px color-mix(in srgb, var(--shadow) 16%, transparent);
+  }
+
+  .cwe-notice-close {
+    width: 40px;
+    height: 40px;
+    margin-top: -6px;
+  }
+}
+
 /* 真实长内容约束：摘要、事件与设置都不能撑坏主框架 */
 .cwe-content {
   overflow-x: hidden;

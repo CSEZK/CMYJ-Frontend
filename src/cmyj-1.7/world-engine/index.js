@@ -11,7 +11,7 @@ import {
 (() => {
   'use strict';
 
-  const VERSION = '1.1.0';
+  const VERSION = '1.1.1';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -20,6 +20,21 @@ import {
   const STYLE_ID = 'canming-world-engine-lamp-style';
   const STORAGE_PREFIX = 'canming-world-engine:';
   const STATUSBAR_THEME_KEY = 'canming-afterglow-statusbar:theme';
+  const SUPPORTED_OPERATION_TYPES = new Set([
+    'summary.replace',
+    'fact.add',
+    'event.upsert',
+    'event.patch',
+    'event.resolve',
+    'actor.upsert',
+    'actor.patch',
+    'intel.upsert',
+    'intel.patch',
+    'intel.remove',
+    'hook.upsert',
+    'hook.patch',
+    'hook.resolve',
+  ]);
   const hostWindow = (() => {
     try {
       return window.parent && window.parent !== window ? window.parent : window;
@@ -947,7 +962,8 @@ import {
 4. body 不使用 <平行世界> 标签，不写“与此同时”“玩家不知道的是”“镜头转向”等元叙事。
 
 四、输出
-只返回符合 JSON Schema 的一个 JSON 对象。operations 可以为空；没有变化的字段不得凑数。base_revision 必须原样回传。`;
+1. 只返回符合 JSON Schema 的一个 JSON 对象。operations 可以为空；没有变化的字段不得凑数。base_revision 必须原样回传。
+2. operations 中每一项都必须带 type 字段。type 只能是：summary.replace、fact.add、event.upsert、event.patch、event.resolve、actor.upsert、actor.patch、intel.upsert、intel.patch、intel.remove、hook.upsert、hook.patch、hook.resolve。不得使用 op、operation、action 或自造名称代替 type。`;
   }
 
   function incrementalOutputSchema() {
@@ -1408,16 +1424,42 @@ import {
     if (!result || typeof result !== 'object' || Array.isArray(result)) {
       throw new Error('副模型输出缺少可用的结构化对象。');
     }
-    const operations = asArray(result.operations || result.ops);
+    const rawOperations = asArray(result.operations || result.ops).slice(0, 32);
+    const operations = rawOperations.map(operation => {
+      if (!operation || typeof operation !== 'object' || Array.isArray(operation)) return operation;
+      const type = asText(
+        operation.type ||
+          operation.operationType ||
+          operation.operation_type ||
+          operation.op ||
+          operation.operation ||
+          operation.action,
+      );
+      return type && type !== operation.type ? { ...operation, type } : operation;
+    });
     const declaredSchemaVersion = result.schema_version ?? result.schemaVersion;
     if (operations.length && declaredSchemaVersion != null && Number(declaredSchemaVersion) !== 2) {
       throw new Error(`副模型输出的 schema_version=${declaredSchemaVersion}，当前仅接受版本 2。`);
+    }
+    if (operations.length && !operations.some(operation => SUPPORTED_OPERATION_TYPES.has(asText(operation?.type)))) {
+      const received = [
+        ...new Set(
+          operations.map(operation => {
+            const type = asText(operation?.type);
+            if (type) return type;
+            if (!operation || typeof operation !== 'object') return typeof operation;
+            const keys = Object.keys(operation).slice(0, 5).join(', ');
+            return keys ? `缺少 type（收到字段：${keys}）` : '缺少 type';
+          }),
+        ),
+      ];
+      throw new Error(`副模型 operations 结构无效：${received.join('；')}`);
     }
     const scenes = normalizeParallelScenes(result.parallel_scenes || result.parallelScenes || result.scenes);
     const normalized = {
       schema_version: Number(result.schema_version || result.schemaVersion || 2),
       base_revision: Number(result.base_revision ?? result.baseRevision ?? expectedRevision),
-      operations: operations.length ? operations.slice(0, 32) : legacyOperations(result).slice(0, 32),
+      operations: operations.length ? operations : legacyOperations(result).slice(0, 32),
       parallel_scenes: scenes.length ? scenes : legacyParallelScene(result),
     };
     if (!normalized.operations.length && !normalized.parallel_scenes.length) {
@@ -1480,7 +1522,16 @@ import {
             }, 90000);
           }),
         ]);
-        return normalizeIncrementalResult(parseAiResult(raw), payload.baseRevision);
+        const normalized = normalizeIncrementalResult(parseAiResult(raw), payload.baseRevision);
+        if (normalized.operations.length) {
+          const preview = buildTransitionFromOperations(payload.canonicalState || {}, normalized, {});
+          if (preview.operation_stats.accepted === 0 && preview.operation_stats.rejected > 0) {
+            throw new Error(
+              `副模型 operations 结构未通过校验：${preview.operation_stats.warnings.slice(0, 3).join('；')}`,
+            );
+          }
+        }
+        return normalized;
       } catch (error) {
         lastError = error;
         if (!usePromptJsonSchema && shouldFallbackFromJsonSchema(error)) {
@@ -1643,7 +1694,9 @@ import {
     const stats = transition.operation_stats;
     const reject = (operation, reason) => {
       stats.rejected += 1;
-      stats.warnings.push(`${asText(operation?.type, 'unknown')}：${reason}`.slice(0, 300));
+      const type = asText(operation?.type);
+      const label = type || `缺少 type（字段：${Object.keys(operation || {}).slice(0, 5).join(', ') || '无'}）`;
+      stats.warnings.push(`${label}：${reason}`.slice(0, 300));
     };
     const accept = () => {
       stats.accepted += 1;
@@ -2096,6 +2149,15 @@ import {
         throw new Error(`副模型基线 revision ${result.base_revision} 与当前档案 ${baseState.revision} 不一致。`);
       }
       const transition = buildTransitionFromOperations(baseState, result, currentStat || {});
+      if (
+        asArray(result.operations).length &&
+        transition.operation_stats.accepted === 0 &&
+        transition.operation_stats.rejected > 0
+      ) {
+        throw new Error(
+          `副模型返回的 ${transition.operation_stats.rejected} 项 operations 全部无效，本轮未写入档案，请重新推演。`,
+        );
+      }
       const nextState = applyTransition(baseState, transition, messageKey, currentStat || {});
       const saved = saveChatState(nextState);
       refreshInjection(saved);
@@ -2223,6 +2285,22 @@ import {
       '';
     const packetSize = state.nextTurnPacket.hardFacts.length + state.nextTurnPacket.activePressures.length;
     const operationWarnings = asArray(state.lastRun?.warnings).slice(0, 3);
+    const noticeCards = [];
+    if (runtime.lastError || runtime.lastNotice) {
+      const isError = Boolean(runtime.lastError);
+      noticeCards.push(`<section class="cwe-notice ${isError ? 'danger' : ''}" role="${isError ? 'alert' : 'status'}">
+        <i aria-hidden="true"></i>
+        <div class="cwe-notice-body"><b>${isError ? '最近一次错误' : '值房消息'}</b><p>${escapeHtml(runtime.lastError || runtime.lastNotice)}</p></div>
+        <button type="button" class="cwe-notice-close" data-action="dismiss-notice" data-notice-kind="runtime" aria-label="关闭此消息"><span aria-hidden="true">×</span></button>
+      </section>`);
+    }
+    operationWarnings.forEach((value, index) => {
+      noticeCards.push(`<section class="cwe-notice danger" role="alert">
+        <i aria-hidden="true"></i>
+        <div class="cwe-notice-body"><b>本轮忽略的操作 ${index + 1}/${operationWarnings.length}</b><p>${escapeHtml(value)}</p></div>
+        <button type="button" class="cwe-notice-close" data-action="dismiss-notice" data-notice-kind="warning" data-warning-index="${index}" aria-label="关闭此条操作警告"><span aria-hidden="true">×</span></button>
+      </section>`);
+    });
     const eventLabels = ['方才', '稍前', '先前', '在案'];
     const events = recentEvents.length
       ? recentEvents
@@ -2277,8 +2355,7 @@ import {
           <div class="cwe-duty-strip"><span>最近结算 <b>${escapeHtml(processed)}</b></span><span>值房状态 <b>${escapeHtml(statusText)}</b></span></div>
         </div>
       </section>
-      ${runtime.lastError || runtime.lastNotice ? `<section class="cwe-notice ${runtime.lastError ? 'danger' : ''}"><i></i><div><b>${runtime.lastError ? '最近一次错误' : '值房消息'}</b><p>${escapeHtml(runtime.lastError || runtime.lastNotice)}</p></div></section>` : ''}
-      ${operationWarnings.length ? `<section class="cwe-notice danger"><i></i><div><b>本轮忽略的操作</b><p>${operationWarnings.map(value => escapeHtml(value)).join('；')}</p></div></section>` : ''}
+      ${noticeCards.length ? `<div class="cwe-notice-stack" aria-live="polite">${noticeCards.join('')}</div>` : ''}
       <section class="cwe-ledger-layout">
         <div class="cwe-ledger-main">
           <header class="cwe-ledger-head"><div><small>正在发生</small><h3>天下事次</h3></div><button type="button" data-tab="events">查看全部 ${state.activeEvents.length} 件</button></header>
@@ -2717,6 +2794,25 @@ import {
       }
       if (action === 'settings-close') {
         runtime.activeTab = 'overview';
+        renderPanel();
+        return;
+      }
+      if (action === 'dismiss-notice') {
+        const kind = event.target.closest('[data-notice-kind]')?.dataset.noticeKind;
+        if (kind === 'warning') {
+          const state = getChatState();
+          if (state.lastRun) {
+            const warningIndex = Number(event.target.closest('[data-warning-index]')?.dataset.warningIndex);
+            const warnings = asArray(state.lastRun.warnings);
+            if (Number.isInteger(warningIndex) && warningIndex >= 0) warnings.splice(warningIndex, 1);
+            state.lastRun = { ...state.lastRun, warnings };
+            saveChatState(state);
+          }
+        } else {
+          runtime.lastError = '';
+          runtime.lastNotice = '';
+          updateLampState();
+        }
         renderPanel();
         return;
       }
