@@ -5,7 +5,6 @@ import ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH from './original-tongcheng-relation
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
 const STATUSBAR_VERSION = '1.7.11';
 const MAP_ASSET_REVISION = 'd697affd3ed71c09e8278cc2ac37b5d3b5dc2ded';
-const FORMAL_WORLDBOOK_NAME = '残明余烬1.7';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
@@ -4572,36 +4571,27 @@ async function repairBuiltinTongchengCharacterProfiles() {
   };
 }
 
-async function bindFormalWorldbook() {
+async function readCurrentPrimaryWorldbook() {
   const readWorldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
-  const rebindWorldbooks = globalThis.rebindCharWorldbooks ?? window.parent?.rebindCharWorldbooks;
   if (typeof readWorldbook !== 'function') throw new Error('世界书读取接口不可用。');
 
-  const entries = (await readWorldbook(FORMAL_WORLDBOOK_NAME)) || [];
+  const worldbookName = getWorldbookName();
+  const entries = (await readWorldbook(worldbookName)) || [];
   const requiredNames = BUILTIN_TONGCHENG_OPENINGS.map(opening => opening.entry);
   const missing = requiredNames.filter(
     requiredName => !entries.some(entry => entry?.name === requiredName && String(entry.content || '').trim()),
   );
   if (missing.length)
     throw new Error(
-      `正式主世界书「${FORMAL_WORLDBOOK_NAME}」缺少内置资源：${missing.join('、')}。请重新导入完整角色卡。`,
+      `当前角色卡绑定的主世界书「${worldbookName}」缺少内置资源：${missing.join('、')}。请确认绑定的是完整的《残明余烬》世界书。`,
     );
 
-  const binding = getCharWorldbookNames('current') || {};
-  if (
-    typeof rebindWorldbooks === 'function' &&
-    (binding.primary !== FORMAL_WORLDBOOK_NAME || (binding.additional || []).length)
-  ) {
-    await rebindWorldbooks('current', { primary: FORMAL_WORLDBOOK_NAME, additional: [] });
-  }
   return entries;
 }
 
 async function installBuiltinTongchengScenario() {
   try {
-    // 即使原版开局已经安装，也要先校正为单主世界书；否则旧版留下的
-    // additional 绑定会在“已安装”分支提前返回后继续重复消耗 Token。
-    const entries = await bindFormalWorldbook();
+    const entries = await readCurrentPrimaryWorldbook();
     const installed = await getInstalledScenarioInfo();
     const originalProfileCount = ORIGINAL_TONGCHENG_CHARACTER_PROFILES.profiles.length;
     const installedProfileCount = Number(installed?.context?.originalCharacterProfileCount || 0);
@@ -7442,7 +7432,12 @@ function updatePortraitOverlay() {
 }
 
 function getWorldbookName() {
-  return FORMAL_WORLDBOOK_NAME;
+  const getNames = globalThis.getCharWorldbookNames ?? window.parent?.getCharWorldbookNames;
+  if (typeof getNames !== 'function') throw new Error('角色卡世界书绑定读取接口不可用');
+  const binding = getNames('current') || {};
+  const primary = String(binding.primary || '').trim();
+  if (!primary) throw new Error('当前角色卡未绑定主世界书');
+  return primary;
 }
 
 async function syncWorldbookSettings() {
@@ -7740,14 +7735,6 @@ async function bootstrap() {
   const parentDocument = window.parent?.document ?? document;
   const parentWindow = window.parent ?? window;
   exposeStatusbarActions();
-  try {
-    // 角色卡启动时就把历史遗留的“旧主书 + 附加书”纠正为单主世界书，
-    // 避免玩家必须再次点击“使用原版开局”才能停止重复注入。
-    await bindFormalWorldbook();
-  } catch (error) {
-    // 不让世界书修复失败阻断状态栏；安装原版开局时仍会显示完整错误。
-    console.warn('[残明余烬] 自动校正单主世界书失败:', error);
-  }
   const portraitLibrary = getPortraitLibrary();
   window.CanmingPortraitLibrary = portraitLibrary;
   if (window.parent && window.parent !== window) window.parent.CanmingPortraitLibrary = portraitLibrary;
