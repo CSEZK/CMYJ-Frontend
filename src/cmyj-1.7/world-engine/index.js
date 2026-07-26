@@ -7,7 +7,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 (() => {
   'use strict';
 
-  const VERSION = '1.2.0';
+  const VERSION = '1.3.0';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -1438,6 +1438,24 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       : [];
   }
 
+  function operationText(value) {
+    return Array.isArray(value) ? operationTextArray(value).join('、') : asText(value);
+  }
+
+  function firstOperationText(...values) {
+    for (const value of values) {
+      const text = operationText(value);
+      if (text) return text;
+    }
+    return '';
+  }
+
+  function semanticTitle(value, maxLength = 48) {
+    const text = asText(value).replace(/\s+/g, ' ');
+    if (!text) return '';
+    return (text.split(/[。！？!?\n]/)[0] || text).trim().slice(0, maxLength);
+  }
+
   function inferOperationType(operation, declaredType) {
     if (SUPPORTED_OPERATION_TYPES.has(declaredType)) return declaredType;
     const id = asText(
@@ -1569,7 +1587,10 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     if (asText(flatValue.action) === type) delete flatValue.action;
     let value = explicitValue || flatValue;
     const nestedEntity = operationObject(value?.[entityKey]);
-    if (nestedEntity && Object.keys(value).length === 1) value = nestedEntity;
+    if (nestedEntity) {
+      value = { ...value, ...nestedEntity };
+      delete value[entityKey];
+    }
     if (type.startsWith('event.') && type !== declaredType && !asText(value.stage || value.category)) {
       value = { ...value, category: declaredType };
     }
@@ -1752,19 +1773,41 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     return [...map.values()].slice(-limit);
   }
 
-  function eventInput(raw, id = raw?.id) {
-    const summary = asText(raw?.summary || raw?.description || raw?.content);
+  function eventInput(raw, id = raw?.id, fallbackLocation = '') {
+    const titleSource = firstOperationText(raw?.title, raw?.name, raw?.event_name, raw?.eventName);
+    const summarySource = firstOperationText(raw?.summary, raw?.description, raw?.content, raw?.text, titleSource);
+    const title = titleSource || semanticTitle(summarySource);
+    const summary = summarySource || title;
     return {
       id,
-      title: asText(raw?.title || raw?.name),
-      stage: asText(raw?.stage || raw?.category || raw?.kind || raw?.event_type || raw?.eventType || raw?.status),
-      status: asText(raw?.status, 'active'),
-      location: asText(raw?.location),
-      actors: operationTextArray(raw?.actors || raw?.participants),
+      title,
+      stage: firstOperationText(
+        raw?.stage,
+        raw?.category,
+        raw?.kind,
+        raw?.event_type,
+        raw?.eventType,
+        raw?.status,
+        summary ? '进行中' : '',
+      ),
+      status: firstOperationText(raw?.status, raw?.state, summary ? 'active' : ''),
+      location: firstOperationText(
+        raw?.location,
+        raw?.place,
+        raw?.where,
+        raw?.site,
+        summary ? fallbackLocation || '地点未明' : '',
+      ),
+      actors: operationTextArray(raw?.actors || raw?.participants || raw?.involved_actors || raw?.involvedActors),
       summary,
-      next_trigger: asText(
-        raw?.next_trigger || raw?.nextTrigger || raw?.next_step || raw?.nextStep || raw?.trigger,
-        summary ? '相关当事人的下一步行动将推动局势' : '',
+      next_trigger: firstOperationText(
+        raw?.next_trigger,
+        raw?.nextTrigger,
+        raw?.next_step,
+        raw?.nextStep,
+        raw?.trigger,
+        raw?.impact,
+        summary ? '等待相关人物的下一步行动推动局势' : '',
       ),
       source_fact_ids: operationTextArray(raw?.source_fact_ids || raw?.sourceFactIds),
       impact_domains: operationTextArray(raw?.impact_domains || raw?.impactDomains),
@@ -1772,45 +1815,107 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
   }
 
   function actorInput(raw, id = raw?.id) {
-    const description = asText(raw?.description || raw?.summary);
+    const name = firstOperationText(raw?.name, raw?.actor_name, raw?.actorName);
+    const description = firstOperationText(raw?.description, raw?.summary, raw?.content);
     return {
       id,
-      name: asText(raw?.name),
-      location: asText(raw?.location),
-      goal: asText(raw?.goal),
-      current_action: asText(raw?.current_action || raw?.currentAction || raw?.action || description || raw?.status),
+      name,
+      location: firstOperationText(raw?.location, raw?.place, raw?.where),
+      goal: firstOperationText(raw?.goal, raw?.objective, raw?.intent),
+      current_action: firstOperationText(
+        raw?.current_action,
+        raw?.currentAction,
+        raw?.action,
+        description,
+        raw?.status,
+        name ? '当前行动未明' : '',
+      ),
       knowledge: operationTextArray(raw?.knowledge || raw?.knows),
-      next_decision: asText(raw?.next_decision || raw?.nextDecision || raw?.goal),
-      updated_reason: asText(raw?.updated_reason || raw?.updatedReason || raw?.reason || description || raw?.status),
+      next_decision: firstOperationText(raw?.next_decision, raw?.nextDecision, raw?.goal),
+      updated_reason: firstOperationText(
+        raw?.updated_reason,
+        raw?.updatedReason,
+        raw?.reason,
+        description,
+        raw?.status,
+        name ? '本轮被识别为相关人物' : '',
+      ),
     };
   }
 
   function intelInput(raw, id = raw?.id) {
     const reliability = Number(raw?.reliability ?? raw?.confidence ?? raw?.certainty);
+    const content = firstOperationText(raw?.content, raw?.message, raw?.summary, raw?.description, raw?.text);
+    const receivers = operationTextArray(
+      raw?.receivers ||
+        raw?.recipients ||
+        raw?.receiver ||
+        raw?.recipient ||
+        raw?.destination ||
+        raw?.targets ||
+        raw?.known_by ||
+        raw?.knownBy,
+    );
     return {
       id,
-      content: asText(raw?.content),
-      origin: asText(raw?.origin || raw?.source),
-      destination: asText(raw?.destination || raw?.receiver || raw?.recipient),
-      channel: asText(raw?.channel || raw?.method || raw?.medium, '口耳相传'),
-      status: asText(raw?.status),
-      eta: asText(raw?.eta || raw?.reach_time || raw?.reachTime || raw?.arrival_time || raw?.arrivalTime),
+      content,
+      origin: firstOperationText(raw?.origin, raw?.source, raw?.sender, raw?.from, content ? '来源未明' : ''),
+      destination: firstOperationText(
+        raw?.destination,
+        raw?.receiver,
+        raw?.recipient,
+        raw?.receivers,
+        raw?.recipients,
+        raw?.to,
+        raw?.targets,
+        content ? '去向未明' : '',
+      ),
+      channel: firstOperationText(raw?.channel, raw?.method, raw?.medium, raw?.route, content ? '口耳相传' : ''),
+      status: firstOperationText(raw?.status, raw?.state, raw?.phase, content ? '传播中' : ''),
+      eta: firstOperationText(
+        raw?.eta,
+        raw?.reach_time,
+        raw?.reachTime,
+        raw?.arrival_time,
+        raw?.arrivalTime,
+        raw?.timing,
+        raw?.delay,
+        content ? '抵达时间未明' : '',
+      ),
       reliability:
         Number.isFinite(reliability) && reliability > 0 ? (reliability > 1 ? reliability / 100 : reliability) : 0.7,
-      known_by: operationTextArray(raw?.known_by || raw?.knownBy || raw?.receiver || raw?.recipient),
+      known_by: receivers,
     };
   }
 
   function hookInput(raw, id = raw?.id) {
+    const titleSource = firstOperationText(raw?.title, raw?.name, raw?.hook_name, raw?.hookName);
+    const summarySource = firstOperationText(raw?.summary, raw?.description, raw?.content, raw?.text, titleSource);
+    const title = titleSource || semanticTitle(summarySource);
+    const summary = summarySource || title;
     return {
       id,
-      title: asText(raw?.title),
-      stage: asText(raw?.stage),
-      summary: asText(raw?.summary),
-      visible_signs: asArray(raw?.visible_signs || raw?.visibleSigns),
-      trigger: asText(raw?.trigger),
-      fail_condition: asText(raw?.fail_condition || raw?.failCondition),
-      source_fact_ids: asArray(raw?.source_fact_ids || raw?.sourceFactIds),
+      title,
+      stage: firstOperationText(raw?.stage, raw?.status, raw?.state, summary ? '潜伏中' : ''),
+      summary,
+      visible_signs: operationTextArray(raw?.visible_signs || raw?.visibleSigns || raw?.signs || raw?.clues),
+      trigger: firstOperationText(
+        raw?.trigger,
+        raw?.next_trigger,
+        raw?.nextTrigger,
+        raw?.condition,
+        summary ? '相关人物获得行动机会时' : '',
+      ),
+      fail_condition: firstOperationText(
+        raw?.fail_condition,
+        raw?.failCondition,
+        raw?.resolve_condition,
+        raw?.resolveCondition,
+        raw?.end_condition,
+        raw?.endCondition,
+        summary ? '伏线被化解或失去现实条件' : '',
+      ),
+      source_fact_ids: operationTextArray(raw?.source_fact_ids || raw?.sourceFactIds),
     };
   }
 
@@ -1982,25 +2087,30 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           reject(operation, `patch 目标 ${id} 不存在`);
           continue;
         }
-        const merged = normalizer({ ...(existing || {}), ...(isPatch ? patch : value) }, id);
+        const merged = normalizer(
+          { ...(existing || {}), ...(isPatch ? patch : value) },
+          id,
+          asText(currentStat?.世界运转?.当前地点),
+        );
         if (isPatch && JSON.stringify(merged) === JSON.stringify(normalizer(existing, id))) {
           reject(operation, 'patch 没有产生有效变化');
           continue;
         }
         const valid = type.startsWith('event.')
-          ? merged.title && merged.stage && merged.location && merged.summary && merged.next_trigger
+          ? merged.title && merged.summary
           : type.startsWith('actor.')
-            ? merged.name && merged.current_action && merged.updated_reason
+            ? merged.name
             : type.startsWith('intel.')
-              ? merged.content &&
-                merged.origin &&
-                merged.destination &&
-                merged.channel &&
-                merged.status &&
-                merged.eta &&
-                merged.reliability > 0
-              : merged.title && merged.stage && merged.summary && merged.trigger && merged.fail_condition;
-        if (!valid) reject(operation, '合并后的记录缺少必填字段');
+              ? merged.content
+              : merged.title && merged.summary;
+        const invalidReason = type.startsWith('event.')
+          ? '缺少事件标题或内容'
+          : type.startsWith('actor.')
+            ? '缺少人物名称'
+            : type.startsWith('intel.')
+              ? '缺少情报内容'
+              : '缺少伏线标题或内容';
+        if (!valid) reject(operation, invalidReason);
         else {
           transition[output].push(merged);
           accept();

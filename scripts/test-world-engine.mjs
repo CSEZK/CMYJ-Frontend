@@ -210,6 +210,104 @@ assert.equal(observedTransition.upsert_intel[0].origin, '桐城街坊闲谈');
 assert.equal(observedTransition.upsert_intel[0].destination, '林记米铺/周氏');
 assert.equal(observedTransition.upsert_intel[0].eta, '崇祯七年七月初四');
 
+const latestLiveApiShape = normalizeIncrementalResult(
+  {
+    baseRevision: 0,
+    operations: [
+      { type: 'summary.replace', content: '桐城民变后，云际寺赃银去向引起各方追查。' },
+      { type: 'fact.add', content: '玩家于云际寺利用草乌毒酒击杀汪国华。' },
+      { type: 'fact.add', content: '三万五千两白银被埋藏于挂车河口荒院。' },
+      { type: 'fact.add', content: '方仲嘉负伤生还并知晓云际寺内情。' },
+      { type: 'fact.add', content: '杨尔铭委任玩家为桐城县快班班头。' },
+      {
+        type: 'actor.upsert',
+        name: '杨尔铭',
+        born_year: 1617,
+        identities: ['桐城知县'],
+        location: '桐城县衙',
+        goal: '平定境内民变',
+        status: '疲惫且焦虑',
+        description: '到任即遇民变，急需政治资本回旋。',
+      },
+      {
+        type: 'actor.upsert',
+        name: '方仲嘉',
+        identities: ['荻港把总', '方氏族人'],
+        location: '桐城凤仪里方宅',
+        goal: '追回失踪白银',
+        status: '负伤养病',
+        description: '方孔炤族弟，因云际寺事变怨恨苏某。',
+      },
+      {
+        type: 'actor.upsert',
+        name: '汪国华',
+        identities: ['乱民副首领'],
+        status: '死亡',
+        description: '于云际寺被玩家斩杀。',
+      },
+      {
+        type: 'intel.upsert',
+        source: '玩家',
+        content: '白银埋藏在挂车河口荒废院落后院。',
+        receivers: ['常彪', '顾明远', '赵砚'],
+        importance: 10,
+      },
+      {
+        type: 'intel.upsert',
+        source: '王兵备',
+        content: '云际寺原藏有巨额赃银，现已不翼而飞。',
+        receivers: ['池州驻军'],
+        importance: 7,
+      },
+      {
+        type: 'hook.upsert',
+        content: '方仲嘉的复仇：方家可能利用官府公文或江湖手段算计新任班头。',
+        status: 'active',
+      },
+    ],
+    parallel_scenes: [],
+  },
+  0,
+);
+const latestLiveTransition = buildTransitionFromOperations(
+  { activeEvents: [], actors: [], intelPackets: [], hooks: [], facts: [] },
+  latestLiveApiShape,
+  { 世界运转: { 当前地点: '桐城县和济堂药铺' } },
+);
+assert.equal(latestLiveTransition.operation_stats.accepted, 11);
+assert.equal(latestLiveTransition.operation_stats.rejected, 0);
+assert.equal(latestLiveTransition.upsert_intel[0].destination, '常彪、顾明远、赵砚');
+assert.equal(latestLiveTransition.upsert_intel[0].channel, '口耳相传');
+assert.equal(latestLiveTransition.upsert_intel[0].eta, '抵达时间未明');
+assert.match(latestLiveTransition.upsert_hooks[0].title, /方仲嘉的复仇/);
+assert.equal(latestLiveTransition.upsert_hooks[0].trigger, '相关人物获得行动机会时');
+
+const minimalSemanticEvent = normalizeIncrementalResult(
+  {
+    base_revision: 0,
+    operations: [
+      {
+        type: 'event.upsert',
+        value: {
+          event: { content: '方家开始暗中追查云际寺赃银。', status: 'active' },
+          importance: 8,
+        },
+      },
+    ],
+    parallel_scenes: [],
+  },
+  0,
+);
+const minimalSemanticEventTransition = buildTransitionFromOperations(
+  { activeEvents: [], actors: [], intelPackets: [], hooks: [], facts: [] },
+  minimalSemanticEvent,
+  { 世界运转: { 当前地点: '桐城县' } },
+);
+assert.equal(minimalSemanticEventTransition.operation_stats.accepted, 1);
+assert.equal(minimalSemanticEventTransition.operation_stats.rejected, 0);
+assert.match(minimalSemanticEventTransition.upsert_events[0].title, /方家开始暗中追查/);
+assert.equal(minimalSemanticEventTransition.upsert_events[0].location, '桐城县');
+
 const nestedSemanticShape = normalizeIncrementalResult(
   {
     base_revision: 0,
