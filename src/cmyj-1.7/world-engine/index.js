@@ -7,7 +7,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 (() => {
   'use strict';
 
-  const VERSION = '1.1.3';
+  const VERSION = '1.2.0';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -946,7 +946,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 
 二、增量原则
 1. 只返回发生变化的内容，不重写完整档案。
-2. patch 必须复用 CANONICAL_STATE 中已有的稳定 ID；目标不存在时不要 patch，应在资料充足时 upsert。
+2. patch/resolve/remove 必须复用 CANONICAL_STATE 中已有的稳定 ID；upsert 可以不提供 ID，由脚本根据实体内容生成。
 3. 普通回合不要 summary.replace。只有重大局势改变、日期明显推进或旧摘要失真时才更新摘要。
 4. 人物只有在行动、地点、目标、知识或下一决策确实变化时才更新。
 5. 情报必须有起点、终点、渠道、状态和抵达时间；人物不能无渠道获得消息。
@@ -959,7 +959,8 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 
 四、输出
 1. 只返回符合 JSON Schema 的一个 JSON 对象。operations 可以为空；没有变化的字段不得凑数。base_revision 必须原样回传。
-2. operations 中每一项都必须带 type 字段。type 只能是：summary.replace、fact.add、event.upsert、event.patch、event.resolve、actor.upsert、actor.patch、intel.upsert、intel.patch、intel.remove、hook.upsert、hook.patch、hook.resolve。不得使用 op、operation、action 或自造名称代替 type。`;
+2. operations 中每一项都必须带 type 字段。type 只能是：summary.replace、fact.add、event.upsert、event.patch、event.resolve、actor.upsert、actor.patch、intel.upsert、intel.patch、intel.remove、hook.upsert、hook.patch、hook.resolve。不得使用 op、operation、action 或自造名称代替 type。
+3. upsert 的 ID 可省略；脚本会生成稳定 ID。不要为了新增人物、事件或情报臆造内部 ID。只有修改或结束已有记录时才必须照抄既有 ID。`;
   }
 
   function incrementalOutputSchema() {
@@ -1035,7 +1036,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     const recordOperation = (type, fields, mode, requiredFields = []) => ({
       type: 'object',
       additionalProperties: false,
-      required: mode === 'patch' ? ['type', 'id', 'set'] : ['type', 'id', 'value'],
+      required: mode === 'patch' ? ['type', 'id', 'set'] : ['type', 'value'],
       properties: {
         type: { type: 'string', enum: [type] },
         id: text,
@@ -1075,7 +1076,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
                 {
                   type: 'object',
                   additionalProperties: false,
-                  required: ['type', 'id', 'value'],
+                  required: ['type', 'value'],
                   properties: {
                     type: { type: 'string', enum: ['fact.add'] },
                     id: text,
@@ -1460,6 +1461,34 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     return declaredType;
   }
 
+  function deriveUpsertId(type, value) {
+    const prefix = {
+      'fact.add': 'F',
+      'event.upsert': 'EV',
+      'actor.upsert': 'AC',
+      'intel.upsert': 'IN',
+      'hook.upsert': 'HK',
+    }[type];
+    if (!prefix) return '';
+    const identity = asText(
+      value?.name ||
+        value?.title ||
+        value?.content ||
+        value?.summary ||
+        value?.description ||
+        value?.fact ||
+        value?.text,
+    );
+    if (!identity) return '';
+    const discriminator =
+      type === 'fact.add'
+        ? asText(value?.location)
+        : type === 'intel.upsert'
+          ? asText(value?.origin || value?.source)
+          : '';
+    return stableId(prefix, identity, discriminator);
+  }
+
   function normalizeOperationShape(operation) {
     if (!operationObject(operation)) return operation;
     const typeCandidates = [
@@ -1487,11 +1516,15 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         asText(operation.value) ||
         asText(
           operation.summary ||
+            operation.new_summary ||
+            operation.newSummary ||
             operation.world_summary ||
             operation.worldSummary ||
             operation.content ||
             operation.text ||
             valueObject?.summary ||
+            valueObject?.new_summary ||
+            valueObject?.newSummary ||
             valueObject?.world_summary ||
             valueObject?.worldSummary ||
             valueObject?.content ||
@@ -1563,6 +1596,8 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       };
     }
 
+    const effectiveId =
+      id || asText(value?.id) || (type.endsWith('.upsert') || type === 'fact.add' ? deriveUpsertId(type, value) : '');
     const patch =
       operationObject(operation.set) ||
       operationObject(operation.changes) ||
@@ -1571,7 +1606,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     return {
       ...operation,
       type,
-      ...(id ? { id } : {}),
+      ...(effectiveId ? { id: effectiveId } : {}),
       ...(type.endsWith('.patch') ? { set: patch || {} } : { value }),
     };
   }

@@ -210,6 +210,120 @@ assert.equal(observedTransition.upsert_intel[0].origin, '桐城街坊闲谈');
 assert.equal(observedTransition.upsert_intel[0].destination, '林记米铺/周氏');
 assert.equal(observedTransition.upsert_intel[0].eta, '崇祯七年七月初四');
 
+const nestedSemanticShape = normalizeIncrementalResult(
+  {
+    base_revision: 0,
+    operations: [
+      { type: 'summary.replace', new_summary: '苏家正面临药库受损和退婚风波。' },
+      {
+        type: 'fact.add',
+        fact: {
+          id: 'fact_001',
+          content: '现代灵魂已经进入苏大郎体内。',
+          significance: '核心转折',
+        },
+      },
+      {
+        type: 'fact.add',
+        fact: {
+          id: 'fact_002',
+          content: '和济堂药库因水灾坍塌，药铺经营陷入困境。',
+          significance: '家宅危机',
+        },
+      },
+      {
+        type: 'actor.upsert',
+        actor: {
+          id: 'actor_su_wantang',
+          name: '苏晚棠',
+          status: '健康',
+          location: '桐城县和济堂药铺堂屋',
+          goal: '拒绝林家退婚',
+          knowledge: ['林记米铺借过苏家银子'],
+          description: '正在堂屋与周氏争执。',
+        },
+      },
+      {
+        type: 'actor.upsert',
+        actor: {
+          name: '周氏',
+          status: '亢奋',
+          location: '桐城县和济堂药铺堂屋',
+          goal: '解除婚约',
+          description: '正在强行索要庚帖。',
+        },
+      },
+      {
+        type: 'actor.upsert',
+        actor: {
+          id: 'actor_su_wanyue',
+          name: '苏晚月',
+          status: '警惕',
+          location: '桐城县和济堂药铺',
+          goal: '观察侄儿是否真心改过',
+          description: '正在观察苏大郎伤后的言行。',
+        },
+      },
+      {
+        type: 'event.upsert',
+        event: {
+          id: 'event_hejitang_dispute',
+          name: '苏林悔婚之争',
+          location: '和济堂堂屋',
+          status: '进行中',
+          description: '周氏趁苏家势弱登门退婚。',
+          involved_actors: ['actor_su_wantang'],
+        },
+      },
+      {
+        type: 'intel.upsert',
+        intel: {
+          id: 'intel_crazy_rumor',
+          source: '市井传闻',
+          receiver: '全城百姓',
+          content: '苏大郎被打坏脑子的传闻已经传播。',
+          status: '已传播',
+          arrival_time: '崇祯七年七月初五日',
+        },
+      },
+    ],
+    parallel_scenes: [],
+  },
+  0,
+);
+assert.equal(nestedSemanticShape.operations[0].value, '苏家正面临药库受损和退婚风波。');
+assert.equal(nestedSemanticShape.operations[3].id, 'actor_su_wantang');
+assert.match(nestedSemanticShape.operations[4].id, /^AC-/);
+assert.equal(nestedSemanticShape.operations[5].id, 'actor_su_wanyue');
+assert.equal(nestedSemanticShape.operations[6].id, 'event_hejitang_dispute');
+assert.equal(nestedSemanticShape.operations[7].id, 'intel_crazy_rumor');
+const movedActor = normalizeIncrementalResult(
+  {
+    base_revision: 0,
+    operations: [
+      {
+        type: 'actor.upsert',
+        actor: {
+          name: '周氏',
+          status: '离开',
+          location: '林记米铺',
+          description: '已经离开和济堂。',
+        },
+      },
+    ],
+    parallel_scenes: [],
+  },
+  0,
+);
+assert.equal(movedActor.operations[0].id, nestedSemanticShape.operations[4].id);
+const nestedSemanticTransition = buildTransitionFromOperations(
+  { activeEvents: [], actors: [], intelPackets: [], hooks: [], facts: [] },
+  nestedSemanticShape,
+  {},
+);
+assert.equal(nestedSemanticTransition.operation_stats.accepted, 8);
+assert.equal(nestedSemanticTransition.operation_stats.rejected, 0);
+
 let generationCalls = 0;
 sandbox.generateRaw = async () => {
   generationCalls += 1;
