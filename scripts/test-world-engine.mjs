@@ -132,6 +132,84 @@ const compatibleTransition = buildTransitionFromOperations(
 assert.equal(compatibleTransition.operation_stats.accepted, 3);
 assert.equal(compatibleTransition.operation_stats.rejected, 0);
 
+const observedApiShape = normalizeIncrementalResult(
+  {
+    baseRevision: 0,
+    operations: [
+      { type: 'summary.replace', content: '桐城县退婚风波一触即发。' },
+      { type: 'fact.add', content: '苏大郎遭沈大柱击中后脑后昏死。' },
+      { type: 'fact.add', content: '和济堂药库遭水灾受损。' },
+      { type: 'fact.add', content: '周氏登门和济堂意图退婚。' },
+      {
+        type: 'actor.upsert',
+        id: 'su_dalang',
+        name: '苏大郎',
+        description: '伤后正在和济堂休养，神志已经改变。',
+        status: 'recover',
+        location: '桐城县和济堂药铺',
+      },
+      {
+        type: 'actor.upsert',
+        id: 'su_wantang',
+        name: '苏晚棠',
+        description: '正在凭大明律与往日恩情抵挡林家退婚。',
+        status: 'angry',
+        location: '和济堂堂屋',
+      },
+      {
+        type: 'actor.upsert',
+        id: 'lin_zhixia',
+        name: '林知夏',
+        description: '反对母亲退婚。',
+        status: 'anxious',
+        location: '林记米铺',
+        goal: '保住婚约',
+      },
+      {
+        type: 'actor.upsert',
+        id: 'shen_qingyan',
+        name: '沈清晏',
+        description: '仍在沈记肉铺处理伤人后的余波。',
+        status: 'worried',
+        location: '沈记肉铺',
+      },
+      {
+        type: 'social_dispute',
+        id: 'event_engagement_crisis',
+        name: '和济堂退婚风波',
+        location: '桐城县和济堂',
+        description: '周氏趁苏家势弱登门退婚，苏晚棠竭力周旋。',
+        status: 'happening',
+      },
+      {
+        type: 'intel.upsert',
+        id: 'intel_su_madness_rumor',
+        source: '桐城街坊闲谈',
+        receiver: '林记米铺/周氏',
+        content: '苏大郎被打伤后胡言乱语的传闻已经传到林家。',
+        status: 'delivered',
+        reach_time: '崇祯七年七月初四',
+      },
+    ],
+    parallel_scenes: [],
+  },
+  0,
+);
+assert.equal(observedApiShape.operations[8].type, 'event.upsert');
+const observedTransition = buildTransitionFromOperations(
+  { activeEvents: [], actors: [], intelPackets: [], hooks: [], facts: [] },
+  observedApiShape,
+  {},
+);
+assert.equal(observedTransition.operation_stats.accepted, 10);
+assert.equal(observedTransition.operation_stats.rejected, 0);
+assert.equal(observedTransition.new_facts[0].location, '本轮正文所述地点');
+assert.equal(observedTransition.upsert_events[0].stage, 'social_dispute');
+assert.equal(observedTransition.upsert_actors[0].current_action, '伤后正在和济堂休养，神志已经改变。');
+assert.equal(observedTransition.upsert_intel[0].origin, '桐城街坊闲谈');
+assert.equal(observedTransition.upsert_intel[0].destination, '林记米铺/周氏');
+assert.equal(observedTransition.upsert_intel[0].eta, '崇祯七年七月初四');
+
 let generationCalls = 0;
 sandbox.generateRaw = async () => {
   generationCalls += 1;
@@ -205,4 +283,4 @@ for (const message of [
 assert.equal(shouldFallbackFromJsonSchema(new Error('401 Unauthorized')), false);
 assert.equal(shouldFallbackFromJsonSchema(new Error('403 Forbidden')), false);
 
-console.info('天下演化测试通过：操作形状兼容、旁线降级、混合操作、通知堆叠与关闭入口。');
+console.info('天下演化测试通过：真实 API 载荷兼容、旁线降级、混合操作、通知堆叠与关闭入口。');

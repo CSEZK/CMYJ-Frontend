@@ -7,7 +7,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 (() => {
   'use strict';
 
-  const VERSION = '1.1.2';
+  const VERSION = '1.1.3';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -1420,16 +1420,62 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
   }
 
+  function operationTextArray(value) {
+    if (Array.isArray(value)) {
+      return value
+        .map(item => asText(item))
+        .filter(Boolean)
+        .slice(0, 24);
+    }
+    const text = asText(value);
+    return text
+      ? text
+          .split(/[、,，/]/)
+          .map(item => item.trim())
+          .filter(Boolean)
+          .slice(0, 24)
+      : [];
+  }
+
+  function inferOperationType(operation, declaredType) {
+    if (SUPPORTED_OPERATION_TYPES.has(declaredType)) return declaredType;
+    const id = asText(
+      operation?.id || operation?.target_id || operation?.targetId || operation?.record_id || operation?.recordId,
+    ).toLowerCase();
+    const hasText = (...keys) => keys.some(key => asText(operation?.[key]));
+    if (
+      /^event[_.-]/.test(id) ||
+      (hasText('name', 'title') && hasText('description', 'summary') && hasText('location') && hasText('status'))
+    ) {
+      return 'event.upsert';
+    }
+    if (/^actor[_.-]/.test(id) && hasText('name')) return 'actor.upsert';
+    if (
+      /^intel[_.-]/.test(id) ||
+      (hasText('content') && hasText('source', 'origin') && hasText('receiver', 'destination'))
+    ) {
+      return 'intel.upsert';
+    }
+    if (/^hook[_.-]/.test(id) && hasText('name', 'title')) return 'hook.upsert';
+    return declaredType;
+  }
+
   function normalizeOperationShape(operation) {
     if (!operationObject(operation)) return operation;
-    const type = asText(
-      operation.type ||
-        operation.operationType ||
-        operation.operation_type ||
-        operation.op ||
-        operation.operation ||
-        operation.action,
-    );
+    const typeCandidates = [
+      operation.type,
+      operation.operationType,
+      operation.operation_type,
+      operation.op,
+      operation.operation,
+      operation.action,
+    ]
+      .map(value => asText(value))
+      .filter(Boolean);
+    const declaredType = typeCandidates[0] || '';
+    const type =
+      typeCandidates.find(candidate => SUPPORTED_OPERATION_TYPES.has(candidate)) ||
+      inferOperationType(operation, declaredType);
     if (!type) return operation;
 
     const id = asText(
@@ -1473,7 +1519,6 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       'operation_type',
       'op',
       'operation',
-      'action',
       'id',
       'target_id',
       'targetId',
@@ -1488,9 +1533,13 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       'changes',
       'patch',
     ].forEach(key => delete flatValue[key]);
+    if (asText(flatValue.action) === type) delete flatValue.action;
     let value = explicitValue || flatValue;
     const nestedEntity = operationObject(value?.[entityKey]);
     if (nestedEntity && Object.keys(value).length === 1) value = nestedEntity;
+    if (type.startsWith('event.') && type !== declaredType && !asText(value.stage || value.category)) {
+      value = { ...value, category: declaredType };
+    }
 
     if (type === 'fact.add') {
       const rawConfidence = value.confidence ?? value.certainty ?? value.reliability;
@@ -1500,17 +1549,17 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         content: asText(value.content || value.fact || value.description || value.summary || value.text),
         status: asText(value.status || value.state, 'occurred'),
         scope: asText(value.scope || value.source_scope || value.sourceScope, 'player_scene'),
-        location: asText(value.location || value.place || value.where || value.site),
-        actors: asArray(value.actors || value.participants || value.people),
-        witnesses: asArray(value.witnesses || value.observers),
-        publicity: asText(value.publicity || value.visibility || value.exposure || value.public_status),
+        location: asText(value.location || value.place || value.where || value.site, '本轮正文所述地点'),
+        actors: operationTextArray(value.actors || value.participants || value.people),
+        witnesses: operationTextArray(value.witnesses || value.observers),
+        publicity: asText(value.publicity || value.visibility || value.exposure || value.public_status, '公开程度未明'),
         confidence: Number.isFinite(numericConfidence)
           ? numericConfidence > 1 && numericConfidence <= 100
             ? numericConfidence / 100
             : numericConfidence
           : 0.8,
         importance: Number(value.importance ?? value.priority ?? 60),
-        evidence: asText(value.evidence || value.source || value.basis || value.proof),
+        evidence: asText(value.evidence || value.source || value.basis || value.proof, '本轮正文明确叙述'),
       };
     }
 
@@ -1669,44 +1718,51 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
   }
 
   function eventInput(raw, id = raw?.id) {
+    const summary = asText(raw?.summary || raw?.description || raw?.content);
     return {
       id,
-      title: asText(raw?.title),
-      stage: asText(raw?.stage),
+      title: asText(raw?.title || raw?.name),
+      stage: asText(raw?.stage || raw?.category || raw?.kind || raw?.event_type || raw?.eventType || raw?.status),
       status: asText(raw?.status, 'active'),
       location: asText(raw?.location),
-      actors: asArray(raw?.actors),
-      summary: asText(raw?.summary),
-      next_trigger: asText(raw?.next_trigger || raw?.nextTrigger),
-      source_fact_ids: asArray(raw?.source_fact_ids || raw?.sourceFactIds),
-      impact_domains: asArray(raw?.impact_domains || raw?.impactDomains),
+      actors: operationTextArray(raw?.actors || raw?.participants),
+      summary,
+      next_trigger: asText(
+        raw?.next_trigger || raw?.nextTrigger || raw?.next_step || raw?.nextStep || raw?.trigger,
+        summary ? '相关当事人的下一步行动将推动局势' : '',
+      ),
+      source_fact_ids: operationTextArray(raw?.source_fact_ids || raw?.sourceFactIds),
+      impact_domains: operationTextArray(raw?.impact_domains || raw?.impactDomains),
     };
   }
 
   function actorInput(raw, id = raw?.id) {
+    const description = asText(raw?.description || raw?.summary);
     return {
       id,
       name: asText(raw?.name),
       location: asText(raw?.location),
       goal: asText(raw?.goal),
-      current_action: asText(raw?.current_action || raw?.currentAction),
-      knowledge: asArray(raw?.knowledge),
-      next_decision: asText(raw?.next_decision || raw?.nextDecision),
-      updated_reason: asText(raw?.updated_reason || raw?.updatedReason),
+      current_action: asText(raw?.current_action || raw?.currentAction || raw?.action || description || raw?.status),
+      knowledge: operationTextArray(raw?.knowledge || raw?.knows),
+      next_decision: asText(raw?.next_decision || raw?.nextDecision || raw?.goal),
+      updated_reason: asText(raw?.updated_reason || raw?.updatedReason || raw?.reason || description || raw?.status),
     };
   }
 
   function intelInput(raw, id = raw?.id) {
+    const reliability = Number(raw?.reliability ?? raw?.confidence ?? raw?.certainty);
     return {
       id,
       content: asText(raw?.content),
-      origin: asText(raw?.origin),
-      destination: asText(raw?.destination),
-      channel: asText(raw?.channel),
+      origin: asText(raw?.origin || raw?.source),
+      destination: asText(raw?.destination || raw?.receiver || raw?.recipient),
+      channel: asText(raw?.channel || raw?.method || raw?.medium, '口耳相传'),
       status: asText(raw?.status),
-      eta: asText(raw?.eta),
-      reliability: Number(raw?.reliability),
-      known_by: asArray(raw?.known_by || raw?.knownBy),
+      eta: asText(raw?.eta || raw?.reach_time || raw?.reachTime || raw?.arrival_time || raw?.arrivalTime),
+      reliability:
+        Number.isFinite(reliability) && reliability > 0 ? (reliability > 1 ? reliability / 100 : reliability) : 0.7,
+      known_by: operationTextArray(raw?.known_by || raw?.knownBy || raw?.receiver || raw?.recipient),
     };
   }
 
