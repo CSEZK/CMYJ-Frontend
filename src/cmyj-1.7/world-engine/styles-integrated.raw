@@ -2246,9 +2246,7 @@ select:focus-visible {
 }
 
 .cwe-margin-notes {
-  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  overflow: hidden;
 }
 
 .cwe-margin-notes section {
@@ -2273,12 +2271,54 @@ select:focus-visible {
   margin: 0;
   font-size: 10.5px;
   line-height: 1.55;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
+}
+
+.cwe-content-overview .cwe-margin-notes h3 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.cwe-content-overview .cwe-margin-notes .cwe-hook-progress {
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.cwe-content-overview .cwe-margin-notes footer {
+  align-items: flex-start;
+  margin-top: 7px;
+  padding-top: 6px;
+}
+
+.cwe-content-overview .cwe-margin-notes footer span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cwe-content-overview .cwe-margin-notes footer span:last-child {
+  text-align: right;
 }
 
 .cwe-margin-notes footer,
 .cwe-hook-progress {
   font-size: 9px;
+}
+
+@media (min-width: 1121px) {
+  .cwe-margin-notes {
+    grid-template-rows: minmax(max-content, 1.1fr) minmax(max-content, 0.9fr);
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 1120px) {
+  .cwe-margin-notes {
+    grid-template-rows: none;
+    overflow: visible;
+  }
 }
 
 .cwe-section-head {

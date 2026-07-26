@@ -477,5 +477,5 @@ const generated = await callWorldModel(
 assert.equal(generationCalls, 1);
 assert.equal(generated.operations[0].value.name, '沈大柱');
 
-assert.match(fullSource, /const VERSION = '1\.7\.3'/);
+assert.match(fullSource, /const VERSION = '1\.7\.4'/);
 console.info('天下演化测试通过：供应商包装、稳定 ID 派生、语义 ID 回绑、旧档迁移与无效操作均已覆盖。');

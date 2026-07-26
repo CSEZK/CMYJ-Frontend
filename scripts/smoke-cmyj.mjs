@@ -325,10 +325,15 @@ assert.doesNotMatch(releaseStatusbarSource, /rebindCharWorldbooks/);
 assert.match(releaseGeneratorSource, /STORAGE_KEY_API = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /API_SETTINGS_KEY = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /minBaseVersion: '1\.7\.0'/);
-assert.match(releaseWorldEngineSource, /VERSION = '1\.7\.3'/);
+assert.match(releaseWorldEngineSource, /VERSION = '1\.7\.4'/);
 assert.match(releaseWorldEngineSource, /settingsVersion: 3/);
 assert.match(releaseWorldEngineSource, /temperature: 1/);
 assert.match(releaseWorldEngineSource, /maxTokens: 10000/);
+assert.match(
+  releaseWorldEngineStyle,
+  /grid-template-rows: minmax\(max-content, 1\.1fr\) minmax\(max-content, 0\.9fr\)/,
+);
+assert.match(releaseWorldEngineStyle, /\.cwe-content-overview \.cwe-margin-notes footer span/);
 assert.match(releaseWorldEngineSource, /cmyj_world_engine_increment_v2/);
 assert.match(releaseWorldEngineSource, /buildTransitionFromOperations/);
 assert.match(releaseWorldEngineSource, /SUPPORTED_OPERATION_TYPES/);
