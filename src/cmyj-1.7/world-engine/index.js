@@ -7,7 +7,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 (() => {
   'use strict';
 
-  const VERSION = '1.7.2';
+  const VERSION = '1.7.3';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -345,10 +345,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         .slice(0, 24);
     return {
       offscreenMoves: stringList('offscreenMoves'),
-      arrivingIntel: [
-        ...stringList('arrivingIntel'),
-        ...stringList('arrivedIntel'),
-      ].slice(0, 24),
+      arrivingIntel: [...stringList('arrivingIntel'), ...stringList('arrivedIntel')].slice(0, 24),
       intelInTransit: stringList('intelInTransit'),
       npcKnowledge: asArray(source.npcKnowledge)
         .map(item => ({
@@ -390,6 +387,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           asText(item?.location) &&
           asText(item?.nextTrigger),
       )
+      .map(item => ({ ...item, id: cleanId(item?.id, 'EV', item?.title, item?.location) }))
       .slice(-LIMITS.activeEvents);
     state.actors = asArray(state.actors)
       .filter(
@@ -397,6 +395,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           asText(item?.name) &&
           (asText(item?.currentAction) || asText(item?.nextDecision) || asArray(item?.knowledge).some(Boolean)),
       )
+      .map(item => ({ ...item, id: cleanId(item?.id, 'AC', item?.name) }))
       .slice(-LIMITS.actors);
     state.intelPackets = asArray(state.intelPackets)
       .filter(
@@ -409,6 +408,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           asText(item?.eta) &&
           Number(item?.reliability) > 0,
       )
+      .map(item => ({ ...item, id: cleanId(item?.id, 'IN', item?.content, item?.origin) }))
       .slice(-LIMITS.intelPackets);
     state.hooks = asArray(state.hooks)
       .filter(
@@ -419,6 +419,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           asText(item?.trigger) &&
           asText(item?.failCondition),
       )
+      .map(item => ({ ...item, id: cleanId(item?.id, 'HK', item?.title) }))
       .slice(-LIMITS.hooks);
     state.cameraHistory = asArray(state.cameraHistory).slice(-LIMITS.cameraHistory);
     state.parallelTurns = asArray(state.parallelTurns)
@@ -781,7 +782,10 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     const source = asArray(records);
     if (source.length <= limit) return source;
     const start = Math.abs(Number(revision) || 0) % source.length;
-    return Array.from({ length: Math.min(limit, source.length) }, (_, index) => source[(start + index) % source.length]);
+    return Array.from(
+      { length: Math.min(limit, source.length) },
+      (_, index) => source[(start + index) % source.length],
+    );
   }
 
   function mergeRecords(primary, secondary, limit) {
@@ -821,13 +825,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     return {
       revision: state.revision,
       activeEvents: mergeRecords(
-        selectRelevantRecords(state.activeEvents, currentText, 8, [
-          'id',
-          'title',
-          'location',
-          'actors',
-          'summary',
-        ]),
+        selectRelevantRecords(state.activeEvents, currentText, 8, ['id', 'title', 'location', 'actors', 'summary']),
         autonomyFocus?.activeEvents,
         10,
       ),
@@ -1109,6 +1107,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 二、增量原则
 1. 只返回发生变化的内容，不重写完整档案。
 2. patch/resolve/remove 必须复用 CANONICAL_STATE 中已有的稳定 ID；upsert 可以不提供 ID，由脚本根据实体内容生成。
+   若目标尚未出现在对应档案数组中，必须使用 upsert，绝不能根据姓名自造 actor_xxx、event_xxx 一类 ID。patch 的 set 还要附带身份字段：人物 name、事件/伏线 title、情报 content，供脚本核对目标。
 3. 不要总结正文、复述世界现状、记录玩家履历或重写 MVU/状态栏字段；这些由聊天记忆、变量结构与状态栏负责。
 4. 事件只记录仍在自行推进、会对未来形成压力的进程，不把玩家当前任务或地图静态态势换一种说法抄入档案。
 5. 人物只记录玩家视野外的行动、地点、目标、knowledge、does_not_know 或下一决策变化；当前在场人物的状态由 MVU 负责。明确的认知盲区写入 does_not_know，不要只列“知道什么”。
@@ -1186,7 +1185,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         type: { type: 'string', enum: [type] },
         id: text,
         ...(mode === 'patch'
-          ? { set: { type: 'object', additionalProperties: false, properties: fields } }
+          ? { set: { type: 'object', additionalProperties: false, required: requiredFields, properties: fields } }
           : {
               value: {
                 type: 'object',
@@ -1227,7 +1226,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
                   'summary',
                   'next_trigger',
                 ]),
-                recordOperation('event.patch', eventFields, 'patch'),
+                recordOperation('event.patch', eventFields, 'patch', ['title']),
                 idOperation('event.resolve'),
                 recordOperation('actor.upsert', actorFields, 'upsert', [
                   'name',
@@ -1236,7 +1235,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
                   'current_action',
                   'updated_reason',
                 ]),
-                recordOperation('actor.patch', actorFields, 'patch'),
+                recordOperation('actor.patch', actorFields, 'patch', ['name']),
                 recordOperation('intel.upsert', intelFields, 'upsert', [
                   'content',
                   'origin',
@@ -1246,7 +1245,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
                   'eta',
                   'reliability',
                 ]),
-                recordOperation('intel.patch', intelFields, 'patch'),
+                recordOperation('intel.patch', intelFields, 'patch', ['content']),
                 idOperation('intel.remove'),
                 recordOperation('hook.upsert', hookFields, 'upsert', [
                   'title',
@@ -1255,7 +1254,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
                   'trigger',
                   'fail_condition',
                 ]),
-                recordOperation('hook.patch', hookFields, 'patch'),
+                recordOperation('hook.patch', hookFields, 'patch', ['title']),
                 idOperation('hook.resolve'),
               ],
             },
@@ -1516,10 +1515,11 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
   function legacyOperations(result) {
     const operations = [];
     const addRecords = (type, records) => {
-      asArray(records).forEach((value, index) => {
+      asArray(records).forEach(value => {
+        const id = asText(value?.id);
         operations.push({
           type,
-          id: asText(value?.id) || `${type}-${index + 1}`,
+          ...(id ? { id } : {}),
           value,
         });
       });
@@ -1590,6 +1590,11 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     'details',
     'params',
     'arguments',
+    // 部分兼容 OpenAI 的供应商会无视 upsert 的 value 约束，错误地沿用 patch 包装。
+    // 归一化阶段统一剥离，真正的 patch 仍会在下方写回 set。
+    'set',
+    'changes',
+    'patch',
   ]);
 
   function unwrapOperationPayload(value, entityKey) {
@@ -1597,9 +1602,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     if (!current) return null;
     current = { ...current };
     for (let depth = 0; depth < 3; depth += 1) {
-      const nestedKey = [entityKey, ...OPERATION_PAYLOAD_KEYS].find(
-        key => key && operationObject(current?.[key]),
-      );
+      const nestedKey = [entityKey, ...OPERATION_PAYLOAD_KEYS].find(key => key && operationObject(current?.[key]));
       if (!nestedKey) break;
       const nested = current[nestedKey];
       delete current[nestedKey];
@@ -1664,6 +1667,34 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           ? asText(value?.origin || value?.source)
           : '';
     return stableId(prefix, identity, discriminator);
+  }
+
+  function operationIdentity(type, value) {
+    if (type.startsWith('event.')) return firstOperationText(value?.title, value?.name);
+    if (type.startsWith('actor.')) return firstOperationText(value?.name, value?.actor_name, value?.actorName);
+    if (type.startsWith('intel.')) return firstOperationText(value?.content, value?.message, value?.summary);
+    if (type.startsWith('hook.')) return firstOperationText(value?.title, value?.name);
+    return '';
+  }
+
+  function comparableIdentity(value) {
+    return asText(value).normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+  }
+
+  function existingByIdentity(type, collection, value) {
+    const identity = comparableIdentity(operationIdentity(type, value));
+    if (!identity) return null;
+    const matches = asArray(collection).filter(item => comparableIdentity(operationIdentity(type, item)) === identity);
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  function hasOperationChangeBeyondIdentity(type, value) {
+    const identityKeys = type.startsWith('actor.')
+      ? new Set(['name', 'actor_name', 'actorName'])
+      : type.startsWith('intel.')
+        ? new Set(['content', 'message', 'summary'])
+        : new Set(['title', 'name']);
+    return Object.keys(value || {}).some(key => !identityKeys.has(key));
   }
 
   function normalizeOperationShape(operation) {
@@ -1776,8 +1807,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       id || asText(value?.id) || (type.endsWith('.upsert') || type === 'fact.add' ? deriveUpsertId(type, value) : '');
     const patchSource =
       operationObject(operation.set) || operationObject(operation.changes) || operationObject(operation.patch);
-    const patch =
-      unwrapOperationPayload(patchSource, entityKey) || (type.endsWith('.patch') ? value : null);
+    const patch = unwrapOperationPayload(patchSource, entityKey) || (type.endsWith('.patch') ? value : null);
     return {
       ...operation,
       type,
@@ -1828,7 +1858,11 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
   function worldInfoItemContent(item) {
     if (typeof item === 'string') return item.trim();
     if (!item || typeof item !== 'object') return '';
-    if (Array.isArray(item.entries)) return item.entries.map(value => asText(value)).filter(Boolean).join('\n');
+    if (Array.isArray(item.entries))
+      return item.entries
+        .map(value => asText(value))
+        .filter(Boolean)
+        .join('\n');
     return asText(item.content || item.value || item.text || item.prompt).trim();
   }
 
@@ -1989,13 +2023,13 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         const request =
           typeof generateRaw === 'function'
             ? generateRaw(config)
-             : generate({
-                 generation_id: generationId,
-                 should_silence: true,
-                 user_input: `${worldInfoSupplement ? `酒馆额外激活的世界书设定与行动约束：\n${worldInfoSupplement}\n\n` : ''}${incrementalSystemPrompt()}\n\n${requestUserPrompt}`,
-                 ...(usePromptJsonSchema ? {} : { json_schema: schema }),
-                 custom_api: customApi,
-               });
+            : generate({
+                generation_id: generationId,
+                should_silence: true,
+                user_input: `${worldInfoSupplement ? `酒馆额外激活的世界书设定与行动约束：\n${worldInfoSupplement}\n\n` : ''}${incrementalSystemPrompt()}\n\n${requestUserPrompt}`,
+                ...(usePromptJsonSchema ? {} : { json_schema: schema }),
+                custom_api: customApi,
+              });
         let timeoutId;
         const raw = await Promise.race([
           Promise.resolve(request).finally(() => clearTimeout(timeoutId)),
@@ -2399,27 +2433,45 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           reject(operation, '未知操作类型');
           continue;
         }
-        if (!id) {
-          reject(operation, '缺少稳定 ID');
-          continue;
-        }
         const [collection, output, normalizer] = descriptor;
         const isPatch = type.endsWith('.patch');
-        const existing = existingById(baseState[collection], id);
         if (isPatch && !Object.keys(patch).length) {
           reject(operation, 'patch 没有提交任何变化字段');
           continue;
         }
-        if (isPatch && !existing) {
-          reject(operation, `patch 目标 ${id} 不存在`);
+
+        let effectiveId = id;
+        let existing = effectiveId ? existingById(baseState[collection], effectiveId) : null;
+        if (!existing) {
+          const identityMatch = existingByIdentity(type, baseState[collection], isPatch ? patch : value);
+          if (identityMatch) {
+            existing = identityMatch;
+            effectiveId = asText(identityMatch.id);
+          }
+        }
+
+        // 未入天下档案的人物/事件经常被模型误写成 patch，并臆造 actor_xxx 一类 ID。
+        // 只有载荷带有可验证的实体身份时才本地降级为新增，避免把匿名 patch 串到错误档案。
+        const repairedUnknownPatch =
+          isPatch &&
+          !existing &&
+          Boolean(operationIdentity(type, patch)) &&
+          hasOperationChangeBeyondIdentity(type, patch);
+        if (isPatch && !existing && !repairedUnknownPatch) {
+          reject(operation, effectiveId ? `patch 目标 ${effectiveId} 不存在` : 'patch 缺少可识别的目标身份');
           continue;
         }
-        const merged = normalizer(
-          { ...(existing || {}), ...(isPatch ? patch : value) },
-          id,
-          asText(currentStat?.世界运转?.当前地点),
-        );
-        if (isPatch && JSON.stringify(merged) === JSON.stringify(normalizer(existing, id))) {
+
+        const input = repairedUnknownPatch
+          ? patch
+          : isPatch || existing
+            ? { ...existing, ...(isPatch ? patch : value) }
+            : value;
+        if (!effectiveId || repairedUnknownPatch) {
+          effectiveId = deriveUpsertId(type.replace('.patch', '.upsert'), input);
+        }
+        const merged = normalizer(input, effectiveId, asText(currentStat?.世界运转?.当前地点));
+        if (isPatch && existing && JSON.stringify(merged) === JSON.stringify(normalizer(existing, effectiveId))) {
           reject(operation, 'patch 没有产生有效变化');
           continue;
         }
@@ -2438,6 +2490,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
               ? '缺少情报内容'
               : '缺少伏线标题或内容';
         if (!valid) reject(operation, invalidReason);
+        else if (!effectiveId) reject(operation, '无法根据实体内容生成稳定 ID');
         else {
           transition[output].push(merged);
           accept();
@@ -3112,9 +3165,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     const blindSpots = [
       ...packet.intelInTransit.map(value => ({ tone: '在途', value })),
       ...packet.uncertainties.map(value => ({ tone: '未证', value })),
-      ...packet.npcKnowledge.flatMap(item =>
-        item.doesNotKnow.map(value => ({ tone: `${item.name}未知`, value })),
-      ),
+      ...packet.npcKnowledge.flatMap(item => item.doesNotKnow.map(value => ({ tone: `${item.name}未知`, value }))),
     ].slice(0, 24);
     const blindSpotCards = blindSpots.length
       ? blindSpots
@@ -3751,7 +3802,8 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     if (typeof on !== 'function' || !events) return;
 
     on(events.GENERATION_STARTED, (generationType, _options, dryRun) => {
-      if (dryRun || runtime.dryRunCapture || runtime.worldRequestActive || !isMainGenerationType(generationType)) return;
+      if (dryRun || runtime.dryRunCapture || runtime.worldRequestActive || !isMainGenerationType(generationType))
+        return;
       runtime.activeMainGeneration = {
         type: String(generationType),
         startedAt: Date.now(),
