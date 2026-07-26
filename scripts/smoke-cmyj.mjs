@@ -192,7 +192,11 @@ assert.match(
   /remoteLoaderUrl = 'https:\/\/cmyj-frontend\.pages\.dev\/cmyj-1\.7\/loader\/index\.js'/,
 );
 assert.doesNotMatch(releaseCardPackagerSource, /remoteLoaderUrl\s*=\s*['"][^'"]+\?v=/);
-assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.10'/);
+assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.11'/);
+assert.match(releaseWorkshopSource, /function textCoverMarkup/);
+assert.match(releaseWorkshopSource, /class="text-cover tone-/);
+assert.match(releaseWorkshopSource, /data-text-cover-image/);
+assert.match(releaseWorkshopSource, /function revealTextCover/);
 assert.match(releaseScenarioSource, /isOfficialDeepSeekApi\(custom\)/);
 assert.match(releaseScenarioSource, /deepSeekJsonSchemaPrompt\(schema\)/);
 assert.match(releaseScenarioSource, /usePromptJsonSchema \? \{\} : \{ json_schema: schema \}/);

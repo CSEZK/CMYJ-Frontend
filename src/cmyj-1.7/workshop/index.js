@@ -414,4 +414,93 @@ click=async function(event){
   }
   return clickWithScenarioCreator(event);
 };
+function workCoverUrl(item){
+  return String(item?.cover_url||item?.coverUrl||'').split(/[\n,]/).map(value=>value.trim()).find(value=>/^https?:\/\//i.test(value))||'';
+}
+function textCoverMarkup(item,mode='card'){
+  const title=String(item?.title||'无题藏品').trim()||'无题藏品';
+  const seed=String(item?.id||title);
+  let hash=0;
+  for(const character of seed)hash=(hash*31+character.codePointAt(0))|0;
+  const tone=Math.abs(hash)%5;
+  const titleClass=title.length>30?' is-very-long':title.length>16?' is-long':'';
+  const mark=Array.from(title.replace(/[\s·—－_「」『』《》【】]/g,''))[0]||'藏';
+  return `<div class="text-cover tone-${tone} is-${mode}" aria-hidden="true"><span class="text-cover-kicker">${h(type(item?.type))}</span><strong class="text-cover-title${titleClass}">${h(title)}</strong><span class="text-cover-mark">${h(mark)}</span><span class="text-cover-foot"><b>残明余烬</b><i>CMYJ ARCHIVE</i></span></div>`;
+}
+const cardWithTextCover=card;
+card=function(item){
+  return cardWithTextCover(item).replace('<div class="cover">',`<div class="cover text-cover-host">${textCoverMarkup(item)}`);
+};
+featuredRibbonCard=function(item){
+  const cover=workCoverUrl(item);
+  return `<article class="featured-entry" data-a="detail" data-id="${h(item.id)}"><div class="featured-media text-cover-host">${textCoverMarkup(item,'compact')}${cover?`<img src="${h(cover)}" alt="${h(item.title)}" loading="lazy" referrerpolicy="no-referrer" data-text-cover-image>`:''}</div><div class="featured-copy"><small>${h(type(item.type))}</small><b>${h(item.title)}</b>${authorIdentity(item,true)}</div></article>`;
+};
+const detailWithTextCover=detail;
+detail=async function(id){
+  const result=await detailWithTextCover(id);
+  if(work&&!workCoverUrl(work)){
+    root?.querySelector('.work-detail>.btn')?.insertAdjacentHTML('afterend',`<div class="detail-text-cover text-cover-host">${textCoverMarkup(work,'detail')}</div>`);
+  }
+  return result;
+};
+function revealTextCover(event){
+  const image=event.target;
+  if(image?.matches?.('.text-cover-host>img'))image.remove();
+}
+const openWithTextCovers=open;
+open=async function(options={}){
+  const result=await openWithTextCovers(options);
+  root?.addEventListener('error',revealTextCover,true);
+  root?.querySelectorAll('.text-cover-host>img').forEach(image=>{
+    if(image.complete&&!image.naturalWidth)image.remove();
+  });
+  return result;
+};
+const shellWithTextCovers=shell;
+shell=function(body){
+  shellWithTextCovers(body);
+  root.insertAdjacentHTML('afterbegin',`<style>
+    #${R} .text-cover-host{position:relative;isolation:isolate}
+    #${R} .text-cover-host>img{position:absolute;inset:0;z-index:2;width:100%;height:100%;object-fit:cover}
+    #${R} .text-cover{--tc-paper:#cdbb92;--tc-ink:#302920;--tc-accent:#833d32;position:absolute;inset:0;z-index:1;display:grid;grid-template-rows:auto 1fr auto;overflow:hidden;padding:22px;color:var(--tc-ink);background:
+      radial-gradient(circle at 82% 15%,color-mix(in srgb,var(--tc-accent) 14%,transparent),transparent 26%),
+      repeating-linear-gradient(0deg,transparent 0 22px,color-mix(in srgb,var(--tc-ink) 5%,transparent) 23px 24px),
+      linear-gradient(145deg,color-mix(in srgb,var(--tc-paper) 86%,#fff),var(--tc-paper))}
+    #${R} .text-cover:before{content:"";position:absolute;inset:11px;border:1px solid color-mix(in srgb,var(--tc-ink) 38%,transparent);box-shadow:inset 0 0 0 4px color-mix(in srgb,var(--tc-paper) 72%,transparent),inset 0 0 0 5px color-mix(in srgb,var(--tc-ink) 17%,transparent);pointer-events:none}
+    #${R} .text-cover:after{content:"";position:absolute;right:-24%;bottom:-11%;width:78%;aspect-ratio:1;border:1px solid color-mix(in srgb,var(--tc-accent) 19%,transparent);border-radius:50%;box-shadow:0 0 0 12px color-mix(in srgb,var(--tc-accent) 4%,transparent),0 0 0 13px color-mix(in srgb,var(--tc-accent) 12%,transparent);pointer-events:none}
+    #${R} .text-cover.tone-1{--tc-paper:#b9bea2;--tc-ink:#243027;--tc-accent:#526d50}
+    #${R} .text-cover.tone-2{--tc-paper:#b9b8ad;--tc-ink:#242b35;--tc-accent:#435c72}
+    #${R} .text-cover.tone-3{--tc-paper:#c4b1b0;--tc-ink:#35272f;--tc-accent:#765063}
+    #${R} .text-cover.tone-4{--tc-paper:#b5c1b9;--tc-ink:#21302d;--tc-accent:#3f6e69}
+    #${R} .text-cover-kicker{position:relative;z-index:1;justify-self:start;padding:3px 7px;border-left:3px solid var(--tc-accent);font-size:10px;font-weight:800;letter-spacing:.24em}
+    #${R} .text-cover-title{position:relative;z-index:1;align-self:center;max-width:90%;margin:18px auto;font-size:clamp(25px,2.25vw,36px);line-height:1.38;letter-spacing:.12em;text-align:center;text-wrap:balance;text-shadow:0 1px color-mix(in srgb,#fff 36%,transparent)}
+    #${R} .text-cover-title.is-long{font-size:clamp(21px,1.85vw,29px);letter-spacing:.07em}
+    #${R} .text-cover-title.is-very-long{font-size:clamp(18px,1.55vw,24px);line-height:1.45;letter-spacing:.035em}
+    #${R} .text-cover-mark{position:absolute;right:21px;bottom:24px;z-index:1;display:grid;width:42px;height:42px;place-items:center;border:2px solid var(--tc-accent);color:var(--tc-accent);font-size:22px;font-weight:900;line-height:1;transform:rotate(-5deg);opacity:.9}
+    #${R} .text-cover-foot{position:relative;z-index:1;display:grid;align-self:end;gap:1px;padding-right:54px}
+    #${R} .text-cover-foot b{font-size:11px;letter-spacing:.2em}
+    #${R} .text-cover-foot i{font-size:7px;font-style:normal;letter-spacing:.19em;opacity:.64}
+    #${R} .featured-media>.text-cover{padding:10px}
+    #${R} .text-cover.is-compact:before{inset:5px;box-shadow:none}
+    #${R} .text-cover.is-compact:after,#${R} .text-cover.is-compact .text-cover-foot{display:none}
+    #${R} .text-cover.is-compact .text-cover-kicker{max-width:100%;overflow:hidden;padding:2px 4px;font-size:7px;letter-spacing:.08em;text-overflow:ellipsis;white-space:nowrap}
+    #${R} .text-cover.is-compact .text-cover-title{max-width:100%;margin:7px 0 19px;font-size:12px;line-height:1.35;letter-spacing:.04em;display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:3}
+    #${R} .text-cover.is-compact .text-cover-mark{right:9px;bottom:8px;width:23px;height:23px;font-size:12px}
+    #${R} .detail-text-cover{width:min(390px,100%);aspect-ratio:3/4;margin:18px auto 24px;overflow:hidden;border:1px solid var(--line);border-radius:18px;box-shadow:0 20px 50px color-mix(in srgb,var(--ink) 16%,transparent)}
+    #${R} .detail-text-cover .text-cover-title{font-size:clamp(28px,5vw,44px)}
+    #${R} .detail-text-cover .text-cover-title.is-long{font-size:clamp(23px,4vw,34px)}
+    #${R} .detail-text-cover .text-cover-title.is-very-long{font-size:clamp(19px,3.3vw,28px)}
+    @media(max-width:700px){
+      #${R} .cover>.text-cover{padding:12px}
+      #${R} .cover>.text-cover:before{inset:6px;box-shadow:none}
+      #${R} .cover .text-cover-kicker{padding:2px 5px;font-size:7px;letter-spacing:.1em}
+      #${R} .cover .text-cover-title{max-width:100%;margin:8px 0 30px;font-size:16px;line-height:1.35;letter-spacing:.04em}
+      #${R} .cover .text-cover-title.is-long,#${R} .cover .text-cover-title.is-very-long{font-size:13px}
+      #${R} .cover .text-cover-foot{padding-right:0}
+      #${R} .cover .text-cover-foot b{font-size:8px}
+      #${R} .cover .text-cover-foot i{font-size:5px}
+      #${R} .cover .text-cover-mark{right:10px;bottom:10px;width:28px;height:28px;font-size:15px}
+    }
+  </style>`);
+};
 globalThis.CanmingWorkshop={apiVersion:1,bridgeVersion:1,runtimeVersion:WV,open,close,destroy:close,validatePackage:check,validateScenarioPackage:scenarioPackageSummary,forgetScenarioInstall};try{window.parent.CanmingWorkshop=globalThis.CanmingWorkshop}catch{}})();
