@@ -10,7 +10,7 @@ source = source.slice(source.indexOf('(() =>'));
 const end = source.lastIndexOf('})();');
 source =
   source.slice(0, end) +
-  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel };\n' +
+  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel, statusLabel, noticeLabel };\n' +
   source.slice(end);
 
 const sandbox = {
@@ -38,7 +38,14 @@ sandbox.window.parent = sandbox;
 sandbox.globalThis = sandbox;
 vm.runInNewContext(source, sandbox);
 
-const { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel } = sandbox.__cweTest;
+const { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel, statusLabel, noticeLabel } =
+  sandbox.__cweTest;
+assert.equal(statusLabel('occurred'), '已发生');
+assert.equal(statusLabel('resolved'), '已了结');
+assert.equal(statusLabel('social_dispute'), '纷争中');
+assert.equal(statusLabel('unexpected_model_state'), '状态未明');
+assert.equal(statusLabel('潜伏'), '潜伏');
+assert.equal(noticeLabel('fact.add：缺少 evidence'), '事实登记：缺少 依据');
 for (const key of ['type', 'operationType', 'operation_type', 'op', 'operation', 'action']) {
   const normalized = normalizeIncrementalResult(
     {
@@ -479,10 +486,20 @@ assert.equal(sceneFallback.parallel_scenes.length, 1);
 
 assert.match(fullSource, /data-action="dismiss-notice"/);
 assert.match(fullSource, /action === 'dismiss-notice'/);
-assert.match(styles, /\.cwe-notice-stack \.cwe-notice\s*\{[^}]*position: relative/s);
-assert.match(styles, /\.cwe-notice-stack\s*\{[^}]*position: static/s);
-assert.match(styles, /@media \(max-width: 820px\)\s*\{[\s\S]*?\.cwe-notice-stack\s*\{[^}]*gap: 8px/s);
-assert.match(styles, /\.cwe-notice-close\s*\{[^}]*width: 34px/s);
+assert.match(styles, /通知匣：脱离正文排版/);
+assert.match(styles, /\.cwe-notice-stack\s*\{[^}]*position: absolute/s);
+assert.match(styles, /\.cwe-notice-stack \.cwe-notice\s*\{[^}]*min-height: 42px/s);
+assert.match(styles, /移动值房：单一内容滚动层/);
+assert.match(styles, /\.cwe-command-main > \.cwe-tabs\s*\{[^}]*display: contents/s);
+assert.match(styles, /\.cwe-content-parallel \.cwe-parallel-board\s*\{[^}]*overflow: visible/s);
+assert.match(
+  styles,
+  /\.cwe-content-overview \.cwe-ledger-layout\s*\{[^}]*margin: 0;[^}]*padding: 0;/s,
+);
+assert.match(
+  styles,
+  /\.cwe-content-overview \.cwe-margin-notes > section:last-child\s*\{[^}]*padding: 12px;/s,
+);
 for (const message of [
   '400 Bad Request',
   'HTTP 415 Unsupported Media Type: response_format',
@@ -495,4 +512,4 @@ for (const message of [
 assert.equal(shouldFallbackFromJsonSchema(new Error('401 Unauthorized')), false);
 assert.equal(shouldFallbackFromJsonSchema(new Error('403 Forbidden')), false);
 
-console.info('天下演化测试通过：真实 API 载荷兼容、旁线降级、混合操作、通知堆叠与关闭入口。');
+console.info('天下演化测试通过：真实 API 载荷兼容、状态中文化、紧凑通知与移动端单层滚动。');

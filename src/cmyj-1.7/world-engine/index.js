@@ -7,7 +7,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 (() => {
   'use strict';
 
-  const VERSION = '1.3.0';
+  const VERSION = '1.4.0';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -124,6 +124,56 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 
   function asText(value, fallback = '') {
     return typeof value === 'string' ? value.trim() : fallback;
+  }
+
+  const STATUS_LABELS = Object.freeze({
+    occurred: '已发生',
+    resolved: '已了结',
+    active: '推进中',
+    happening: '进行中',
+    ongoing: '进行中',
+    in_progress: '进行中',
+    pending: '待处理',
+    planned: '筹备中',
+    recover: '休养中',
+    recovering: '休养中',
+    angry: '愤怒',
+    anxious: '忧虑',
+    worried: '不安',
+    delivered: '已送达',
+    arrived: '已抵达',
+    spreading: '传播中',
+    propagating: '传播中',
+    in_transit: '在途',
+    descriptive: '已记录',
+    social_dispute: '纷争中',
+    hidden: '潜伏中',
+    dormant: '潜伏中',
+  });
+
+  function statusLabel(value, fallback = '状态未明') {
+    const text = asText(value);
+    if (!text) return fallback;
+    const key = text.toLowerCase().replace(/[\s-]+/g, '_');
+    if (STATUS_LABELS[key]) return STATUS_LABELS[key];
+    return /[\u3400-\u9fff]/u.test(text) ? text : fallback;
+  }
+
+  function noticeLabel(value) {
+    return String(value ?? '')
+      .replaceAll('summary.replace', '天下摘要')
+      .replaceAll('event.upsert', '世事登记')
+      .replaceAll('event.resolve', '世事结案')
+      .replaceAll('actor.upsert', '人物行动')
+      .replaceAll('intel.upsert', '驿报登记')
+      .replaceAll('hook.upsert', '伏线登记')
+      .replaceAll('hook.resolve', '伏线结案')
+      .replaceAll('fact.add', '事实登记')
+      .replaceAll('stable ID', '稳定编号')
+      .replaceAll('location', '地点')
+      .replaceAll('publicity', '公开度')
+      .replaceAll('evidence', '依据')
+      .replaceAll('summary', '摘要');
   }
 
   function escapeHtml(value) {
@@ -2599,14 +2649,14 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       const isError = Boolean(runtime.lastError);
       noticeCards.push(`<section class="cwe-notice ${isError ? 'danger' : ''}" role="${isError ? 'alert' : 'status'}">
         <i aria-hidden="true"></i>
-        <div class="cwe-notice-body"><b>${isError ? '最近一次错误' : '值房消息'}</b><p>${escapeHtml(runtime.lastError || runtime.lastNotice)}</p></div>
+        <div class="cwe-notice-body"><b>${isError ? '最近一次错误' : '值房消息'}</b><p>${escapeHtml(noticeLabel(runtime.lastError || runtime.lastNotice))}</p></div>
         <button type="button" class="cwe-notice-close" data-action="dismiss-notice" data-notice-kind="runtime" aria-label="关闭此消息"><span aria-hidden="true">×</span></button>
       </section>`);
     }
     operationWarnings.forEach((value, index) => {
       noticeCards.push(`<section class="cwe-notice danger" role="alert">
         <i aria-hidden="true"></i>
-        <div class="cwe-notice-body"><b>本轮忽略的操作 ${index + 1}/${operationWarnings.length}</b><p>${escapeHtml(value)}</p></div>
+        <div class="cwe-notice-body"><b>忽略 ${index + 1}/${operationWarnings.length}</b><p>${escapeHtml(noticeLabel(value))}</p></div>
         <button type="button" class="cwe-notice-close" data-action="dismiss-notice" data-notice-kind="warning" data-warning-index="${index}" aria-label="关闭此条操作警告"><span aria-hidden="true">×</span></button>
       </section>`);
     });
@@ -2615,8 +2665,8 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       ? recentEvents
           .map((event, index) => {
             const tone = index === 0 ? 'danger' : index === 1 ? 'busy' : 'safe';
-            const cause = event.actors?.length ? event.actors.join('、') : event.stage || '因由仍在查核';
-            const eventState = event.stage || event.status || '推进中';
+            const cause = event.actors?.length ? event.actors.join('、') : '因由仍在查核';
+            const eventState = statusLabel(event.stage || event.status, '推进中');
             const influence = asArray(event.impactDomains).length
               ? event.impactDomains.join('／')
               : event.nextTrigger || '影响仍待显现';
@@ -2673,7 +2723,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         <aside class="cwe-margin-notes">
           <section>
             <header><small>正在展开的伏线</small><b>${hook ? '伏线将熟' : '尚无伏线'}</b></header>
-            ${hook ? `<h3>${escapeHtml(hook.title || hook.id)}</h3><p>${escapeHtml(shortText(hook.summary, 220))}</p><div class="cwe-hook-progress"><span>成熟度</span><i><b style="width:${hookProgress}%"></b></i></div><footer><span>${escapeHtml(hook.stage || '潜伏')}</span><span>${escapeHtml(hook.trigger ? `触发：${hook.trigger}` : '等待触发')}</span></footer>` : `<h3>伏线尚未入档</h3><p>完成一次推演后，未在玩家视角出现的因果会记录于此。</p><div class="cwe-hook-progress"><span>成熟度</span><i><b style="width:0%"></b></i></div>`}
+            ${hook ? `<h3>${escapeHtml(hook.title || hook.id)}</h3><p>${escapeHtml(shortText(hook.summary, 220))}</p><div class="cwe-hook-progress"><span>成熟度</span><i><b style="width:${hookProgress}%"></b></i></div><footer><span>${escapeHtml(statusLabel(hook.stage, '潜伏中'))}</span><span>${escapeHtml(hook.trigger ? `触发：${hook.trigger}` : '等待触发')}</span></footer>` : `<h3>伏线尚未入档</h3><p>完成一次推演后，未在玩家视角出现的因果会记录于此。</p><div class="cwe-hook-progress"><span>成熟度</span><i><b style="width:0%"></b></i></div>`}
           </section>
           <section>
             <header><small>可能延后的后果</small><b>${delayedConsequence ? '后果待至' : '尚待积累'}</b></header>
@@ -2691,7 +2741,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           .map(
             event => `
       <article class="cwe-record cwe-record-event">
-        <header><div><small>${escapeHtml(event.id)}</small><h3>${escapeHtml(event.title || '未题名事件')}</h3></div>${tag(event.stage || event.status || '进行中', 'safe')}</header>
+        <header><div><small>${escapeHtml(event.id)}</small><h3>${escapeHtml(event.title || '未题名事件')}</h3></div>${tag(statusLabel(event.stage || event.status, '进行中'), 'safe')}</header>
         <p>${escapeHtml(event.summary)}</p>
         <footer><span>${escapeHtml(event.location || '地点未明')}</span><span>${escapeHtml(event.nextTrigger ? `下一触发：${event.nextTrigger}` : '等待后续')}</span></footer>
       </article>`,
@@ -2703,7 +2753,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           .map(
             item => `
       <article class="cwe-record compact">
-        <header><div><small>${escapeHtml(item.channel || '未知渠道')} · ${Math.round(Number(item.reliability || 0) * 100)}%</small><h3>${escapeHtml(shortText(item.content, 90))}</h3></div>${tag(item.status || '在途')}</header>
+        <header><div><small>${escapeHtml(item.channel || '未知渠道')} · ${Math.round(Number(item.reliability || 0) * 100)}%</small><h3>${escapeHtml(shortText(item.content, 90))}</h3></div>${tag(statusLabel(item.status, '在途'))}</header>
         <footer><span>${escapeHtml(item.origin || '未知')} → ${escapeHtml(item.destination || '未知')}</span><span>${escapeHtml(item.eta || '抵达时间未定')}</span></footer>
       </article>`,
           )
@@ -2771,7 +2821,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           .map(
             hook => `
       <article class="cwe-hook">
-        <header><h3>${escapeHtml(hook.title || hook.id)}</h3>${tag(hook.stage || '潜伏', 'hook')}</header>
+        <header><h3>${escapeHtml(hook.title || hook.id)}</h3>${tag(statusLabel(hook.stage, '潜伏中'), 'hook')}</header>
         <p>${escapeHtml(shortText(hook.summary, 180))}</p>
         ${hook.trigger ? `<small>触发：${escapeHtml(hook.trigger)}</small>` : ''}
       </article>`,
@@ -2971,7 +3021,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           <header><div><small>结构化推演</small><h3>模型参数</h3></div>${tag(`${settings.maxTokens} tokens`)}</header>
           <div class="cwe-field-row"><label><span>温度</span><input type="number" min="0" max="1.5" step="0.05" data-setting="temperature" value="${settings.temperature}"></label><label><span>最大输出</span><input type="number" min="1800" max="16000" step="100" data-setting="maxTokens" value="${settings.maxTokens}"></label></div>
           <label class="cwe-field"><span>保留近期事实</span><input type="number" min="60" max="240" step="10" data-setting="maxFacts" value="${settings.maxFacts}"></label>
-          <div class="cwe-actions-row"><button class="primary" type="button" data-action="save-settings">保存设置</button><button type="button" data-action="export-state">导出档案</button><button class="danger" type="button" data-action="clear-state">清空档案</button></div>
+          <div class="cwe-actions-row"><button class="primary" type="button" data-action="save-settings">保存设置</button><button type="button" data-action="refresh-injection">重建联动</button><button type="button" data-action="export-state">导出档案</button><button class="danger" type="button" data-action="clear-state">清空档案</button></div>
           <p class="cwe-help">当前聊天：${escapeHtml(state.chatId || '未识别')}。清空只影响这一份聊天，不影响其他存档。</p>
         </section>
       </div>`;
