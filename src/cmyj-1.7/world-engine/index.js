@@ -7,7 +7,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 (() => {
   'use strict';
 
-  const VERSION = '1.7.0';
+  const VERSION = '1.7.1';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -2569,7 +2569,6 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     state.lastProcessed = { messageId: messageKey.messageId, swipeId: messageKey.swipeId, hash: messageKey.hash };
     state.lastRun = {
       at: nowIso(),
-      newFactCount: newFacts.length,
       sourceMessageId: messageKey.messageId,
       sourceSwipeId: messageKey.swipeId,
       acceptedOperations: Number(source.operation_stats?.accepted) || 0,
