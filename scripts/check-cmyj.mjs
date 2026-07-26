@@ -28,4 +28,14 @@ for (const tree of trees) {
   }
 }
 
-console.info('残明余烬 1.6、DLC 测试版与 1.7 正式版源码、构建产物均通过语法检查。');
+const worldEngineTest = spawnSync(process.execPath, [path.join(root, 'scripts', 'test-world-engine.mjs')], {
+  cwd: root,
+  encoding: 'utf8',
+});
+if (worldEngineTest.status !== 0) {
+  process.stderr.write(worldEngineTest.stderr || worldEngineTest.stdout);
+  process.exit(worldEngineTest.status || 1);
+}
+if (worldEngineTest.stdout) process.stdout.write(worldEngineTest.stdout);
+
+console.info('残明余烬 1.6、DLC 测试版与 1.7 正式版均通过语法检查，天下演化真实载荷回归通过。');
