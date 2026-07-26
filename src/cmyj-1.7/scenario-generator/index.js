@@ -10,7 +10,7 @@ import { buildScenarioCharacterCatalog } from './character-catalog.js';
   const ROOT_ID = 'canming-scenario-generator-root';
   const STYLE_ID = 'canming-scenario-generator-style';
   const PROJECT_KEY = 'canming-dlc:scenario-generator:project:v1';
-  const CHARACTER_PROFILE_STORAGE_KEY = 'character_profiles_v1';
+  const CHARACTER_PROFILE_STORAGE_KEY = 'canming-afterglow-statusbar:character_profiles_v1';
   const API_SETTINGS_KEY = 'canming-gen-api-cfg';
   const ERA_ENTRY_NAME = '[scenario_generator]崇祯七年七月模板';
   const ERA_ID = 'cmyj.era.chongzhen-7-07';
