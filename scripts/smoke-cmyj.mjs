@@ -302,9 +302,9 @@ assert.match(releaseWorkshopSource, /UK='canming-workshop:user'/);
 assert.match(releaseWorkshopSource, /INSTALLS_KEY='canming-workshop:installs-v1'/);
 assert.match(releaseStatusbarSource, /WORKSHOP_TOKEN_KEY = 'canming-workshop:token'/);
 assert.match(releaseStatusbarSource, /ACTIVE_DLC_STORAGE_PREFIX = 'canming-dlc:active-scenario-v1:'/);
-assert.match(releaseStatusbarSource, /const FORMAL_WORLDBOOK_NAME = '残明余烬1\.7'/);
-assert.match(releaseStatusbarSource, /async function bindFormalWorldbook\(\)/);
-assert.match(releaseStatusbarSource, /rebindCharWorldbooks/);
+assert.doesNotMatch(releaseStatusbarSource, /FORMAL_WORLDBOOK_NAME/);
+assert.match(releaseStatusbarSource, /async function readCurrentPrimaryWorldbook\(\)/);
+assert.match(releaseStatusbarSource, /getCharWorldbookNames/);
 assert.match(releaseStatusbarSource, /data\.是否处女 === false \? '非处女' : '处女'/);
 assert.match(releaseStatusbarSource, /data\.同房次数/);
 assert.match(releaseSchemaSource, /是否处女: z\.boolean\(\)\.prefault\(true\)/);
@@ -312,13 +312,12 @@ assert.match(releaseSchemaSource, /同房次数: z\.coerce/);
 assert.match(releaseSchemaSource, /Math\.max\(0, Math\.trunc\(v\)\)/);
 assert.match(releaseScenarioSource, /是否处女: true/);
 assert.match(releaseScenarioSource, /同房次数: 0/);
-assert.match(
-  releaseStatusbarSource,
-  /rebindWorldbooks\('current', \{ primary: FORMAL_WORLDBOOK_NAME, additional: \[\] \}\)/,
-);
+assert.match(releaseStatusbarSource, /const worldbookName = getWorldbookName\(\)/);
+assert.match(releaseStatusbarSource, /const binding = getNames\('current'\) \|\| \{\}/);
+assert.match(releaseStatusbarSource, /const primary = String\(binding\.primary \|\| ''\)\.trim\(\)/);
 assert.doesNotMatch(releaseStatusbarSource, /additional\.push\(binding\.primary\)/);
-assert.match(releaseStatusbarSource, /await bindFormalWorldbook\(\)/);
-assert.match(releaseStatusbarSource, /自动校正单主世界书失败/);
+assert.match(releaseStatusbarSource, /const entries = await readCurrentPrimaryWorldbook\(\)/);
+assert.doesNotMatch(releaseStatusbarSource, /rebindCharWorldbooks/);
 assert.match(releaseGeneratorSource, /STORAGE_KEY_API = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /API_SETTINGS_KEY = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /minBaseVersion: '1\.7\.0'/);
