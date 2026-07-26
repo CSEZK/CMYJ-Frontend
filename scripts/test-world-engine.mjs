@@ -7,7 +7,7 @@ let source = fullSource.slice(fullSource.indexOf('(() =>'));
 const end = source.lastIndexOf('})();');
 source =
   source.slice(0, end) +
-  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel };\n' +
+  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel, normalizeState };\n' +
   source.slice(end);
 
 const sandbox = {
@@ -35,7 +35,7 @@ sandbox.window.parent = sandbox;
 sandbox.globalThis = sandbox;
 vm.runInNewContext(source, sandbox);
 
-const { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel } = sandbox.__cweTest;
+const { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel, normalizeState } = sandbox.__cweTest;
 const emptyState = () => ({ activeEvents: [], actors: [], intelPackets: [], hooks: [] });
 const currentStat = { 世界运转: { 当前地点: '桐城县和济堂药铺' } };
 
@@ -126,11 +126,7 @@ assert.equal(liveAttributesResult.operations[2].value.name, '沈大柱');
 assert.equal(liveAttributesResult.operations[4].value.source, '西街目击百姓');
 assert.equal(liveAttributesResult.operations[5].value.description.startsWith('若主角连续七日'), true);
 
-const liveAttributesTransition = buildTransitionFromOperations(
-  emptyState(),
-  liveAttributesResult,
-  currentStat,
-);
+const liveAttributesTransition = buildTransitionFromOperations(emptyState(), liveAttributesResult, currentStat);
 assert.equal(liveAttributesTransition.operation_stats.accepted, 6);
 assert.equal(liveAttributesTransition.operation_stats.rejected, 0);
 assert.equal(liveAttributesTransition.upsert_events[0].title, '和济堂生存危机');
@@ -189,6 +185,56 @@ assert.equal(wrapperTransition.operation_stats.accepted, 4);
 assert.equal(wrapperTransition.operation_stats.rejected, 0);
 assert.equal(wrapperTransition.upsert_intel[0].destination, '常彪、顾明远');
 
+// upsert 被供应商错包进 set/changes/patch 时仍应提取实体，并由脚本生成稳定 ID。
+const misplacedUpsertPayloads = normalizeIncrementalResult(
+  {
+    schema_version: 2,
+    base_revision: 0,
+    operations: [
+      { type: 'hook.upsert', set: { description: '朱由检命王承恩暗查宫门值守。' } },
+      { type: 'hook.upsert', changes: { content: '方家将在三日后查验赃银账簿。' } },
+      { type: 'hook.upsert', patch: { summary: '驿卒若误期，塘报将在下一驿受阻。' } },
+    ],
+    parallel_scenes: [],
+  },
+  0,
+);
+const misplacedUpsertTransition = buildTransitionFromOperations(emptyState(), misplacedUpsertPayloads, currentStat);
+assert.equal(misplacedUpsertTransition.operation_stats.accepted, 3);
+assert.equal(misplacedUpsertTransition.operation_stats.rejected, 0);
+assert.equal(new Set(misplacedUpsertTransition.upsert_hooks.map(item => item.id)).size, 3);
+misplacedUpsertTransition.upsert_hooks.forEach(item => assert.match(item.id, /^HK-/));
+
+const repeatedHook = buildTransitionFromOperations(
+  emptyState(),
+  normalizeIncrementalResult(
+    {
+      schema_version: 2,
+      base_revision: 0,
+      operations: [{ type: 'hook.upsert', value: { description: '朱由检命王承恩暗查宫门值守。' } }],
+      parallel_scenes: [],
+    },
+    0,
+  ),
+  currentStat,
+);
+assert.equal(repeatedHook.upsert_hooks[0].id, misplacedUpsertTransition.upsert_hooks[0].id);
+
+// legacy 增量缺 ID 时不能使用受数组顺序影响的 hook.upsert-1，应走同一稳定派生逻辑。
+const legacyHookTransition = buildTransitionFromOperations(
+  emptyState(),
+  normalizeIncrementalResult(
+    {
+      baseRevision: 0,
+      upsert_hooks: [{ description: '朱由检命王承恩暗查宫门值守。' }],
+    },
+    0,
+  ),
+  currentStat,
+);
+assert.equal(legacyHookTransition.operation_stats.accepted, 1);
+assert.equal(legacyHookTransition.upsert_hooks[0].id, repeatedHook.upsert_hooks[0].id);
+
 // patch 使用 attributes/fields 时同样必须落到 set，而不是被当成空 patch。
 const patchResult = normalizeIncrementalResult(
   {
@@ -232,6 +278,160 @@ const patchTransition = buildTransitionFromOperations(
 assert.equal(patchTransition.operation_stats.accepted, 1);
 assert.equal(patchTransition.operation_stats.rejected, 0);
 assert.equal(patchTransition.upsert_actors[0].goal, '连夜离开桐城');
+
+// 模型臆造语义 ID 时，优先用载荷中的唯一人物姓名回绑真实档案 ID。
+const semanticPatch = normalizeIncrementalResult(
+  {
+    schema_version: 2,
+    base_revision: 1,
+    operations: [
+      {
+        type: 'actor.patch',
+        id: 'actor_zhu_youjian',
+        set: {
+          name: '朱由检',
+          current_action: '命王承恩暗查宫门值守',
+          updated_reason: '收到宫门换防奏报',
+        },
+      },
+    ],
+    parallel_scenes: [],
+  },
+  1,
+);
+const semanticPatchTransition = buildTransitionFromOperations(
+  {
+    ...emptyState(),
+    actors: [
+      {
+        id: 'AC-real',
+        name: '朱由检',
+        location: '乾清宫',
+        goal: '掌握京师军政',
+        currentAction: '批阅奏疏',
+        knowledge: [],
+        doesNotKnow: [],
+        nextDecision: '',
+        updatedReason: '旧档案',
+      },
+    ],
+  },
+  semanticPatch,
+  currentStat,
+);
+assert.equal(semanticPatchTransition.operation_stats.accepted, 1);
+assert.equal(semanticPatchTransition.operation_stats.rejected, 0);
+assert.equal(semanticPatchTransition.upsert_actors[0].id, 'AC-real');
+assert.equal(semanticPatchTransition.upsert_actors[0].current_action, '命王承恩暗查宫门值守');
+
+const semanticUpsertTransition = buildTransitionFromOperations(
+  {
+    ...emptyState(),
+    actors: [
+      {
+        id: 'AC-real',
+        name: '朱由检',
+        location: '乾清宫',
+        goal: '掌握京师军政',
+        currentAction: '批阅奏疏',
+        knowledge: [],
+        doesNotKnow: [],
+        nextDecision: '',
+        updatedReason: '旧档案',
+      },
+    ],
+  },
+  normalizeIncrementalResult(
+    {
+      schema_version: 2,
+      base_revision: 1,
+      operations: [
+        {
+          type: 'actor.upsert',
+          id: 'actor_zhu_youjian',
+          value: { name: '朱由检', current_action: '召见王承恩', updated_reason: '宫门换防' },
+        },
+      ],
+      parallel_scenes: [],
+    },
+    1,
+  ),
+  currentStat,
+);
+assert.equal(semanticUpsertTransition.upsert_actors[0].id, 'AC-real');
+assert.equal(semanticUpsertTransition.upsert_actors[0].location, '乾清宫');
+assert.equal(semanticUpsertTransition.upsert_actors[0].goal, '掌握京师军政');
+
+// 人物尚未入档时，带姓名的未知 patch 可安全降级为 upsert；匿名 patch 仍拒绝，避免串档。
+const newActorFromPatch = buildTransitionFromOperations(emptyState(), semanticPatch, currentStat);
+assert.equal(newActorFromPatch.operation_stats.accepted, 1);
+assert.equal(newActorFromPatch.operation_stats.rejected, 0);
+assert.match(newActorFromPatch.upsert_actors[0].id, /^AC-/);
+assert.notEqual(newActorFromPatch.upsert_actors[0].id, 'actor_zhu_youjian');
+
+const anonymousPatch = buildTransitionFromOperations(
+  emptyState(),
+  normalizeIncrementalResult(
+    {
+      schema_version: 2,
+      base_revision: 0,
+      operations: [{ type: 'actor.patch', id: 'actor_unknown', set: { current_action: '离开京师' } }],
+      parallel_scenes: [],
+    },
+    0,
+  ),
+  currentStat,
+);
+assert.equal(anonymousPatch.operation_stats.accepted, 0);
+assert.equal(anonymousPatch.operation_stats.rejected, 1);
+assert.match(anonymousPatch.operation_stats.warnings[0], /patch 目标 actor_unknown 不存在/);
+
+const incompleteHook = buildTransitionFromOperations(
+  emptyState(),
+  normalizeIncrementalResult(
+    {
+      schema_version: 2,
+      base_revision: 0,
+      operations: [{ type: 'hook.upsert', set: { trigger: '三日后' } }],
+      parallel_scenes: [],
+    },
+    0,
+  ),
+  currentStat,
+);
+assert.equal(incompleteHook.operation_stats.accepted, 0);
+assert.equal(incompleteHook.operation_stats.rejected, 1);
+assert.match(incompleteHook.operation_stats.warnings[0], /缺少伏线标题或内容/);
+
+// 旧档案无 ID 时在读取阶段补齐，保证下一轮 CANONICAL_STATE 一定可被 patch。
+const migratedState = normalizeState(
+  {
+    version: 1,
+    chatId: 'test-chat',
+    activeEvents: [],
+    actors: [
+      {
+        name: '朱由检',
+        currentAction: '批阅奏疏',
+        nextDecision: '',
+        knowledge: [],
+      },
+    ],
+    intelPackets: [],
+    hooks: [
+      {
+        title: '宫门暗查',
+        summary: '王承恩开始暗查宫门值守。',
+        stage: '潜伏中',
+        trigger: '查得异常时',
+        failCondition: '查验结束且无异常',
+      },
+    ],
+  },
+  'test-chat',
+);
+assert.match(migratedState.actors[0].id, /^AC-/);
+assert.match(migratedState.hooks[0].id, /^HK-/);
 
 const invalid = normalizeIncrementalResult(
   {
@@ -277,5 +477,5 @@ const generated = await callWorldModel(
 assert.equal(generationCalls, 1);
 assert.equal(generated.operations[0].value.name, '沈大柱');
 
-assert.match(fullSource, /const VERSION = '1\.7\.2'/);
-console.info('天下演化测试通过：真实 attributes 载荷、嵌套包装、字段别名、patch 与无效操作均已覆盖。');
+assert.match(fullSource, /const VERSION = '1\.7\.3'/);
+console.info('天下演化测试通过：供应商包装、稳定 ID 派生、语义 ID 回绑、旧档迁移与无效操作均已覆盖。');
