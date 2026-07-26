@@ -7,7 +7,7 @@ let source = fullSource.slice(fullSource.indexOf('(() =>'));
 const end = source.lastIndexOf('})();');
 source =
   source.slice(0, end) +
-  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel, normalizeState };\n' +
+  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection };\n' +
   source.slice(end);
 
 const sandbox = {
@@ -35,7 +35,14 @@ sandbox.window.parent = sandbox;
 sandbox.globalThis = sandbox;
 vm.runInNewContext(source, sandbox);
 
-const { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel, normalizeState } = sandbox.__cweTest;
+const {
+  normalizeIncrementalResult,
+  buildTransitionFromOperations,
+  callWorldModel,
+  normalizeState,
+  buildPersistentMainModelPacket,
+  buildMainModelInjection,
+} = sandbox.__cweTest;
 const emptyState = () => ({ activeEvents: [], actors: [], intelPackets: [], hooks: [] });
 const currentStat = { 世界运转: { 当前地点: '桐城县和济堂药铺' } };
 
@@ -433,6 +440,192 @@ const migratedState = normalizeState(
 assert.match(migratedState.actors[0].id, /^AC-/);
 assert.match(migratedState.hooks[0].id, /^HK-/);
 
+// 下一轮主模型同时收到本轮变化与仍未结束的核心状态，但不接收完整档案或平行世界正文。
+const mainModelState = normalizeState(
+  {
+    version: 1,
+    chatId: 'test-chat',
+    revision: 7,
+    nextTurnPacket: {
+      offscreenMoves: ['张三｜位于桐城县｜正在查账'],
+      arrivingIntel: ['张三的回报已经送达'],
+      intelInTransit: ['密信甲｜起点：京师｜终点：桐城县'],
+      npcKnowledge: [{ name: '张三', knows: ['账册有缺页'], doesNotKnow: ['缺页在李四手中'] }],
+      activePressures: ['新近事件｜地点：桐城县｜局势刚有变化'],
+      pendingConsequences: ['新近伏线｜触发：三日后'],
+      uncertainties: ['密信甲内容未核实｜可靠度：60%'],
+      constraints: ['不得提前泄露密信内容'],
+    },
+    activeEvents: [
+      {
+        id: 'EV-new',
+        title: '新近事件',
+        summary: '局势刚有变化',
+        stage: '进行中',
+        status: 'active',
+        location: '桐城县',
+        actors: ['张三'],
+        nextTrigger: '张三交账时',
+        updatedAt: '2026-07-26T12:00:00.000Z',
+      },
+      {
+        id: 'EV-old',
+        title: '持续事件',
+        summary: '城外粮价仍在上涨',
+        stage: '发酵中',
+        status: 'active',
+        location: '桐城县外',
+        actors: ['李四'],
+        nextTrigger: '粮船仍未抵达时',
+        updatedAt: '2026-07-25T12:00:00.000Z',
+      },
+    ],
+    actors: [
+      {
+        id: 'AC-zhang',
+        name: '张三',
+        location: '桐城县',
+        goal: '查清账目',
+        currentAction: '正在查账',
+        knowledge: ['账册有缺页'],
+        doesNotKnow: ['缺页在李四手中'],
+        nextDecision: '回报主角',
+        updatedReason: '本轮变化',
+        updatedAt: '2026-07-26T12:00:00.000Z',
+      },
+      {
+        id: 'AC-li',
+        name: '李四',
+        location: '城外粮仓',
+        goal: '保住粮仓',
+        currentAction: '连夜清点存粮',
+        knowledge: ['粮价上涨'],
+        doesNotKnow: ['粮船已经改道'],
+        nextDecision: '天亮后寻找粮商',
+        updatedReason: '持续行动',
+        updatedAt: '2026-07-25T12:00:00.000Z',
+      },
+    ],
+    intelPackets: [
+      {
+        id: 'IN-new',
+        content: '密信甲',
+        origin: '京师',
+        destination: '桐城县',
+        channel: '驿递',
+        status: '传播中',
+        eta: '三日后',
+        reliability: 0.6,
+        knownBy: ['张三'],
+        updatedAt: '2026-07-26T12:00:00.000Z',
+      },
+      {
+        id: 'IN-old',
+        content: '旧驿报仍在途中',
+        origin: '南京',
+        destination: '桐城县',
+        channel: '民驿',
+        status: '在途',
+        eta: '五日后',
+        reliability: 0.9,
+        knownBy: [],
+        updatedAt: '2026-07-25T12:00:00.000Z',
+      },
+      {
+        id: 'IN-arrived',
+        content: '已经公开的旧京报',
+        origin: '京师',
+        destination: '桐城县',
+        channel: '官驿',
+        status: '已抵达',
+        eta: '昨日',
+        reliability: 0.95,
+        knownBy: ['众人'],
+        updatedAt: '2026-07-24T12:00:00.000Z',
+      },
+    ],
+    hooks: [
+      {
+        id: 'HK-new',
+        title: '新近伏线',
+        summary: '三日后有人登门',
+        stage: '逼近',
+        visibleSigns: [],
+        trigger: '三日后',
+        failCondition: '来客改道',
+        updatedAt: '2026-07-26T12:00:00.000Z',
+      },
+      {
+        id: 'HK-old',
+        title: '持续伏线',
+        summary: '旧债主仍在寻找主角',
+        stage: '潜伏',
+        visibleSigns: [],
+        trigger: '债主发现主角行踪',
+        failCondition: '旧债已清',
+        updatedAt: '2026-07-25T12:00:00.000Z',
+      },
+    ],
+    parallelTurns: [
+      {
+        messageId: 6,
+        swipeId: 0,
+        revision: 7,
+        scenes: [
+          {
+            location: '城外',
+            time: '夜间',
+            actors: ['李四'],
+            action: '清点存粮',
+            body: '这段平行世界正文绝不能注入主模型。',
+          },
+        ],
+      },
+    ],
+  },
+  'test-chat',
+);
+const persistentPacket = buildPersistentMainModelPacket(mainModelState);
+assert.equal(
+  persistentPacket.offscreenMoves.some(item => item.includes('张三')),
+  false,
+);
+assert.equal(
+  persistentPacket.offscreenMoves.some(item => item.includes('李四')),
+  true,
+);
+assert.equal(
+  persistentPacket.activePressures.some(item => item.includes('新近事件')),
+  false,
+);
+assert.equal(
+  persistentPacket.activePressures.some(item => item.includes('持续事件')),
+  true,
+);
+assert.equal(
+  persistentPacket.pendingConsequences.some(item => item.includes('持续伏线')),
+  true,
+);
+assert.equal(
+  persistentPacket.intelInTransit.some(item => item.includes('旧驿报仍在途中')),
+  true,
+);
+assert.equal(
+  persistentPacket.intelInTransit.some(item => item.includes('已经公开的旧京报')),
+  false,
+);
+assert.ok(persistentPacket.offscreenMoves.length <= 4);
+
+const mainModelInjection = buildMainModelInjection(mainModelState);
+assert.match(mainModelInjection, /本轮新近变化/);
+assert.match(mainModelInjection, /持续核心状态（未在本轮更新，但仍未结束）/);
+assert.match(mainModelInjection, /张三的回报已经送达/);
+assert.match(mainModelInjection, /城外粮价仍在上涨/);
+assert.match(mainModelInjection, /旧债主仍在寻找主角/);
+assert.match(mainModelInjection, /连夜清点存粮/);
+assert.match(mainModelInjection, /持续核心状态.*不代表.*本轮/s);
+assert.doesNotMatch(mainModelInjection, /这段平行世界正文绝不能注入主模型/);
+
 const invalid = normalizeIncrementalResult(
   {
     schema_version: 2,
@@ -477,5 +670,5 @@ const generated = await callWorldModel(
 assert.equal(generationCalls, 1);
 assert.equal(generated.operations[0].value.name, '沈大柱');
 
-assert.match(fullSource, /const VERSION = '1\.7\.4'/);
-console.info('天下演化测试通过：供应商包装、稳定 ID 派生、语义 ID 回绑、旧档迁移与无效操作均已覆盖。');
+assert.match(fullSource, /const VERSION = '1\.7\.5'/);
+console.info('天下演化测试通过：供应商包装、稳定 ID 派生、语义 ID 回绑、持续状态注入、旧档迁移与无效操作均已覆盖。');

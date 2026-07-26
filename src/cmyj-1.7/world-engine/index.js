@@ -7,7 +7,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 (() => {
   'use strict';
 
-  const VERSION = '1.7.4';
+  const VERSION = '1.7.5';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -64,6 +64,16 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     cameraHistory: 18,
     parallelTurns: 24,
     checkpoints: 8,
+  });
+
+  const MAIN_MODEL_CONTEXT_LIMITS = Object.freeze({
+    latestItems: 8,
+    persistentItems: 4,
+    latestKnowledgeActors: 6,
+    persistentKnowledgeActors: 4,
+    knowledgeFacts: 3,
+    itemChars: 240,
+    knowledgeFactChars: 100,
   });
 
   const runtime = {
@@ -2251,78 +2261,168 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     return [asText(scene?.location), actors, asText(scene?.action)].filter(Boolean).join('—').slice(0, 240);
   }
 
+  function actorPacketLabel(item) {
+    return [
+      asText(item?.name),
+      asText(item?.location) && `位于${asText(item.location)}`,
+      asText(item?.goal) && `目标：${asText(item.goal)}`,
+      asText(item?.current_action || item?.currentAction),
+      asText(item?.next_decision || item?.nextDecision) &&
+        `下一决策：${asText(item?.next_decision || item?.nextDecision)}`,
+    ]
+      .filter(Boolean)
+      .join('｜');
+  }
+
+  function intelPacketLabel(item) {
+    return [
+      asText(item?.content),
+      asText(item?.origin) && `起点：${asText(item.origin)}`,
+      asText(item?.destination) && `终点：${asText(item.destination)}`,
+      asText(item?.channel) && `渠道：${asText(item.channel)}`,
+      asText(item?.eta) && `抵达：${asText(item.eta)}`,
+    ]
+      .filter(Boolean)
+      .join('｜');
+  }
+
+  function eventPacketLabel(item) {
+    return [
+      asText(item?.title),
+      asText(item?.location) && `地点：${asText(item.location)}`,
+      asText(item?.stage) && `阶段：${asText(item.stage)}`,
+      asText(item?.summary),
+      asText(item?.next_trigger || item?.nextTrigger) && `下一触发：${asText(item?.next_trigger || item?.nextTrigger)}`,
+    ]
+      .filter(Boolean)
+      .join('｜');
+  }
+
+  function hookPacketLabel(item) {
+    return [
+      asText(item?.title),
+      asText(item?.stage) && `阶段：${asText(item.stage)}`,
+      asText(item?.summary),
+      asText(item?.trigger) && `触发：${asText(item.trigger)}`,
+      asText(item?.fail_condition || item?.failCondition) &&
+        `失效：${asText(item?.fail_condition || item?.failCondition)}`,
+    ]
+      .filter(Boolean)
+      .join('｜');
+  }
+
+  function actorKnowledgePacket(item) {
+    return {
+      name: asText(item?.name),
+      knows: asArray(item?.knowledge)
+        .map(value => asText(value))
+        .filter(Boolean),
+      doesNotKnow: asArray(item?.does_not_know || item?.doesNotKnow)
+        .map(value => asText(value))
+        .filter(Boolean),
+    };
+  }
+
+  function intelHasArrived(item) {
+    return /抵达|已达|公开|送达|arrived|delivered/i.test(asText(item?.status));
+  }
+
+  function recordRecency(item, index) {
+    const parsed = Date.parse(asText(item?.updatedAt));
+    return { item, index, timestamp: Number.isFinite(parsed) ? parsed : 0 };
+  }
+
+  function selectRecentPersistentRecords(records, limit, predicate = () => true) {
+    return asArray(records)
+      .map(recordRecency)
+      .filter(entry => predicate(entry.item))
+      .sort((left, right) => right.timestamp - left.timestamp || right.index - left.index)
+      .slice(0, limit)
+      .map(entry => entry.item);
+  }
+
+  function normalizedPromptIdentity(value) {
+    return asText(value)
+      .toLocaleLowerCase()
+      .replace(/[\s｜|、，。；：:,.!?！？'"“”‘’（）()[\]{}<>《》【】]+/gu, '');
+  }
+
+  function packetMentionsIdentity(items, identities) {
+    const packetItems = asArray(items).map(normalizedPromptIdentity).filter(Boolean);
+    return asArray(identities)
+      .map(normalizedPromptIdentity)
+      .filter(Boolean)
+      .some(identity =>
+        packetItems.some(item => item.startsWith(identity) || (identity.length >= 6 && item.includes(identity))),
+      );
+  }
+
+  function buildPersistentMainModelPacket(state, latestPacket = normalizePacket(state?.nextTurnPacket)) {
+    const latestIntel = [...latestPacket.arrivingIntel, ...latestPacket.intelInTransit, ...latestPacket.uncertainties];
+    const latestActorNames = latestPacket.npcKnowledge.map(item => item.name);
+    const actors = selectRecentPersistentRecords(
+      state?.actors,
+      MAIN_MODEL_CONTEXT_LIMITS.persistentItems,
+      item =>
+        !packetMentionsIdentity(latestPacket.offscreenMoves, [item?.name]) &&
+        !packetMentionsIdentity(latestActorNames, [item?.name]),
+    );
+    const events = selectRecentPersistentRecords(
+      state?.activeEvents,
+      MAIN_MODEL_CONTEXT_LIMITS.persistentItems,
+      item => !packetMentionsIdentity(latestPacket.activePressures, [item?.title, item?.summary]),
+    );
+    const hooks = selectRecentPersistentRecords(
+      state?.hooks,
+      MAIN_MODEL_CONTEXT_LIMITS.persistentItems,
+      item => !packetMentionsIdentity(latestPacket.pendingConsequences, [item?.title, item?.summary]),
+    );
+    const intelInTransit = selectRecentPersistentRecords(
+      state?.intelPackets,
+      MAIN_MODEL_CONTEXT_LIMITS.persistentItems,
+      item => !intelHasArrived(item) && !packetMentionsIdentity(latestIntel, [item?.content]),
+    );
+    const uncertainties = selectRecentPersistentRecords(
+      state?.intelPackets,
+      MAIN_MODEL_CONTEXT_LIMITS.persistentItems,
+      item =>
+        Number(item?.reliability) > 0 &&
+        Number(item?.reliability) < 0.75 &&
+        !packetMentionsIdentity(latestIntel, [item?.content]),
+    );
+    return normalizePacket({
+      offscreenMoves: actors.map(actorPacketLabel).filter(Boolean),
+      arrivingIntel: [],
+      intelInTransit: intelInTransit.map(intelPacketLabel).filter(Boolean),
+      npcKnowledge: actors
+        .map(actorKnowledgePacket)
+        .filter(item => item.name && (item.knows.length || item.doesNotKnow.length)),
+      activePressures: events.map(eventPacketLabel).filter(Boolean),
+      pendingConsequences: hooks.map(hookPacketLabel).filter(Boolean),
+      uncertainties: uncertainties
+        .map(item => `${asText(item?.content)}｜可靠度：${Math.round(Number(item?.reliability) * 100)}%`)
+        .filter(Boolean),
+      constraints: [],
+    });
+  }
+
   function deriveNextTurnPacket(legacy) {
     const intel = asArray(legacy.upsert_intel);
-    const intelLabel = item =>
-      [
-        asText(item?.content),
-        asText(item?.origin) && `起点：${asText(item.origin)}`,
-        asText(item?.destination) && `终点：${asText(item.destination)}`,
-        asText(item?.channel) && `渠道：${asText(item.channel)}`,
-        asText(item?.eta) && `抵达：${asText(item.eta)}`,
-      ]
-        .filter(Boolean)
-        .join('｜');
-    const arrived = intel.filter(item => /抵达|已达|公开|送达|arrived|delivered/i.test(asText(item?.status)));
+    const arrived = intel.filter(intelHasArrived);
     const inTransit = intel.filter(item => !arrived.includes(item));
     const changedEvents = asArray(legacy.upsert_events);
     const changedActors = asArray(legacy.upsert_actors);
     const changedHooks = asArray(legacy.upsert_hooks);
     return {
-      offscreenMoves: changedActors
-        .map(item =>
-          [
-            asText(item?.name),
-            asText(item?.location) && `位于${asText(item.location)}`,
-            asText(item?.current_action || item?.currentAction),
-            asText(item?.next_decision || item?.nextDecision) &&
-              `下一决策：${asText(item?.next_decision || item?.nextDecision)}`,
-          ]
-            .filter(Boolean)
-            .join('｜'),
-        )
-        .filter(Boolean)
-        .slice(0, 12),
-      arrivingIntel: arrived.map(intelLabel).filter(Boolean).slice(0, 12),
-      intelInTransit: inTransit.map(intelLabel).filter(Boolean).slice(0, 12),
+      offscreenMoves: changedActors.map(actorPacketLabel).filter(Boolean).slice(0, 12),
+      arrivingIntel: arrived.map(intelPacketLabel).filter(Boolean).slice(0, 12),
+      intelInTransit: inTransit.map(intelPacketLabel).filter(Boolean).slice(0, 12),
       npcKnowledge: changedActors
-        .filter(
-          item =>
-            asText(item?.name) &&
-            (asArray(item?.knowledge).length || asArray(item?.does_not_know || item?.doesNotKnow).length),
-        )
-        .map(item => ({
-          name: asText(item.name),
-          knows: asArray(item.knowledge)
-            .map(value => asText(value))
-            .filter(Boolean)
-            .slice(0, 12),
-          doesNotKnow: asArray(item?.does_not_know || item?.doesNotKnow)
-            .map(value => asText(value))
-            .filter(Boolean)
-            .slice(0, 12),
-        }))
+        .map(actorKnowledgePacket)
+        .filter(item => item.name && (item.knows.length || item.doesNotKnow.length))
         .slice(0, 12),
-      activePressures: changedEvents
-        .map(item =>
-          [asText(item?.summary), asText(item?.next_trigger) && `下一触发：${asText(item.next_trigger)}`]
-            .filter(Boolean)
-            .join('｜'),
-        )
-        .filter(Boolean)
-        .slice(0, 12),
-      pendingConsequences: changedHooks
-        .map(item =>
-          [
-            asText(item?.title),
-            asText(item?.trigger) && `触发：${asText(item.trigger)}`,
-            asText(item?.fail_condition) && `失效：${asText(item.fail_condition)}`,
-          ]
-            .filter(Boolean)
-            .join('｜'),
-        )
-        .filter(Boolean)
-        .slice(0, 12),
+      activePressures: changedEvents.map(eventPacketLabel).filter(Boolean).slice(0, 12),
+      pendingConsequences: changedHooks.map(hookPacketLabel).filter(Boolean).slice(0, 12),
       uncertainties: intel
         .filter(item => Number(item?.reliability) > 0 && Number(item.reliability) < 0.75)
         .map(item => `${asText(item?.content)}｜可靠度：${Math.round(Number(item.reliability) * 100)}%`)
@@ -2678,35 +2778,73 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     return normalizeState(state, state.chatId);
   }
 
-  function formatBulletSection(title, items) {
+  function formatBulletSection(
+    title,
+    items,
+    limit = MAIN_MODEL_CONTEXT_LIMITS.latestItems,
+    maxChars = MAIN_MODEL_CONTEXT_LIMITS.itemChars,
+  ) {
     const values = asArray(items)
       .map(value => asText(value))
-      .filter(Boolean);
+      .filter(Boolean)
+      .slice(0, limit)
+      .map(value => shortText(value, maxChars));
     if (!values.length) return '';
     return `${title}:\n${values.map(value => `- ${value}`).join('\n')}`;
   }
 
+  function formatKnowledgeSection(title, items, limit) {
+    const values = asArray(items)
+      .filter(item => asText(item?.name))
+      .slice(0, limit)
+      .map(item => {
+        const knows = asArray(item?.knows)
+          .map(value => shortText(value, MAIN_MODEL_CONTEXT_LIMITS.knowledgeFactChars))
+          .filter(Boolean)
+          .slice(0, MAIN_MODEL_CONTEXT_LIMITS.knowledgeFacts);
+        const doesNotKnow = asArray(item?.doesNotKnow)
+          .map(value => shortText(value, MAIN_MODEL_CONTEXT_LIMITS.knowledgeFactChars))
+          .filter(Boolean)
+          .slice(0, MAIN_MODEL_CONTEXT_LIMITS.knowledgeFacts);
+        const knownText = knows.length ? `已知：${knows.join('；')}` : '已知：无新增信息';
+        const unknownText = doesNotKnow.length ? `未知：${doesNotKnow.join('；')}` : '';
+        return `- ${asText(item.name)}：${knownText}${unknownText ? `；${unknownText}` : ''}`;
+      });
+    return values.length ? `${title}:\n${values.join('\n')}` : '';
+  }
+
+  function buildPacketSections(packet, persistent = false) {
+    const itemLimit = persistent ? MAIN_MODEL_CONTEXT_LIMITS.persistentItems : MAIN_MODEL_CONTEXT_LIMITS.latestItems;
+    const knowledgeLimit = persistent
+      ? MAIN_MODEL_CONTEXT_LIMITS.persistentKnowledgeActors
+      : MAIN_MODEL_CONTEXT_LIMITS.latestKnowledgeActors;
+    return [
+      formatBulletSection('玩家视野外正在进行的行动', packet.offscreenMoves, itemLimit),
+      formatBulletSection('已经进入玩家可知范围的情报', packet.arrivingIntel, itemLimit),
+      formatBulletSection('仍在传播、尚不可直接得知的情报', packet.intelInTransit, itemLimit),
+      formatKnowledgeSection('相关人物知识边界', packet.npcKnowledge, knowledgeLimit),
+      formatBulletSection('正在施压的世界事件', packet.activePressures, itemLimit),
+      formatBulletSection('等待条件兑现的延迟后果', packet.pendingConsequences, itemLimit),
+      formatBulletSection('仍未证实或彼此冲突的信息', packet.uncertainties, itemLimit),
+      formatBulletSection('本轮约束', packet.constraints, itemLimit),
+    ].filter(Boolean);
+  }
+
   function buildMainModelInjection(state) {
     const packet = normalizePacket(state.nextTurnPacket);
-    const knowledge = packet.npcKnowledge
-      .map(item => {
-        const knows = item.knows.length ? `已知：${item.knows.join('；')}` : '已知：无新增信息';
-        const doesNotKnow = item.doesNotKnow.length ? `未知：${item.doesNotKnow.join('；')}` : '';
-        return `- ${item.name}：${knows}${doesNotKnow ? `；${doesNotKnow}` : ''}`;
-      })
-      .join('\n');
+    const persistentPacket = buildPersistentMainModelPacket(state, packet);
+    const latestSections = buildPacketSections(packet);
+    const persistentSections = buildPacketSections(persistentPacket, true);
     const sections = [
       `<天下演化上下文 version="${state.revision}">`,
-      formatBulletSection('玩家视野外正在进行的行动', packet.offscreenMoves),
-      formatBulletSection('已经进入玩家可知范围的情报', packet.arrivingIntel),
-      formatBulletSection('仍在传播、尚不可直接得知的情报', packet.intelInTransit),
-      knowledge ? `相关人物知识边界:\n${knowledge}` : '',
-      formatBulletSection('正在施压的世界事件', packet.activePressures),
-      formatBulletSection('等待条件兑现的延迟后果', packet.pendingConsequences),
-      formatBulletSection('仍未证实或彼此冲突的信息', packet.uncertainties),
-      formatBulletSection('本轮约束', packet.constraints),
+      latestSections.length ? `本轮新近变化:\n\n${latestSections.join('\n\n')}` : '',
+      persistentSections.length
+        ? `持续核心状态（未在本轮更新，但仍未结束）:\n\n${persistentSections.join('\n\n')}`
+        : '',
       `主模型联动协议：
   - 正文只允许人物使用其有合理渠道知道的内容；模型知道不等于人物知道。
+  - “持续核心状态”只作为因果与知识约束；若尚未与当前视角建立合理联系，不得强行播报或切换镜头。
+  - 联动包没有列出某项档案不代表该事件已经结束；不得自行宣布未获确认的伏线、行动或情报失效。
   - 只负责玩家当前视角内的正文、变量更新、状态栏与行动选项，不要生成平行世界、远景旁白或 <平行世界> 标签。
   - 玩家视野外的旁线由天下演化独立保存和展示，不属于聊天正文格式。
   - 不得让远方人物知晓尚未通过合理渠道传播的玩家秘密；世界不是围着玩家运转。
