@@ -3679,6 +3679,7 @@ async function openScenarioGenerator() {
       showToast,
       openWorkshop: workshopOptions => openCanmingWorkshop(workshopOptions),
       installScenarioPackage: bundle => importScenarioWorkshopPackage(bundle),
+      listCharacterProfiles: () => JSON.parse(JSON.stringify(getCharacterProfiles().profiles || [])),
     });
   } catch (error) {
     showToast(`✗ 打开开局生成器失败：${error?.message || '未知错误'}`, 'err');

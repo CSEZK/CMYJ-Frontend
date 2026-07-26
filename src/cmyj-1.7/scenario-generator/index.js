@@ -1,6 +1,7 @@
 import YAML from 'yaml';
 import { Schema } from '../schema/definition.js';
 import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-compat.js';
+import { buildScenarioCharacterCatalog } from './character-catalog.js';
 
 (() => {
   'use strict';
@@ -9,6 +10,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
   const ROOT_ID = 'canming-scenario-generator-root';
   const STYLE_ID = 'canming-scenario-generator-style';
   const PROJECT_KEY = 'canming-dlc:scenario-generator:project:v1';
+  const CHARACTER_PROFILE_STORAGE_KEY = 'character_profiles_v1';
   const API_SETTINGS_KEY = 'canming-gen-api-cfg';
   const ERA_ENTRY_NAME = '[scenario_generator]崇祯七年七月模板';
   const ERA_ID = 'cmyj.era.chongzhen-7-07';
@@ -60,6 +62,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
     ['朱徽媞', '明光宗之女', 'history'],
     ['张嫣', '明熹宗遗孀', 'history'],
   ].map(([name, summary, lock = 'free']) => ({ name, summary, lock }));
+  let characterCatalog = buildScenarioCharacterCatalog({ officialCharacters: CHARACTERS });
 
   const FIXED_RELATIONS = [
     ['栖云', '栖月', '双胞胎姐妹'],
@@ -127,6 +130,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
       userToCharacter: '',
       longTermSituation: '',
       adaptationPrinciples: [],
+      personaEntries: [...(character.worldbookEntries || [])],
     };
   }
 
@@ -173,7 +177,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
       },
       opening: { id: 'origin-opening', name: '第一幕', hook: '', body: '', targetWords: 1200, referenceEntries: [] },
       initialization: { patch: {}, summary: '', stale: true, generatedAt: '' },
-      characters: Object.fromEntries(CHARACTERS.map(character => [character.name, characterState(character)])),
+      characters: Object.fromEntries(characterCatalog.map(character => [character.name, characterState(character)])),
     };
   }
 
@@ -207,6 +211,10 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
     }
   }
   function normalizeProject(raw) {
+    characterCatalog = buildScenarioCharacterCatalog({
+      officialCharacters: characterCatalog,
+      projectCharacters: raw?.characters,
+    });
     const base = newProject();
     const next = {
       ...base,
@@ -219,7 +227,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
       initialization: { ...base.initialization, ...(raw?.initialization || {}) },
     };
     next.characters = Object.fromEntries(
-      CHARACTERS.map(character => {
+      characterCatalog.map(character => {
         const previous = raw?.characters?.[character.name] || {};
         const migrated = { ...characterState(character), ...previous };
         migrated.adaptationBrief = String(previous.adaptationBrief || '');
@@ -227,6 +235,16 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
         migrated.adaptationPrinciples = Array.isArray(previous.adaptationPrinciples)
           ? previous.adaptationPrinciples.filter(Boolean).map(String)
           : [];
+        migrated.personaEntries = [
+          ...new Set(
+            [
+              ...(Array.isArray(previous.personaEntries) ? previous.personaEntries : []),
+              ...(character.worldbookEntries || []),
+            ]
+              .map(String)
+              .filter(Boolean),
+          ),
+        ];
         for (const transient of [
           'location',
           'openingExperience',
@@ -264,6 +282,51 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
     } catch {
       project = newProject();
     }
+  }
+
+  function storedCharacterProfiles() {
+    try {
+      const stored = JSON.parse(storage().getItem(CHARACTER_PROFILE_STORAGE_KEY) || 'null');
+      return stored?.version === 1 && Array.isArray(stored.profiles) ? stored.profiles : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async function refreshCharacterCatalog() {
+    let profiles;
+    try {
+      profiles =
+        typeof options.listCharacterProfiles === 'function'
+          ? (await options.listCharacterProfiles()) || []
+          : storedCharacterProfiles();
+    } catch (error) {
+      console.warn('[残明余烬开局生成器] 读取角色与立绘管理器人物失败:', error);
+      profiles = storedCharacterProfiles();
+    }
+
+    const worldbookEntries = [];
+    try {
+      const getNames = api('getCharWorldbookNames');
+      const getWorldbook = api('getWorldbook');
+      if (typeof getNames === 'function' && typeof getWorldbook === 'function') {
+        const names = await getNames('current');
+        const worldbookNames = [...new Set([names?.primary, ...(names?.additional || [])].filter(Boolean))];
+        for (const worldbookName of worldbookNames) {
+          const entries = (await getWorldbook(worldbookName)) || [];
+          referenceWorldbookCache[worldbookName] = entries;
+          worldbookEntries.push(...entries);
+        }
+      }
+    } catch (error) {
+      console.warn('[残明余烬开局生成器] 扫描人物完整人设失败:', error);
+    }
+
+    characterCatalog = buildScenarioCharacterCatalog({
+      officialCharacters: CHARACTERS,
+      profiles,
+      worldbookEntries,
+    });
   }
 
   function notify(text, type = 'info') {
@@ -347,23 +410,31 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
     const parts = [];
     const missing = [];
     for (const character of characters) {
-      const candidates = [`${character.name}_SFW`, character.name];
-      let found = null;
-      let source = '';
+      const state = project.characters[character.name];
+      const candidates = [
+        ...new Set([
+          ...(character.worldbookEntries || []),
+          ...(state?.personaEntries || []),
+          `${character.name}_SFW`,
+          character.name,
+        ]),
+      ];
+      const found = [];
       for (const worldbookName of boundWorldbookNames) {
-        found = (referenceWorldbookCache[worldbookName] || []).find(item => candidates.includes(item?.name));
-        if (found?.content) {
-          source = worldbookName;
-          break;
-        }
+        for (const item of referenceWorldbookCache[worldbookName] || [])
+          if (candidates.includes(item?.name) && item?.content)
+            found.push({ source: worldbookName, name: item.name, content: item.content });
       }
-      if (!found?.content) {
+      if (!found.length) {
         missing.push(character.name);
         continue;
       }
-      parts.push(`[${source} / ${found.name}]\n${stripDynamicAdaptation(found.content)}`);
+      for (const item of found) parts.push(`[${item.source} / ${item.name}]\n${stripDynamicAdaptation(item.content)}`);
     }
-    if (missing.length) throw new Error(`基础卡缺少人物人设条目：${missing.join('、')}。请先更新或补全角色卡世界书。`);
+    if (missing.length)
+      throw new Error(
+        `这些人物没有关联可读取的完整人设：${missing.join('、')}。请先在“角色与立绘管理器”中为人物关联世界书条目。`,
+      );
     const content = parts.join('\n\n');
     if (content.length > MAX_PERSONA_CHARS)
       throw new Error(
@@ -550,7 +621,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
   }
 
   function selectedCharacters() {
-    return CHARACTERS.filter(character => project.characters[character.name]?.included);
+    return characterCatalog.filter(character => project.characters[character.name]?.included);
   }
   function characterAdaptations() {
     return selectedCharacters()
@@ -1471,7 +1542,13 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
     return character.lock === 'history' ? 'history' : character.lock === 'family' ? 'family' : 'free';
   }
   function characterKindLabel(character) {
-    return character.lock === 'history' ? '历史' : character.lock === 'family' ? '家族' : '原创';
+    return character.lock === 'history'
+      ? '历史'
+      : character.lock === 'family'
+        ? '家族'
+        : character.source === 'official'
+          ? '原创'
+          : '扩展';
   }
   function characterCatalogRow(character) {
     const state = project.characters[character.name];
@@ -1501,7 +1578,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
     if (label) label.textContent = `已选人物 · ${count} 人`;
   }
   function refreshCharacterCard(name) {
-    const character = CHARACTERS.find(item => item.name === name);
+    const character = characterCatalog.find(item => item.name === name);
     const card = root?.querySelector(`[data-character-config="${CSS.escape(name)}"]`);
     if (!character || !card) return;
     card.outerHTML = characterEditor(character);
@@ -1549,7 +1626,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
     updateStepTwoCount();
   }
   function setCharacterIncluded(name, included) {
-    const character = CHARACTERS.find(item => item.name === name),
+    const character = characterCatalog.find(item => item.name === name),
       state = project.characters[name];
     if (!character || !state || state.included === included) return;
     state.included = included;
@@ -1582,7 +1659,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
   }
   function stepTwo() {
     const selected = selectedCharacters();
-    return `<section class="sg-page sg-page-wide"><p class="sg-kicker">STEP TWO · WHO EXISTS AROUND YOU</p><h1>安排这条世界线的人物</h1><p class="sg-lead">选择人物后，只需决定开场前是否相识、是否出现在第一幕。长期定位可以手填，也可以让 AI 依据原始人设补全。</p><div class="sg-selected-bar"><div class="sg-selected-head"><b data-selected-count>已选人物 · ${selected.length} 人</b><span>点击姓名可直接定位配置</span></div><div class="sg-selected-chips" data-selected-chips>${selected.length ? selected.map(selectedChip).join('') : '<span class="sg-selected-empty">还没有选择人物；开局也可以只包含 &lt;user&gt;。</span>'}</div></div><div class="sg-roster-workspace"><aside class="sg-roster-panel"><div class="sg-panel-head"><div class="sg-panel-title"><h2>人物名册</h2><span>${CHARACTERS.length} 人</span></div><label class="sg-search"><input type="search" data-roster-search value="${esc(rosterQuery)}" placeholder="搜索姓名或简介"></label><div class="sg-filter-row">${[
+    return `<section class="sg-page sg-page-wide"><p class="sg-kicker">STEP TWO · WHO EXISTS AROUND YOU</p><h1>安排这条世界线的人物</h1><p class="sg-lead">名册会同步“角色与立绘管理器”以及当前角色卡世界书中的完整人设。选择人物后，只需决定开场前是否相识、是否出现在第一幕。</p><div class="sg-selected-bar"><div class="sg-selected-head"><b data-selected-count>已选人物 · ${selected.length} 人</b><span>点击姓名可直接定位配置</span></div><div class="sg-selected-chips" data-selected-chips>${selected.length ? selected.map(selectedChip).join('') : '<span class="sg-selected-empty">还没有选择人物；开局也可以只包含 &lt;user&gt;。</span>'}</div></div><div class="sg-roster-workspace"><aside class="sg-roster-panel"><div class="sg-panel-head"><div class="sg-panel-title"><h2>人物名册</h2><span>${characterCatalog.length} 人</span></div><label class="sg-search"><input type="search" data-roster-search value="${esc(rosterQuery)}" placeholder="搜索姓名或简介"></label><div class="sg-filter-row">${[
       ['all', '全部'],
       ['free', '原创'],
       ['family', '家族'],
@@ -1594,7 +1671,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
       )
       .join(
         '',
-      )}</div></div><div class="sg-catalog">${CHARACTERS.map(characterCatalogRow).join('')}<div class="sg-catalog-empty" data-catalog-empty hidden>没有符合条件的人物</div></div></aside><section class="sg-config-panel"><div class="sg-config-toolbar"><p>“开局快照”和“长期定位”已分开，剧情不会被永远锁在开场。</p><div class="sg-toolbar-actions"><button type="button" class="sg-mini-btn accent" data-action="ai-characters">AI 补全已选人物</button><details class="sg-bulk"><summary>批量设置</summary><div class="sg-bulk-menu"><button type="button" data-action="bulk-location">活动区域参考主角地点</button><button type="button" data-action="bulk-known">全部设为已相识</button><button type="button" data-action="bulk-clear-scene">清空开场现场</button></div></details></div></div><div data-config-container>${selected.length ? `<div class="sg-config-list">${selected.map(characterEditor).join('')}</div>` : '<div class="sg-config-empty"><b>尚未纳入人物</b><br>从左侧名册选择后，配置会出现在这里。</div>'}</div></section></div><div class="sg-era sg-fixed-relations"><b>人物之间已有的亲属关系</b><br>${FIXED_RELATIONS.map(([a, b, relation]) => `${a}—${b}（${relation}）`).join(' · ')}</div></section>`;
+      )}</div></div><div class="sg-catalog">${characterCatalog.map(characterCatalogRow).join('')}<div class="sg-catalog-empty" data-catalog-empty hidden>没有符合条件的人物</div></div></aside><section class="sg-config-panel"><div class="sg-config-toolbar"><p>“开局快照”和“长期定位”已分开，剧情不会被永远锁在开场。</p><div class="sg-toolbar-actions"><button type="button" class="sg-mini-btn accent" data-action="ai-characters">AI 补全已选人物</button><details class="sg-bulk"><summary>批量设置</summary><div class="sg-bulk-menu"><button type="button" data-action="bulk-location">活动区域参考主角地点</button><button type="button" data-action="bulk-known">全部设为已相识</button><button type="button" data-action="bulk-clear-scene">清空开场现场</button></div></details></div></div><div data-config-container>${selected.length ? `<div class="sg-config-list">${selected.map(characterEditor).join('')}</div>` : '<div class="sg-config-empty"><b>尚未纳入人物</b><br>从左侧名册选择后，配置会出现在这里。</div>'}</div></section></div><div class="sg-era sg-fixed-relations"><b>人物之间已有的亲属关系</b><br>${FIXED_RELATIONS.map(([a, b, relation]) => `${a}—${b}（${relation}）`).join(' · ')}</div></section>`;
   }
 
   function referenceIsSelected(worldbook, name) {
@@ -1960,7 +2037,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
     if (action === 'ai-character' || action === 'ai-characters') {
       const targets = (
         action === 'ai-character'
-          ? CHARACTERS.filter(character => character.name === actionElement.dataset.characterName)
+          ? characterCatalog.filter(character => character.name === actionElement.dataset.characterName)
           : selectedCharacters()
       ).filter(character => character.lock !== 'history');
       aiTask = 'adaptation';
@@ -2220,6 +2297,11 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-c
     mountDocument = options.mountDocument || document;
     close();
     ensureStyle();
+    boundWorldbookNames = [];
+    referenceWorldbookNames = [];
+    referenceWorldbookViewing = '';
+    for (const key of Object.keys(referenceWorldbookCache)) delete referenceWorldbookCache[key];
+    await refreshCharacterCatalog();
     loadProject();
     root = mountDocument.createElement('div');
     root.id = ROOT_ID;

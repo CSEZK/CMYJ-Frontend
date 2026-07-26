@@ -5,6 +5,7 @@ import {
   isOfficialDeepSeekApi,
   shouldFallbackFromJsonSchema,
 } from '../src/cmyj-1.7/shared/api-compat.js';
+import { buildScenarioCharacterCatalog } from '../src/cmyj-1.7/scenario-generator/character-catalog.js';
 
 globalThis.window = {};
 window.parent = window;
@@ -32,6 +33,44 @@ const deepSeekSchemaPrompt = deepSeekJsonSchemaPrompt({
 assert.match(deepSeekSchemaPrompt, /DeepSeek JSON 兼容模式/);
 assert.match(deepSeekSchemaPrompt, /"required": \[/);
 assert.match(deepSeekSchemaPrompt, /"ok"/);
+
+const dynamicCatalog = buildScenarioCharacterCatalog({
+  officialCharacters: [{ name: '栖云', summary: '官方人物', lock: 'free' }],
+  profiles: [
+    {
+      id: 'character-local',
+      name: '陆青',
+      summary: '本地创建人物',
+      worldbookEntries: ['陆青_完整人设'],
+    },
+    {
+      id: 'character-workshop',
+      name: '沈青梧',
+      title: '工坊人物',
+      worldbookEntries: ['沈青梧_SFW（导入）'],
+    },
+  ],
+  worldbookEntries: [
+    { name: '栖云_SFW', content: '<角色设定:栖云_SFW>完整人设</角色设定:栖云_SFW>' },
+    { name: '程雪_SFW', content: '<角色设定:程雪_SFW>完整人设</角色设定:程雪_SFW>' },
+    { name: '普通设定', content: '不是人物人设条目' },
+  ],
+});
+assert.deepEqual(
+  dynamicCatalog.map(character => character.name),
+  ['栖云', '陆青', '沈青梧', '程雪'],
+  '人物名册应合并官方人物、人物管理器档案、工坊人物和完整人设条目',
+);
+assert.deepEqual(
+  dynamicCatalog.find(character => character.name === '沈青梧').worldbookEntries,
+  ['沈青梧_SFW（导入）'],
+  '工坊冲突重命名后仍应保留实际关联的人设条目名',
+);
+assert.deepEqual(
+  dynamicCatalog.find(character => character.name === '栖云').worldbookEntries,
+  ['栖云_SFW'],
+  '官方人物与世界书扫描结果应按姓名合并而不是重复显示',
+);
 
 const era = {
   格式: 'canming-era-preset',
@@ -98,6 +137,27 @@ project.characters.栖月.privateRelation = '红颜';
 project.characters.栖月.affection = 42;
 project.characters.栖月.loyalty = 55;
 project.characters.栖月.identity = '随养母往来边地的义女';
+project.characters.沈青梧 = {
+  included: true,
+  known: true,
+  scene: false,
+  relation: '同行',
+  category: '故友与同僚',
+  privateRelation: '红颜',
+  affection: 18,
+  loyalty: 50,
+  adaptationBrief: '',
+  identity: '随商队往来边地的工坊人物',
+  activityArea: '大同府及附近商路',
+  faction: '无固定势力',
+  relationshipOrigin: '在护送商队时与<user>相识',
+  relationshipPattern: '以共同利益与守信逐步建立信任',
+  characterToUser: '按公开身份称呼',
+  userToCharacter: '沈青梧',
+  longTermSituation: '依靠商队维持生计并寻找失散亲属',
+  adaptationPrinciples: ['保留原始人物能力边界', '关系必须通过具体经历推进'],
+  personaEntries: ['沈青梧_SFW（导入）'],
+};
 
 project.initialization = {
   patch: {
@@ -136,7 +196,15 @@ assert.equal(resource.scenario.exclusiveGroup, 'player-origin');
 assert.equal(resource.scenario.allowMidChatSwitch, false);
 assert.equal(resource.scenario.newChatRequired, true);
 assert.equal(resource.openings.length, 1);
-assert.equal(resource.characterOverviews['origin-opening'].length, 2);
+assert.equal(resource.characterOverviews['origin-opening'].length, 3);
+assert.ok(
+  resource.characterOverviews['origin-opening'].some(item => item.name === '沈青梧'),
+  '从人物管理器或工坊加入的扩展人物不得在工程标准化时被裁掉',
+);
+assert.ok(
+  resource.characterAdaptations.some(item => item.character === '沈青梧'),
+  '扩展人物应进入 DLC 长期人物适配',
+);
 assert.equal(resource.characterAdaptationVersion, 3);
 assert.deepEqual(resource.portraitProfiles, [], 'DLC 不应重复携带基础卡的内置立绘');
 const protagonistEntry = resource.worldbookEntries.find(entry => entry.name === '[scenario]<user>身份');
