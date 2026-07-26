@@ -321,7 +321,7 @@ assert.doesNotMatch(releaseStatusbarSource, /rebindCharWorldbooks/);
 assert.match(releaseGeneratorSource, /STORAGE_KEY_API = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /API_SETTINGS_KEY = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /minBaseVersion: '1\.7\.0'/);
-assert.match(releaseWorldEngineSource, /VERSION = '1\.1\.1'/);
+assert.match(releaseWorldEngineSource, /VERSION = '1\.1\.2'/);
 assert.match(releaseWorldEngineSource, /settingsVersion: 3/);
 assert.match(releaseWorldEngineSource, /temperature: 1/);
 assert.match(releaseWorldEngineSource, /maxTokens: 10000/);

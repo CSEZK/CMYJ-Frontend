@@ -2,16 +2,12 @@ import compassSeal from './assets/compass-seal-v2.webp?url';
 import ledgerStyles from './styles.raw?raw';
 import faithfulStyles from './styles-faithful.raw?raw';
 import integratedStyles from './styles-integrated.raw?raw';
-import {
-  deepSeekJsonSchemaPrompt,
-  isOfficialDeepSeekApi,
-  shouldFallbackFromJsonSchema,
-} from '../shared/api-compat.js';
+import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJsonSchema } from '../shared/api-compat.js';
 
 (() => {
   'use strict';
 
-  const VERSION = '1.1.1';
+  const VERSION = '1.1.2';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -1420,23 +1416,123 @@ import {
     return operations;
   }
 
+  function operationObject(value) {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  }
+
+  function normalizeOperationShape(operation) {
+    if (!operationObject(operation)) return operation;
+    const type = asText(
+      operation.type ||
+        operation.operationType ||
+        operation.operation_type ||
+        operation.op ||
+        operation.operation ||
+        operation.action,
+    );
+    if (!type) return operation;
+
+    const id = asText(
+      operation.id || operation.target_id || operation.targetId || operation.record_id || operation.recordId,
+    );
+    if (type === 'summary.replace') {
+      const valueObject = operationObject(operation.value);
+      const summary =
+        asText(operation.value) ||
+        asText(
+          operation.summary ||
+            operation.world_summary ||
+            operation.worldSummary ||
+            operation.content ||
+            operation.text ||
+            valueObject?.summary ||
+            valueObject?.world_summary ||
+            valueObject?.worldSummary ||
+            valueObject?.content ||
+            valueObject?.text,
+        );
+      return { ...operation, type, ...(id ? { id } : {}), value: summary };
+    }
+
+    if (['event.resolve', 'intel.remove', 'hook.resolve'].includes(type)) {
+      return { ...operation, type, ...(id ? { id } : {}) };
+    }
+
+    const entityKey = type.split('.')[0];
+    const explicitValue =
+      operationObject(operation.value) ||
+      operationObject(operation.record) ||
+      operationObject(operation.data) ||
+      operationObject(operation.payload) ||
+      operationObject(operation.fields) ||
+      operationObject(operation[entityKey]);
+    const flatValue = { ...operation };
+    [
+      'type',
+      'operationType',
+      'operation_type',
+      'op',
+      'operation',
+      'action',
+      'id',
+      'target_id',
+      'targetId',
+      'record_id',
+      'recordId',
+      'value',
+      'record',
+      'data',
+      'payload',
+      'fields',
+      'set',
+      'changes',
+      'patch',
+    ].forEach(key => delete flatValue[key]);
+    let value = explicitValue || flatValue;
+    const nestedEntity = operationObject(value?.[entityKey]);
+    if (nestedEntity && Object.keys(value).length === 1) value = nestedEntity;
+
+    if (type === 'fact.add') {
+      const rawConfidence = value.confidence ?? value.certainty ?? value.reliability;
+      const numericConfidence = Number(rawConfidence);
+      value = {
+        ...value,
+        content: asText(value.content || value.fact || value.description || value.summary || value.text),
+        status: asText(value.status || value.state, 'occurred'),
+        scope: asText(value.scope || value.source_scope || value.sourceScope, 'player_scene'),
+        location: asText(value.location || value.place || value.where || value.site),
+        actors: asArray(value.actors || value.participants || value.people),
+        witnesses: asArray(value.witnesses || value.observers),
+        publicity: asText(value.publicity || value.visibility || value.exposure || value.public_status),
+        confidence: Number.isFinite(numericConfidence)
+          ? numericConfidence > 1 && numericConfidence <= 100
+            ? numericConfidence / 100
+            : numericConfidence
+          : 0.8,
+        importance: Number(value.importance ?? value.priority ?? 60),
+        evidence: asText(value.evidence || value.source || value.basis || value.proof),
+      };
+    }
+
+    const patch =
+      operationObject(operation.set) ||
+      operationObject(operation.changes) ||
+      operationObject(operation.patch) ||
+      (type.endsWith('.patch') ? value : null);
+    return {
+      ...operation,
+      type,
+      ...(id ? { id } : {}),
+      ...(type.endsWith('.patch') ? { set: patch || {} } : { value }),
+    };
+  }
+
   function normalizeIncrementalResult(result, expectedRevision) {
     if (!result || typeof result !== 'object' || Array.isArray(result)) {
       throw new Error('副模型输出缺少可用的结构化对象。');
     }
     const rawOperations = asArray(result.operations || result.ops).slice(0, 32);
-    const operations = rawOperations.map(operation => {
-      if (!operation || typeof operation !== 'object' || Array.isArray(operation)) return operation;
-      const type = asText(
-        operation.type ||
-          operation.operationType ||
-          operation.operation_type ||
-          operation.op ||
-          operation.operation ||
-          operation.action,
-      );
-      return type && type !== operation.type ? { ...operation, type } : operation;
-    });
+    const operations = rawOperations.map(normalizeOperationShape);
     const declaredSchemaVersion = result.schema_version ?? result.schemaVersion;
     if (operations.length && declaredSchemaVersion != null && Number(declaredSchemaVersion) !== 2) {
       throw new Error(`副模型输出的 schema_version=${declaredSchemaVersion}，当前仅接受版本 2。`);
@@ -1525,7 +1621,11 @@ import {
         const normalized = normalizeIncrementalResult(parseAiResult(raw), payload.baseRevision);
         if (normalized.operations.length) {
           const preview = buildTransitionFromOperations(payload.canonicalState || {}, normalized, {});
-          if (preview.operation_stats.accepted === 0 && preview.operation_stats.rejected > 0) {
+          if (
+            preview.operation_stats.accepted === 0 &&
+            preview.operation_stats.rejected > 0 &&
+            normalized.parallel_scenes.length === 0
+          ) {
             throw new Error(
               `副模型 operations 结构未通过校验：${preview.operation_stats.warnings.slice(0, 3).join('；')}`,
             );
@@ -1695,7 +1795,13 @@ import {
     const reject = (operation, reason) => {
       stats.rejected += 1;
       const type = asText(operation?.type);
-      const label = type || `缺少 type（字段：${Object.keys(operation || {}).slice(0, 5).join(', ') || '无'}）`;
+      const label =
+        type ||
+        `缺少 type（字段：${
+          Object.keys(operation || {})
+            .slice(0, 5)
+            .join(', ') || '无'
+        }）`;
       stats.warnings.push(`${label}：${reason}`.slice(0, 300));
     };
     const accept = () => {
@@ -1720,15 +1826,16 @@ import {
         }
         if (type === 'fact.add') {
           const fact = { ...value, id: id || value?.id };
-          if (
-            !asText(fact.content) ||
-            asText(fact.status) !== 'occurred' ||
-            !asText(fact.location) ||
-            !asText(fact.publicity) ||
-            !asText(fact.evidence) ||
-            Number(fact.confidence) < 0.6
-          ) {
-            reject(operation, '事实字段不完整或可信度不足');
+          const missing = [
+            !asText(fact.content) && 'content',
+            asText(fact.status) !== 'occurred' && 'status=occurred',
+            !asText(fact.location) && 'location',
+            !asText(fact.publicity) && 'publicity',
+            !asText(fact.evidence) && 'evidence',
+            (!Number.isFinite(Number(fact.confidence)) || Number(fact.confidence) < 0.6) && 'confidence≥0.6',
+          ].filter(Boolean);
+          if (missing.length) {
+            reject(operation, `事实缺少 ${missing.join('、')}`);
           } else {
             transition.new_facts.push(fact);
             accept();
@@ -2152,7 +2259,8 @@ import {
       if (
         asArray(result.operations).length &&
         transition.operation_stats.accepted === 0 &&
-        transition.operation_stats.rejected > 0
+        transition.operation_stats.rejected > 0 &&
+        transition.parallel_scenes.length === 0
       ) {
         throw new Error(
           `副模型返回的 ${transition.operation_stats.rejected} 项 operations 全部无效，本轮未写入档案，请重新推演。`,
