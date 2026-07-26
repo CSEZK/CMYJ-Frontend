@@ -1,12 +1,3 @@
-import '../schema/index.js';
-import '../legacy/index.js';
-import '../workshop/index.js';
-import '../generator/index.js';
-import '../scenario-generator/index.js';
-import '../variable-editor/index.js';
-import '../world-engine/index.js';
-import '../statusbar/index.js';
-
 const RUNTIME_KEY = '__CMYJRemoteScriptsV17';
 
 const ROLE_FILES = Object.freeze({
@@ -18,11 +9,6 @@ const ROLE_FILES = Object.freeze({
   'scenario-generator': 'scenario-generator',
   'variable-editor': 'variable-editor',
   'world-engine': 'world-engine',
-});
-
-const ROLE_DEPENDENCIES = Object.freeze({
-  legacy: ['schema'],
-  statusbar: ['schema', 'legacy', 'workshop', 'generator', 'scenario-generator', 'variable-editor'],
 });
 
 function getHostWindow() {
@@ -41,12 +27,12 @@ const state = host[RUNTIME_KEY] ?? {
 };
 
 async function importRole(role) {
-  const dependencies = ROLE_DEPENDENCIES[role] ?? [];
-  for (const dependency of dependencies) await boot(dependency);
+  const roleFile = ROLE_FILES[role];
+  if (!roleFile) throw new Error(`未知的残明余烬远程脚本：${role}`);
 
-  if (!ROLE_FILES[role]) throw new Error(`未知的残明余烬远程脚本：${role}`);
-
-  // 模板会把当前通道的功能模块静态打包到共享入口；实际注册在模块求值时已完成。
+  const loaderDirectory = new URL('.', import.meta.url).href;
+  const roleUrl = `${loaderDirectory}../${roleFile}/index.js`;
+  await import(/* webpackIgnore: true */ roleUrl);
   state.loaded[role] = true;
   return true;
 }

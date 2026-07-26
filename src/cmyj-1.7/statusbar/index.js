@@ -6,10 +6,6 @@ const STATUSBAR_ID = 'canming-afterglow-statusbar';
 const STATUSBAR_VERSION = '1.7.11';
 const MAP_ASSET_REVISION = 'd697affd3ed71c09e8278cc2ac37b5d3b5dc2ded';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
-const VARIABLE_EDITOR_FILE = '变量修改器.js';
-const CHARACTER_GENERATOR_FILE = '万象生成器.js';
-const SCENARIO_GENERATOR_FILE = '开局生成器.js';
-const WORKSHOP_FILE = '云端创意工坊.js';
 const CORE_REMOTE_SCRIPT_NAMES = new Set([
   '变量结构',
   '旧档兼容',
@@ -46,7 +42,6 @@ const BUILTIN_TONGCHENG_OPENINGS = [
   },
 ];
 
-const STATUSBAR_SCRIPT_SRC = document.currentScript?.src || '';
 const WORKSHOP_API = 'https://cm-yj-workshop.canming-cloud.workers.dev';
 const WORKSHOP_TOKEN_KEY = 'canming-workshop:token';
 const WORKSHOP_NOTICE_INTERVAL_MS = 10 * 60 * 1000;
@@ -3636,37 +3631,9 @@ function getCharacterGenerator() {
   return globalThis.CanmingCharacterGenerator ?? window.parent?.CanmingCharacterGenerator;
 }
 
-function getRemoteScriptRuntime() {
-  return globalThis.__CMYJRemoteScripts ?? window.parent?.__CMYJRemoteScripts;
-}
-
 function loadCharacterGeneratorScript() {
   if (getCharacterGenerator()) return Promise.resolve(getCharacterGenerator());
-  if (window._canmingCharacterGeneratorLoading) return window._canmingCharacterGeneratorLoading;
-
-  const remoteRuntime = getRemoteScriptRuntime();
-  if (typeof remoteRuntime?.boot === 'function') {
-    window._canmingCharacterGeneratorLoading = remoteRuntime.boot('generator').then(() => {
-      const generator = getCharacterGenerator();
-      if (!generator) throw new Error('万象生成器远程脚本已加载，但接口未注册。');
-      return generator;
-    });
-    return window._canmingCharacterGeneratorLoading;
-  }
-
-  window._canmingCharacterGeneratorLoading = new Promise((resolve, reject) => {
-    if (!STATUSBAR_SCRIPT_SRC) {
-      reject(new Error('无法定位状态栏脚本地址，请确认万象生成器脚本已被加载。'));
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = new URL(CHARACTER_GENERATOR_FILE, STATUSBAR_SCRIPT_SRC).href;
-    script.onload = () => resolve(getCharacterGenerator());
-    script.onerror = () => reject(new Error(`无法加载 ${CHARACTER_GENERATOR_FILE}`));
-    document.head.appendChild(script);
-  });
-
-  return window._canmingCharacterGeneratorLoading;
+  return Promise.reject(new Error('万象生成器脚本未启用，请先在角色卡脚本库中开启它并刷新页面。'));
 }
 
 async function openCharacterGenerator() {
@@ -3694,28 +3661,7 @@ function getScenarioGenerator() {
 
 function loadScenarioGeneratorScript() {
   if (getScenarioGenerator()) return Promise.resolve(getScenarioGenerator());
-  if (window._canmingScenarioGeneratorLoading) return window._canmingScenarioGeneratorLoading;
-  const remoteRuntime = getRemoteScriptRuntime();
-  if (typeof remoteRuntime?.boot === 'function') {
-    window._canmingScenarioGeneratorLoading = remoteRuntime.boot('scenario-generator').then(() => {
-      const generator = getScenarioGenerator();
-      if (!generator?.open) throw new Error('开局生成器远程脚本已加载，但接口未注册。');
-      return generator;
-    });
-    return window._canmingScenarioGeneratorLoading;
-  }
-  window._canmingScenarioGeneratorLoading = new Promise((resolve, reject) => {
-    if (!STATUSBAR_SCRIPT_SRC) {
-      reject(new Error('无法定位状态栏脚本地址，请确认开局生成器脚本已被加载。'));
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = new URL(SCENARIO_GENERATOR_FILE, STATUSBAR_SCRIPT_SRC).href;
-    script.onload = () => resolve(getScenarioGenerator());
-    script.onerror = () => reject(new Error(`无法加载 ${SCENARIO_GENERATOR_FILE}`));
-    document.head.appendChild(script);
-  });
-  return window._canmingScenarioGeneratorLoading;
+  return Promise.reject(new Error('开局生成器脚本未启用，请先在角色卡脚本库中开启它并刷新页面。'));
 }
 
 async function openScenarioGenerator() {
@@ -3770,43 +3716,7 @@ function loadCanmingWorkshopScript() {
     } catch {}
     window._canmingWorkshopLoading = null;
   }
-  if (window._canmingWorkshopLoading) return window._canmingWorkshopLoading;
-  const remoteRuntime = getRemoteScriptRuntime();
-  if (typeof remoteRuntime?.boot === 'function') {
-    window._canmingWorkshopLoading = remoteRuntime.boot('workshop').then(() => {
-      const workshop = getCanmingWorkshop();
-      if (!workshop?.open) throw new Error('云端创意工坊远程脚本已加载，但接口未注册。');
-      return workshop;
-    });
-    return window._canmingWorkshopLoading;
-  }
-  window._canmingWorkshopLoading = new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    try {
-      const getTrees = globalThis.getScriptTrees ?? window.parent?.getScriptTrees;
-      const trees = typeof getTrees === 'function' ? getTrees({ type: 'character' }) : [];
-      const scripts = trees.flatMap(item => (item?.type === 'folder' ? item.scripts || [] : [item]));
-      const expectedName = WORKSHOP_FILE.replace(/\.js$/i, '');
-      const moduleScript = scripts.find(item => item?.name === expectedName || item?.name === WORKSHOP_FILE);
-      if (moduleScript?.content) {
-        script.textContent = moduleScript.content;
-        document.head.appendChild(script);
-        resolve(getCanmingWorkshop());
-        return;
-      }
-    } catch {}
-    if (STATUSBAR_SCRIPT_SRC) {
-      try {
-        script.src = new URL(WORKSHOP_FILE, STATUSBAR_SCRIPT_SRC).href;
-        script.onload = () => resolve(getCanmingWorkshop());
-        script.onerror = () => reject(new Error(`无法加载 ${WORKSHOP_FILE}`));
-        document.head.appendChild(script);
-        return;
-      } catch {}
-    }
-    reject(new Error('当前角色卡尚未注册“云端创意工坊”脚本。'));
-  });
-  return window._canmingWorkshopLoading;
+  return Promise.reject(new Error('云端创意工坊脚本未启用，请先在角色卡脚本库中开启它并刷新页面。'));
 }
 
 function workshopMetadata(metadata, fallbackTitle, fallbackSummary = '') {
@@ -5136,31 +5046,7 @@ function getVariableEditor() {
 
 function loadVariableEditorScript() {
   if (getVariableEditor()) return Promise.resolve(getVariableEditor());
-  if (window._canmingVariableEditorLoading) return window._canmingVariableEditorLoading;
-
-  const remoteRuntime = getRemoteScriptRuntime();
-  if (typeof remoteRuntime?.boot === 'function') {
-    window._canmingVariableEditorLoading = remoteRuntime.boot('variable-editor').then(() => {
-      const editor = getVariableEditor();
-      if (!editor) throw new Error('变量修改器远程脚本已加载，但接口未注册。');
-      return editor;
-    });
-    return window._canmingVariableEditorLoading;
-  }
-
-  window._canmingVariableEditorLoading = new Promise((resolve, reject) => {
-    if (!STATUSBAR_SCRIPT_SRC) {
-      reject(new Error('无法定位状态栏脚本地址，请确认变量修改器脚本已被加载。'));
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = new URL(VARIABLE_EDITOR_FILE, STATUSBAR_SCRIPT_SRC).href;
-    script.onload = () => resolve(getVariableEditor());
-    script.onerror = () => reject(new Error(`无法加载 ${VARIABLE_EDITOR_FILE}`));
-    document.head.appendChild(script);
-  });
-
-  return window._canmingVariableEditorLoading;
+  return Promise.reject(new Error('变量修改器脚本未启用，请先在角色卡脚本库中开启它并刷新页面。'));
 }
 
 async function openVariableEditor() {
