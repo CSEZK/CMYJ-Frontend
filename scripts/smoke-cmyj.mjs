@@ -18,6 +18,7 @@ const betaScenarioSource = await readFile(
   'utf8',
 );
 const releaseLoader = await readFile(path.join(root, 'dist', 'cmyj-1.7', 'loader', 'index.js'), 'utf8');
+const releaseLoaderSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'loader', 'index.js'), 'utf8');
 const releaseWorkshopSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'workshop', 'index.js'), 'utf8');
 const releaseStatusbarSource = await readFile(path.join(root, 'src', 'cmyj-1.7', 'statusbar', 'index.js'), 'utf8');
 const releaseMapOverviewSource = await readFile(path.join(root, 'assets', 'maps', 'world_1634_overview.js'), 'utf8');
@@ -184,9 +185,12 @@ for (const [name, anchor] of Object.entries(experienceAnchors)) {
   assert.match(JSON.stringify(adaptation), new RegExp(anchor), `${name} 缺少正式版关键经历「${anchor}」`);
 }
 
-assert.ok(releaseLoader.length > 300_000, '1.7 正式版共享加载器未包含完整脚本集');
+assert.ok(releaseLoader.length < 10_000, '1.7 正式版加载器不应重新打包全部功能脚本');
 assert.match(releaseLoader, /__CMYJRemoteScriptsV17/);
 assert.doesNotMatch(releaseLoader, /__CMYJRemoteScriptsV17Beta/);
+assert.match(releaseLoaderSource, /REMOTE_ROOT = 'https:\/\/cmyj-frontend\.pages\.dev\/cmyj-1\.7\/'/);
+assert.match(releaseLoaderSource, /realm\[RUNTIME_KEY\] = runtime/);
+assert.doesNotMatch(releaseLoaderSource, /^import ['"]\.\.\/(?:schema|legacy|workshop|generator)/m);
 assert.match(
   releaseCardPackagerSource,
   /remoteLoaderUrl = 'https:\/\/cmyj-frontend\.pages\.dev\/cmyj-1\.7\/loader\/index\.js'/,
@@ -223,8 +227,8 @@ for (const profile of originalTongchengProfiles.profiles) {
 assert.match(releaseStatusbarSource, /async function applyScenarioCharacterProfiles\(profiles\)/);
 assert.match(releaseStatusbarSource, /async function restoreScenarioCharacterProfiles\(backups\)/);
 assert.match(releaseStatusbarSource, /characterProfileBackups/);
-assert.match(releaseLoader, /原版完整人设资源不完整/);
-assert.match(releaseLoader, /Trébuchet/);
+assert.match(releaseStatusbarSource, /原版完整人设资源不完整/);
+assert.match(JSON.stringify(originalTongchengProfiles), /Trébuchet/);
 assert.equal(originalTongchengOverview.version, 2);
 assert.equal(originalTongchengOverview.entryName, '人物概览');
 assert.match(originalTongchengOverview.content, /<原版人物概览>/);
@@ -249,7 +253,7 @@ for (const forbidden of [
   assert.doesNotMatch(originalTongchengOverview.content, new RegExp(forbidden), `人物概览残留性格描述：${forbidden}`);
 assert.doesNotMatch(releaseStatusbarSource, /var characterOverviews =/);
 assert.match(releaseStatusbarSource, /function hasBuiltinTongchengOverview\(entries\)/);
-assert.match(releaseLoader, /<原版人物概览>/);
+assert.match(originalTongchengOverview.content, /<原版人物概览>/);
 assert.equal(originalTongchengRelationshipGraph.version, 1);
 assert.equal(originalTongchengRelationshipGraph.nodes.length, 27);
 assert.equal(originalTongchengRelationshipGraph.links.length, 27);
@@ -262,7 +266,7 @@ assert.ok(
 assert.doesNotMatch(JSON.stringify(originalTongchengRelationshipGraph.nodes), /约?[一二三四五六七八九十]+岁/);
 assert.match(releaseStatusbarSource, /ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH/);
 assert.match(releaseStatusbarSource, /relationshipGraphVersion/);
-assert.match(releaseLoader, /未婚夫妻/);
+assert.match(JSON.stringify(originalTongchengRelationshipGraph), /未婚夫妻/);
 assert.match(releaseStatusbarSource, /east_asia_1634_provinces/);
 assert.doesNotMatch(releaseStatusbarSource, /GooYi-C\/History@main\/world_1629\.js/);
 const releaseMapOverview = JSON.parse(

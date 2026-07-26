@@ -1,4 +1,6 @@
 const RUNTIME_KEY = '__CMYJRemoteScriptsV17';
+const RUNTIME_REVISION = 2;
+const REMOTE_ROOT = 'https://cmyj-frontend.pages.dev/cmyj-1.7/';
 
 const ROLE_FILES = Object.freeze({
   schema: 'schema',
@@ -20,8 +22,11 @@ function getHostWindow() {
 }
 
 const host = getHostWindow();
-const state = host[RUNTIME_KEY] ?? {
+const realm = globalThis;
+const existingState = realm[RUNTIME_KEY];
+const state = existingState?.revision === RUNTIME_REVISION ? existingState : {
   version: '1.7',
+  revision: RUNTIME_REVISION,
   promises: Object.create(null),
   loaded: Object.create(null),
 };
@@ -30,8 +35,7 @@ async function importRole(role) {
   const roleFile = ROLE_FILES[role];
   if (!roleFile) throw new Error(`未知的残明余烬远程脚本：${role}`);
 
-  const loaderDirectory = new URL('.', import.meta.url).href;
-  const roleUrl = `${loaderDirectory}../${roleFile}/index.js`;
+  const roleUrl = `${REMOTE_ROOT}${roleFile}/index.js`;
   await import(/* webpackIgnore: true */ roleUrl);
   state.loaded[role] = true;
   return true;
@@ -53,9 +57,10 @@ export function boot(role) {
 const runtime = Object.assign(state, {
   boot,
   roles: ROLE_FILES,
-  baseUrl: new URL('.', import.meta.url).href,
+  baseUrl: REMOTE_ROOT,
 });
 
+realm[RUNTIME_KEY] = runtime;
+realm.__CMYJRemoteScripts = runtime;
 host[RUNTIME_KEY] = runtime;
 host.__CMYJRemoteScripts = runtime;
-globalThis.__CMYJRemoteScripts = runtime;
