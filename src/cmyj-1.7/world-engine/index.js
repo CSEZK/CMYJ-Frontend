@@ -7,12 +7,13 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 (() => {
   'use strict';
 
-  const VERSION = '1.7.5';
+  const VERSION = '1.7.8';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
   const LAMP_ID = 'canming-world-engine-lamp';
   const FRAME_ID = 'canming-world-engine-frame';
+  const BANNER_ID = 'canming-world-engine-banner';
   const STYLE_ID = 'canming-world-engine-lamp-style';
   const STORAGE_PREFIX = 'canming-world-engine:';
   const STATUSBAR_THEME_KEY = 'canming-afterglow-statusbar:theme';
@@ -28,6 +29,14 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     'hook.upsert',
     'hook.patch',
     'hook.resolve',
+    'knowledge.grant',
+    'knowledge.suspect',
+    'knowledge.mislead',
+    'knowledge.correct',
+    'secret.upsert',
+    'secret.patch',
+    'secret.reveal',
+    'trace.discover',
   ]);
   const RETIRED_OPERATION_TYPES = new Set(['summary.replace', 'fact.add']);
   const hostWindow = (() => {
@@ -42,11 +51,12 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
   if (hostWindow[RUNTIME_KEY]?.mounted) return;
 
   const DEFAULT_SETTINGS = Object.freeze({
-    settingsVersion: 3,
+    settingsVersion: 4,
     enabled: true,
     autoRun: true,
     lookbackRounds: 3,
     settleDelayMs: 1200,
+    requestTimeoutMs: 90000,
     connectionMode: 'tavern',
     apiUrl: '',
     apiKey: '',
@@ -61,6 +71,9 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     actors: 48,
     intelPackets: 60,
     hooks: 16,
+    secrets: 24,
+    turnFacts: 48,
+    knowledgeLedgerPerActor: 40,
     cameraHistory: 18,
     parallelTurns: 24,
     checkpoints: 8,
@@ -69,11 +82,11 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
   const MAIN_MODEL_CONTEXT_LIMITS = Object.freeze({
     latestItems: 8,
     persistentItems: 4,
-    latestKnowledgeActors: 6,
-    persistentKnowledgeActors: 4,
-    knowledgeFacts: 3,
+    relevantKnowledgeActors: 6,
+    knownFacts: 12,
+    softKnowledgeFacts: 8,
     itemChars: 240,
-    knowledgeFactChars: 100,
+    knowledgeFactChars: 160,
   });
 
   const runtime = {
@@ -89,6 +102,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     pendingMessageId: null,
     pendingForce: false,
     queuedProcess: null,
+    bannerTimer: null,
     mvuReady: false,
     themeTimer: null,
     isOpen: false,
@@ -137,6 +151,19 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     return typeof value === 'string' ? value.trim() : fallback;
   }
 
+  function uniqueTextList(value, limit = 24, maxChars = 240) {
+    const seen = new Set();
+    return asArray(value)
+      .map(item => asText(item).slice(0, maxChars))
+      .filter(item => {
+        const key = item.normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, limit);
+  }
+
   const STATUS_LABELS = Object.freeze({
     occurred: '已发生',
     resolved: '已了结',
@@ -179,6 +206,13 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       .replaceAll('intel.upsert', '驿报登记')
       .replaceAll('hook.upsert', '伏线登记')
       .replaceAll('hook.resolve', '伏线结案')
+      .replaceAll('knowledge.grant', '知识授予')
+      .replaceAll('knowledge.suspect', '人物怀疑')
+      .replaceAll('knowledge.mislead', '人物误信')
+      .replaceAll('knowledge.correct', '认知纠正')
+      .replaceAll('secret.upsert', '秘密登记')
+      .replaceAll('secret.reveal', '秘密揭示')
+      .replaceAll('trace.discover', '痕迹发现')
       .replaceAll('fact.add', '事实登记')
       .replaceAll('stable ID', '稳定编号')
       .replaceAll('location', '地点')
@@ -279,11 +313,12 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     return {
       ...DEFAULT_SETTINGS,
       ...(raw && typeof raw === 'object' ? raw : {}),
-      settingsVersion: 3,
+      settingsVersion: 4,
       enabled,
       connectionMode,
       lookbackRounds: Math.round(clamp(raw?.lookbackRounds ?? DEFAULT_SETTINGS.lookbackRounds, 1, 8)),
       settleDelayMs: Math.round(clamp(raw?.settleDelayMs ?? DEFAULT_SETTINGS.settleDelayMs, 400, 5000)),
+      requestTimeoutMs: Math.round(clamp(raw?.requestTimeoutMs ?? DEFAULT_SETTINGS.requestTimeoutMs, 30000, 900000)),
       temperature: clamp(migratedTemperature ?? DEFAULT_SETTINGS.temperature, 0, 1.5),
       maxTokens: Math.round(clamp(migratedMaxTokens ?? DEFAULT_SETTINGS.maxTokens, 1800, 16000)),
     };
@@ -295,10 +330,11 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     settings = {
       ...DEFAULT_SETTINGS,
       ...next,
-      settingsVersion: 3,
+      settingsVersion: 4,
       connectionMode: next.connectionMode === 'custom' ? 'custom' : 'tavern',
       lookbackRounds: Math.round(clamp(next.lookbackRounds, 1, 8)),
       settleDelayMs: Math.round(clamp(next.settleDelayMs, 400, 5000)),
+      requestTimeoutMs: Math.round(clamp(next.requestTimeoutMs, 30000, 900000)),
       temperature: clamp(next.temperature, 0, 1.5),
       maxTokens: Math.round(clamp(next.maxTokens, 1800, 16000)),
     };
@@ -329,6 +365,13 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       actors: [],
       intelPackets: [],
       hooks: [],
+      secrets: [],
+      turnFacts: [],
+      scenePresence: {
+        location: '',
+        actors: [],
+        updatedAt: '',
+      },
       cameraHistory: [],
       parallelTurns: [],
       nextTurnPacket: {
@@ -405,7 +448,24 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           asText(item?.name) &&
           (asText(item?.currentAction) || asText(item?.nextDecision) || asArray(item?.knowledge).some(Boolean)),
       )
-      .map(item => ({ ...item, id: cleanId(item?.id, 'AC', item?.name) }))
+      .map(item => {
+        const id = cleanId(item?.id, 'AC', item?.name);
+        const knowledge = uniqueTextList(item?.knowledge, 30, 240);
+        const legacyLedger = knowledge.map(content => ({
+          state: 'known',
+          content,
+          sourceType: 'legacy',
+          sourceId: '既有档案',
+          confidence: 0.8,
+        }));
+        return {
+          ...item,
+          id,
+          knowledge,
+          doesNotKnow: uniqueTextList(item?.doesNotKnow || item?.does_not_know, 20, 240),
+          knowledgeLedger: normalizeKnowledgeLedger([...legacyLedger, ...asArray(item?.knowledgeLedger)], id),
+        };
+      })
       .slice(-LIMITS.actors);
     state.intelPackets = asArray(state.intelPackets)
       .filter(
@@ -431,6 +491,15 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       )
       .map(item => ({ ...item, id: cleanId(item?.id, 'HK', item?.title) }))
       .slice(-LIMITS.hooks);
+    state.secrets = asArray(state.secrets)
+      .map(item => normalizeStoredSecret(item))
+      .filter(Boolean)
+      .slice(-LIMITS.secrets);
+    state.turnFacts = asArray(state.turnFacts)
+      .map(item => normalizeStoredTurnFact(item))
+      .filter(Boolean)
+      .slice(-LIMITS.turnFacts);
+    state.scenePresence = normalizeScenePresence(state.scenePresence);
     state.cameraHistory = asArray(state.cameraHistory).slice(-LIMITS.cameraHistory);
     state.parallelTurns = asArray(state.parallelTurns)
       .map(turn => ({
@@ -450,6 +519,8 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
               .slice(0, 12),
             action: asText(scene?.action),
             body: asText(scene?.body).slice(0, 8000),
+            basisIds: uniqueTextList(scene?.basisIds || scene?.basis_ids, 16, 100),
+            knowledgeClaimIds: uniqueTextList(scene?.knowledgeClaimIds || scene?.knowledge_claim_ids, 16, 100),
           }))
           .filter(scene => scene.body)
           .slice(0, 2),
@@ -493,6 +564,9 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       actors: state.actors,
       intelPackets: state.intelPackets,
       hooks: state.hooks,
+      secrets: state.secrets,
+      turnFacts: state.turnFacts,
+      scenePresence: state.scenePresence,
       cameraHistory: state.cameraHistory,
       parallelTurns: state.parallelTurns,
       nextTurnPacket: state.nextTurnPacket,
@@ -762,6 +836,59 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     return '';
   }
 
+  function presenceFlagIsTrue(value) {
+    if (value === true || value === 1) return true;
+    return /^(?:true|是|在场|当前在场|已在场|1)$/i.test(asText(value));
+  }
+
+  function collectPresentActorNames(currentStat) {
+    const names = new Set();
+    const visited = new Set();
+    const walk = (value, keyHint = '', depth = 0) => {
+      if (!value || typeof value !== 'object' || visited.has(value) || depth > 10) return;
+      visited.add(value);
+      if (!Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, '是否在场')) {
+        const name = firstOperationText(value.姓名, value.名字, value.名称, value.name, keyHint);
+        if (name && presenceFlagIsTrue(value.是否在场)) names.add(name);
+      }
+      if (Array.isArray(value)) {
+        value.forEach(item => walk(item, keyHint, depth + 1));
+        return;
+      }
+      Object.entries(value).forEach(([key, item]) => walk(item, key, depth + 1));
+    };
+    walk(currentStat);
+    return [...names];
+  }
+
+  function buildSceneEvidence(baseState, currentStat, currentText) {
+    const location = asText(currentStat?.世界运转?.当前地点);
+    const statPresent = collectPresentActorNames(currentStat);
+    const actorNames = uniqueTextList(
+      [...statPresent, ...asArray(baseState?.actors).map(actor => actorDisplayName(actor))],
+      80,
+      100,
+    );
+    const explicitlyObserved = actorNames.filter(name => asText(currentText).includes(name));
+    const previousPresence = normalizeScenePresence(baseState?.scenePresence);
+    const carried =
+      location &&
+      previousPresence.location &&
+      comparableIdentity(location) === comparableIdentity(previousPresence.location)
+        ? previousPresence.actors.filter(name =>
+            statPresent.some(candidate => comparableIdentity(candidate) === comparableIdentity(name)),
+          )
+        : [];
+    const reliableWitnesses = uniqueTextList([...explicitlyObserved, ...carried], 24, 100);
+    return {
+      currentLocation: location,
+      eligibleWitnesses: statPresent,
+      explicitlyObserved,
+      reliableWitnesses,
+      rule: '只有 reliableWitnesses 可被写入本轮事实 witnesses；未列名人物即使存在于世界书或上下文，也不得视为目击者。',
+    };
+  }
+
   function selectRelevantRecords(records, currentText, limit, fields) {
     const haystack = String(currentText || '');
     return asArray(records)
@@ -811,7 +938,17 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
   }
 
   function buildAutonomyFocus(state, currentText) {
-    const actorFields = ['id', 'name', 'location', 'goal', 'currentAction', 'knowledge', 'doesNotKnow', 'nextDecision'];
+    const actorFields = [
+      'id',
+      'name',
+      'location',
+      'goal',
+      'currentAction',
+      'knowledge',
+      'doesNotKnow',
+      'knowledgeLedger',
+      'nextDecision',
+    ];
     const eventFields = ['id', 'title', 'location', 'actors', 'summary', 'nextTrigger'];
     const actors = mergeRecords(
       selectRelevantRecords(state.actors, currentText, 2, actorFields),
@@ -848,6 +985,10 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           'currentAction',
           'knowledge',
           'doesNotKnow',
+          'knowledgeLedger',
+          'causeType',
+          'causeId',
+          'basisIds',
         ]),
         autonomyFocus?.actors,
         12,
@@ -858,8 +999,31 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         'origin',
         'destination',
         'knownBy',
+        'sourceFactIds',
       ]),
       hooks: selectRelevantRecords(state.hooks, currentText, 8, ['id', 'title', 'summary', 'visibleSigns', 'trigger']),
+      secrets: mergeRecords(
+        selectRelevantRecords(state.secrets, currentText, 12, [
+          'id',
+          'title',
+          'content',
+          'holders',
+          'revealConditions',
+          'status',
+        ]),
+        asArray(state.secrets).filter(item => ['critical', 'high'].includes(asText(item?.level))),
+        16,
+      ),
+      turnFacts: selectRelevantRecords(state.turnFacts, currentText, 16, [
+        'id',
+        'alias',
+        'content',
+        'physicalResult',
+        'traces',
+        'witnesses',
+        'discoveredBy',
+      ]),
+      scenePresence: normalizeScenePresence(state.scenePresence),
     };
   }
 
@@ -1112,7 +1276,10 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
 1. CURRENT_TURN.assistantOutput 和最终 MVU 变化是本轮新增事实的主要证据。玩家输入只代表意图。
 2. 主模型当轮提示词快照与 CANONICAL_STATE 仅用于理解和延续，不得把旧资料重复当成新事实。
 3. 只有明确发生的结果才能推动事件、人物、情报或延迟后果；计划、命令、传闻、失败尝试和氛围不得伪装成已经发生的结果。
-4. 平行场景只能展示本轮操作已经支持的变化，不能先写重大结果再用场景认证它。
+4. 先把正文中会影响后续因果的结果写入 turn_facts。evidence 必须逐字摘录 assistantOutput 中能证明结果的短句；不得用玩家输入、世界书或推断代替证据。
+5. visibility 只能是 private、addressed、scene_visible、local_public。private 表示无人目击，witnesses 必须为空；其他可见级别的 witnesses 也只能从 SCENE_EVIDENCE.reliableWitnesses 选择。local_public 仅表示当前地点内已核实的人可见，绝不等于全城或远方人物立刻知道。
+6. 无人目击不等于没有发生：仍登记 physical_result、traces 与 discovery_conditions，但任何 NPC 都不得直接获得事实内容。后来只能通过 trace.discover 发现实际痕迹，并且只能得出痕迹本身支持的结论。
+7. 平行场景只能展示本轮操作已经支持的变化，不能先写重大结果再用场景认证它。
 
 二、增量原则
 1. 只返回发生变化的内容，不重写完整档案。
@@ -1120,26 +1287,30 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
    若目标尚未出现在对应档案数组中，必须使用 upsert，绝不能根据姓名自造 actor_xxx、event_xxx 一类 ID。patch 的 set 还要附带身份字段：人物 name、事件/伏线 title、情报 content，供脚本核对目标。
 3. 不要总结正文、复述世界现状、记录玩家履历或重写 MVU/状态栏字段；这些由聊天记忆、变量结构与状态栏负责。
 4. 事件只记录仍在自行推进、会对未来形成压力的进程，不把玩家当前任务或地图静态态势换一种说法抄入档案。
-5. 人物只记录玩家视野外的行动、地点、目标、knowledge、does_not_know 或下一决策变化；当前在场人物的状态由 MVU 负责。明确的认知盲区写入 does_not_know，不要只列“知道什么”。
-6. 情报必须有起点、终点、渠道、状态和抵达时间；人物不能无渠道获得消息。
-7. 伏线只记录有明确触发条件或失效条件的延迟后果，不记录一般剧情摘要。
+5. 人物行动仍用 actor 操作；已有角色的 knowledge 与 does_not_know 不得通过 actor.patch 偷渡改写。新增或纠正认知必须使用 knowledge.*，重要秘密必须使用 secret.*。
+6. knowledge.grant/suspect/mislead/correct 必须写明人物、内容、source_type、source_id 与 confidence。引用本轮正文时 source_id 必须使用对应 turn_facts 的 TF-* 本地别名，禁止使用 CURRENT_TURN。引用本次返回的第 N 段旁线可用 PARALLEL_SCENE_N。told_by_actor 还必须填写 source_actor_id/source_actor_name，且告知者本身必须合法知情。
+7. 每个 actor.upsert/patch 都要给 cause_type、cause_id 与 basis_ids。cause_type 只能是 autonomous、observation、knowledge、received_intel、event、elapsed_time；对玩家本轮行为作出反应时必须引用获准目击的 TF-*、已抵达情报、人物已知条目或事件，不能用“听说”“感觉”绕过。
+8. secret.upsert 用于登记容易被模型越权使用的重要秘密，必须提供知情者、解锁条件和证据来源；引用本轮正文也必须使用 TF-*。secret.reveal 只向通过来源校验的人物揭示秘密。
+9. 情报必须有起点、终点、渠道、状态和抵达时间；人物不能无渠道获得消息。
+10. 伏线只记录有明确触发条件或失效条件的延迟后果，不记录一般剧情摘要。
 
 三、视野外人物自主行动
 1. AUTONOMY_FOCUS 是轮换候选而非强制清单。每轮只推进具备足够虚构时间、行动机会、动机和资源的 0—3 名人物；没有合理推进条件时保持原行动，不得为了凑 operations 强行变化。
 2. 人物依据自己的目标、当前位置、既有行动、已知信息和资源约束做事，不等待玩家触发，也不要求所有人围绕玩家当轮行为作出反应。
-3. 严守知识边界：人物只能利用 knowledge、亲历事实和已经抵达的情报；does_not_know 中的内容以及尚在传递的消息不得用于决策。
+3. 严守知识边界：世界书和模型上下文中的真相不等于人物知道。人物只能利用明确的 knowledge、knowledgeLedger 中的 known、亲历事实和已经抵达的情报；suspected 只能怀疑，believed 可能是误信，does_not_know 与未获授权的 secret 绝不能用于决策。
 4. 先判断本轮流逝的时间与行动尺度。短暂对话不能让远方人物瞬间跨城或完成长期计划；可以只记录“继续执行”而不产生 patch。
 5. 额外激活的世界书只提供身份、地点、制度、关系和行动约束，不等于本轮新事实，也不得替人物补出无来源的知识。
 
 四、旁线场景
-1. parallel_scenes 最多两个，每个包含 location、time、actors、action、body。
+1. parallel_scenes 最多两个，每个包含 location、time、actors、action、body、basis_ids、knowledge_claim_ids。basis_ids 写支撑场景的事件、人物行动或情报 ID；knowledge_claim_ids 只写场景中实际被人物使用的 TF-*。
 2. 场景必须在玩家当前视野之外，优先表现合法操作推进的事件、人物行动或情报传播。
 3. 不得重演玩家场景，不得凭空制造胜负、死亡、陷城或政局结果。
-4. body 不使用 <平行世界> 标签，不写“与此同时”“玩家不知道的是”“镜头转向”等元叙事。
+4. 若场景内容与某个 turn_fact 有关，必须把它列入 knowledge_claim_ids；脚本会逐个人物核验其是否是合法目击者或已通过传播获得该知识。private 事实不能被旁线人物直接反应。
+5. body 不使用 <平行世界> 标签，不写“与此同时”“玩家不知道的是”“镜头转向”等元叙事。
 
 五、输出
 1. 只返回符合 JSON Schema 的一个 JSON 对象。operations 可以为空；没有变化的字段不得凑数。base_revision 必须原样回传。
-2. operations 中每一项都必须带 type 字段。type 只能是：event.upsert、event.patch、event.resolve、actor.upsert、actor.patch、intel.upsert、intel.patch、intel.remove、hook.upsert、hook.patch、hook.resolve。不得使用 op、operation、action 或自造名称代替 type。
+2. operations 中每一项都必须带 type 字段。type 只能是：event.upsert、event.patch、event.resolve、actor.upsert、actor.patch、intel.upsert、intel.patch、intel.remove、hook.upsert、hook.patch、hook.resolve、knowledge.grant、knowledge.suspect、knowledge.mislead、knowledge.correct、secret.upsert、secret.patch、secret.reveal、trace.discover。不得使用 op、operation、action 或自造名称代替 type。
 3. upsert 的 ID 可省略；脚本会生成稳定 ID。不要为了新增人物、事件或情报臆造内部 ID。只有修改或结束已有记录时才必须照抄既有 ID。`;
   }
 
@@ -1167,6 +1338,12 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       does_not_know: textArray,
       next_decision: text,
       updated_reason: text,
+      cause_type: {
+        type: 'string',
+        enum: ['autonomous', 'observation', 'knowledge', 'received_intel', 'event', 'elapsed_time'],
+      },
+      cause_id: text,
+      basis_ids: textArray,
     };
     const intelFields = {
       content: text,
@@ -1177,6 +1354,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       eta: text,
       reliability: { type: 'number', minimum: 0, maximum: 1 },
       known_by: textArray,
+      source_fact_ids: textArray,
     };
     const hookFields = {
       title: text,
@@ -1186,6 +1364,40 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       trigger: text,
       fail_condition: text,
       source_fact_ids: textArray,
+    };
+    const knowledgeFields = {
+      actor_id: text,
+      actor_name: text,
+      content: text,
+      replaces: text,
+      source_type: {
+        type: 'string',
+        enum: [
+          'direct_observation',
+          'witnessed_event',
+          'received_intel',
+          'told_by_actor',
+          'public_information',
+          'correction',
+        ],
+      },
+      source_id: text,
+      source_actor_id: text,
+      source_actor_name: text,
+      confidence: { type: 'number', minimum: 0, maximum: 1 },
+    };
+    const secretFields = {
+      title: text,
+      content: text,
+      level: { type: 'string', enum: ['critical', 'high', 'normal'] },
+      holders: textArray,
+      reveal_conditions: textArray,
+      status: { type: 'string', enum: ['hidden', 'compromised', 'public', 'expired'] },
+      source_type: {
+        type: 'string',
+        enum: ['direct_observation', 'witnessed_event', 'received_intel', 'public_information', 'correction'],
+      },
+      source_id: text,
     };
     const recordOperation = (type, fields, mode, requiredFields = []) => ({
       type: 'object',
@@ -1212,16 +1424,99 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       required: ['type', 'id'],
       properties: { type: { type: 'string', enum: [type] }, id: text },
     });
+    const knowledgeOperation = type => ({
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'value'],
+      properties: {
+        type: { type: 'string', enum: [type] },
+        value: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['actor_name', 'content', 'source_type', 'source_id', 'confidence'],
+          properties: knowledgeFields,
+        },
+      },
+    });
+    const secretRevealOperation = {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'id', 'value'],
+      properties: {
+        type: { type: 'string', enum: ['secret.reveal'] },
+        id: text,
+        value: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['actor_name', 'source_type', 'source_id'],
+          properties: knowledgeFields,
+        },
+      },
+    };
+    const traceDiscoverOperation = {
+      type: 'object',
+      additionalProperties: false,
+      required: ['type', 'id', 'value'],
+      properties: {
+        type: { type: 'string', enum: ['trace.discover'] },
+        id: text,
+        value: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['actor_name', 'trace', 'conclusion', 'source_type', 'source_id', 'confidence'],
+          properties: {
+            actor_id: text,
+            actor_name: text,
+            trace: text,
+            conclusion: text,
+            source_type: { type: 'string', enum: ['direct_observation', 'witnessed_event'] },
+            source_id: text,
+            confidence: { type: 'number', minimum: 0, maximum: 1 },
+          },
+        },
+      },
+    };
+    const turnFact = {
+      type: 'object',
+      additionalProperties: false,
+      required: [
+        'id',
+        'content',
+        'visibility',
+        'witnesses',
+        'evidence',
+        'location',
+        'physical_result',
+        'traces',
+        'discovery_conditions',
+      ],
+      properties: {
+        id: text,
+        content: text,
+        visibility: { type: 'string', enum: ['private', 'addressed', 'scene_visible', 'local_public'] },
+        witnesses: textArray,
+        evidence: text,
+        location: text,
+        physical_result: text,
+        traces: textArray,
+        discovery_conditions: textArray,
+      },
+    };
     return {
       name: 'cmyj_world_engine_increment_v2',
       strict: false,
       value: {
         type: 'object',
         additionalProperties: false,
-        required: ['schema_version', 'base_revision', 'operations', 'parallel_scenes'],
+        required: ['schema_version', 'base_revision', 'turn_facts', 'operations', 'parallel_scenes'],
         properties: {
           schema_version: { type: 'integer', enum: [2] },
           base_revision: { type: 'integer', minimum: 0 },
+          turn_facts: {
+            type: 'array',
+            maxItems: 12,
+            items: turnFact,
+          },
           operations: {
             type: 'array',
             maxItems: 32,
@@ -1244,8 +1539,11 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
                   'goal',
                   'current_action',
                   'updated_reason',
+                  'cause_type',
+                  'cause_id',
+                  'basis_ids',
                 ]),
-                recordOperation('actor.patch', actorFields, 'patch', ['name']),
+                recordOperation('actor.patch', actorFields, 'patch', ['name', 'cause_type', 'cause_id', 'basis_ids']),
                 recordOperation('intel.upsert', intelFields, 'upsert', [
                   'content',
                   'origin',
@@ -1266,6 +1564,22 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
                 ]),
                 recordOperation('hook.patch', hookFields, 'patch', ['title']),
                 idOperation('hook.resolve'),
+                knowledgeOperation('knowledge.grant'),
+                knowledgeOperation('knowledge.suspect'),
+                knowledgeOperation('knowledge.mislead'),
+                knowledgeOperation('knowledge.correct'),
+                recordOperation('secret.upsert', secretFields, 'upsert', [
+                  'content',
+                  'level',
+                  'holders',
+                  'reveal_conditions',
+                  'status',
+                  'source_type',
+                  'source_id',
+                ]),
+                recordOperation('secret.patch', secretFields, 'patch'),
+                secretRevealOperation,
+                traceDiscoverOperation,
               ],
             },
           },
@@ -1275,13 +1589,15 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
             items: {
               type: 'object',
               additionalProperties: false,
-              required: ['location', 'time', 'actors', 'action', 'body'],
+              required: ['location', 'time', 'actors', 'action', 'body', 'basis_ids', 'knowledge_claim_ids'],
               properties: {
                 location: text,
                 time: text,
                 actors: textArray,
                 action: text,
                 body: prose,
+                basis_ids: textArray,
+                knowledge_claim_ids: textArray,
               },
             },
           },
@@ -1296,9 +1612,10 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     const previousStat = findPreviousStatData(messageKey.messageId);
     const currentText = current?.message || '';
     const autonomyFocus = buildAutonomyFocus(baseState, currentText);
+    const sceneEvidence = buildSceneEvidence(baseState, currentStat, currentText);
     return {
       instruction:
-        '先判定 CURRENT_TURN 中真正发生了什么，再让具备时间与机会的视野外人物按自身目标继续行动，最后只提交必要 operations。CANONICAL_STATE 是只读工作集，patch 必须复用其中已有 ID。',
+        '先把 CURRENT_TURN 中真正发生且会影响后续的结果登记为 turn_facts，并严格按照 SCENE_EVIDENCE 限制目击者；再让具备合法知识、时间与机会的视野外人物行动，最后只提交必要 operations。CANONICAL_STATE 是只读工作集，patch 必须复用其中已有 ID。',
       baseRevision: Number(baseState.revision) || 0,
       currentTurn: {
         messageId: messageKey.messageId,
@@ -1307,6 +1624,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         assistantOutput: stripForContext(currentText).slice(0, 30000),
         mvuChanges: deepDiff(previousStat, currentStat).slice(0, 100),
       },
+      sceneEvidence,
       autonomyFocus,
       recentContextReadOnly: buildRecentContext(messageKey.messageId),
       canonicalState: compactStateForPrompt(baseState, currentText, autonomyFocus),
@@ -1490,7 +1808,15 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     const direct = asArray(value)
       .map(scene =>
         typeof scene === 'string'
-          ? { location: '', time: '', actors: [], action: '', body: cleanBody(scene) }
+          ? {
+              location: '',
+              time: '',
+              actors: [],
+              action: '',
+              body: cleanBody(scene),
+              basis_ids: [],
+              knowledge_claim_ids: [],
+            }
           : {
               location: asText(scene?.location),
               time: asText(scene?.time),
@@ -1500,11 +1826,33 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
                 .slice(0, 12),
               action: asText(scene?.action),
               body: cleanBody(scene?.body || scene?.content || scene?.text),
+              basis_ids: operationTextArray(scene?.basis_ids || scene?.basisIds),
+              knowledge_claim_ids: operationTextArray(scene?.knowledge_claim_ids || scene?.knowledgeClaimIds),
             },
       )
       .filter(scene => scene.body)
       .slice(0, 2);
     return direct;
+  }
+
+  function normalizeTurnFactCandidate(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const content = asText(raw.content || raw.fact || raw.summary).slice(0, 600);
+    const physicalResult = asText(
+      raw.physical_result || raw.physicalResult || raw.observable_result || raw.observableResult,
+    ).slice(0, 600);
+    if (!content && !physicalResult) return null;
+    return {
+      id: firstOperationText(raw.id, raw.local_id, raw.localId),
+      content: content || physicalResult,
+      visibility: asText(raw.visibility, 'private').toLowerCase(),
+      witnesses: operationTextArray(raw.witnesses || raw.observers || raw.recipients),
+      evidence: asText(raw.evidence || raw.quote).slice(0, 800),
+      location: asText(raw.location || raw.place).slice(0, 160),
+      physical_result: physicalResult || content,
+      traces: operationTextArray(raw.traces || raw.clues),
+      discovery_conditions: operationTextArray(raw.discovery_conditions || raw.discoveryConditions),
+    };
   }
 
   function legacyParallelScene(result) {
@@ -1648,6 +1996,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       return 'intel.upsert';
     }
     if (/^hook[_.-]/.test(id) && hasText('name', 'title')) return 'hook.upsert';
+    if (/^(?:secret|sec)[_.-]/.test(id) && hasText('content', 'fact', 'secret')) return 'secret.upsert';
     return declaredType;
   }
 
@@ -1658,6 +2007,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       'actor.upsert': 'AC',
       'intel.upsert': 'IN',
       'hook.upsert': 'HK',
+      'secret.upsert': 'SEC',
     }[type];
     if (!prefix) return '';
     const identity = asText(
@@ -1684,6 +2034,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     if (type.startsWith('actor.')) return firstOperationText(value?.name, value?.actor_name, value?.actorName);
     if (type.startsWith('intel.')) return firstOperationText(value?.content, value?.message, value?.summary);
     if (type.startsWith('hook.')) return firstOperationText(value?.title, value?.name);
+    if (type.startsWith('secret.')) return firstOperationText(value?.content, value?.fact, value?.secret, value?.title);
     return '';
   }
 
@@ -1703,7 +2054,9 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       ? new Set(['name', 'actor_name', 'actorName'])
       : type.startsWith('intel.')
         ? new Set(['content', 'message', 'summary'])
-        : new Set(['title', 'name']);
+        : type.startsWith('secret.')
+          ? new Set(['content', 'fact', 'secret', 'title'])
+          : new Set(['title', 'name']);
     return Object.keys(value || {}).some(key => !identityKeys.has(key));
   }
 
@@ -1853,14 +2206,19 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       throw new Error(`副模型 operations 结构无效：${received.join('；')}`);
     }
     const scenes = normalizeParallelScenes(result.parallel_scenes || result.parallelScenes || result.scenes);
+    const turnFacts = asArray(result.turn_facts || result.turnFacts)
+      .map(normalizeTurnFactCandidate)
+      .filter(Boolean)
+      .slice(0, 12);
     const normalized = {
       schema_version: Number(result.schema_version || result.schemaVersion || 2),
       base_revision: Number(result.base_revision ?? result.baseRevision ?? expectedRevision),
+      turn_facts: turnFacts,
       operations: operations.length ? operations : legacyOperations(result).slice(0, 32),
       parallel_scenes: scenes.length ? scenes : legacyParallelScene(result),
     };
-    if (!normalized.operations.length && !normalized.parallel_scenes.length) {
-      throw new Error('副模型结构中既没有增量操作，也没有可用的旁线场景。');
+    if (!normalized.turn_facts.length && !normalized.operations.length && !normalized.parallel_scenes.length) {
+      throw new Error('副模型结构中既没有本轮事实、增量操作，也没有可用的旁线场景。');
     }
     return normalized;
   }
@@ -1994,7 +2352,46 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     return prompts;
   }
 
-  async function callWorldModel(payload, generationId, promptSnapshot, worldInfoSupplement) {
+  function durationLabel(milliseconds) {
+    const seconds = Math.max(1, Math.round(Number(milliseconds) / 1000));
+    if (seconds < 60) return `${seconds} 秒`;
+    const minutes = Math.floor(seconds / 60);
+    const remainder = seconds % 60;
+    return remainder ? `${minutes} 分 ${remainder} 秒` : `${minutes} 分钟`;
+  }
+
+  function cancellationError(reason = '天下演化已取消。') {
+    const error = new Error(reason);
+    error.name = 'AbortError';
+    error.code = 'CWE_CANCELLED';
+    return error;
+  }
+
+  function isCancellationError(error) {
+    return error?.code === 'CWE_CANCELLED' || error?.name === 'AbortError';
+  }
+
+  function jobCancellationRace(job) {
+    if (!job) return { promise: new Promise(() => {}), dispose() {} };
+    let rejectCancellation;
+    const promise = new Promise((_, reject) => {
+      rejectCancellation = reject;
+    });
+    if (job.cancelled) {
+      rejectCancellation(cancellationError(job?.cancelReason));
+      return { promise, dispose() {} };
+    }
+    job.cancelListeners ??= new Set();
+    job.cancelListeners.add(rejectCancellation);
+    return {
+      promise,
+      dispose() {
+        job.cancelListeners?.delete(rejectCancellation);
+      },
+    };
+  }
+
+  async function callWorldModel(payload, generationId, promptSnapshot, worldInfoSupplement, job) {
     const generateRaw = api('generateRaw');
     const generate = api('generate');
     if (typeof generateRaw !== 'function' && typeof generate !== 'function')
@@ -2041,22 +2438,39 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
                 custom_api: customApi,
               });
         let timeoutId;
-        const raw = await Promise.race([
-          Promise.resolve(request).finally(() => clearTimeout(timeoutId)),
-          new Promise((_, reject) => {
-            timeoutId = setTimeout(() => {
-              try {
-                api('stopGenerationById')?.(generationId);
-              } catch {
-                /* 请求超时后停止失败也要正常释放界面 */
-              }
-              reject(new Error('副模型请求超过 90 秒仍未返回，请检查当前连接或更换模型。'));
-            }, 90000);
-          }),
-        ]);
+        const cancellation = jobCancellationRace(job);
+        let raw;
+        try {
+          raw = await Promise.race([
+            Promise.resolve(request),
+            new Promise((_, reject) => {
+              timeoutId = setTimeout(() => {
+                try {
+                  api('stopGenerationById')?.(generationId);
+                } catch {
+                  /* 请求超时后停止失败也要正常释放界面 */
+                }
+                reject(
+                  new Error(
+                    `副模型请求超过 ${durationLabel(settings.requestTimeoutMs)}仍未返回，请检查当前连接或更换模型。`,
+                  ),
+                );
+              }, settings.requestTimeoutMs);
+            }),
+            cancellation.promise,
+          ]);
+        } finally {
+          clearTimeout(timeoutId);
+          cancellation.dispose();
+        }
         const normalized = normalizeIncrementalResult(parseAiResult(raw), payload.baseRevision);
         if (normalized.operations.length) {
-          const preview = buildTransitionFromOperations(payload.canonicalState || {}, normalized, {});
+          const preview = buildTransitionFromOperations(
+            payload.canonicalState || {},
+            normalized,
+            {},
+            payload.currentTurn?.assistantOutput || '',
+          );
           if (
             preview.operation_stats.accepted === 0 &&
             preview.operation_stats.rejected > 0 &&
@@ -2089,6 +2503,104 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       .replace(/[^\p{L}\p{N}_.·-]+/gu, '-')
       .slice(0, 80);
     return text || stableId(prefix, ...parts);
+  }
+
+  function normalizeKnowledgeLedger(value, actorId = '') {
+    const map = new Map();
+    for (const raw of asArray(value)) {
+      const item = typeof raw === 'string' ? { content: raw, state: 'known' } : raw;
+      if (!item || typeof item !== 'object') continue;
+      const content = asText(item.content || item.fact || item.claim).slice(0, 360);
+      const state = asText(item.state || item.status, 'known').toLowerCase();
+      if (!content || !['known', 'suspected', 'believed'].includes(state)) continue;
+      const rawConfidence = Number(item.confidence);
+      const confidence = Number.isFinite(rawConfidence) ? clamp(rawConfidence, 0, 1) : state === 'known' ? 0.8 : 0.5;
+      const id = cleanId(item.id, 'KN', actorId, state, content);
+      map.set(id, {
+        id,
+        state,
+        content,
+        sourceType: asText(item.sourceType || item.source_type, 'legacy').slice(0, 60),
+        sourceId: asText(item.sourceId || item.source_id, 'legacy').slice(0, 100),
+        sourceActorId: asText(item.sourceActorId || item.source_actor_id).slice(0, 100),
+        sourceActorName: asText(item.sourceActorName || item.source_actor_name).slice(0, 100),
+        confidence,
+        acquiredAt: asText(item.acquiredAt || item.acquired_at),
+        updatedAt: asText(item.updatedAt),
+      });
+    }
+    return [...map.values()].slice(-LIMITS.knowledgeLedgerPerActor);
+  }
+
+  function normalizeStoredSecret(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const content = asText(raw.content || raw.fact || raw.secret || raw.summary).slice(0, 480);
+    if (!content) return null;
+    const levelCandidate = asText(raw.level || raw.priority, 'high').toLowerCase();
+    const statusCandidate = asText(raw.status, 'hidden').toLowerCase();
+    return {
+      id: cleanId(raw.id, 'SEC', content),
+      title: asText(raw.title, semanticTitle(content, 48)),
+      content,
+      level: ['critical', 'high', 'normal'].includes(levelCandidate) ? levelCandidate : 'high',
+      holders: uniqueTextList(raw.holders || raw.authorized || raw.known_by || raw.knownBy, 30, 100),
+      revealConditions: uniqueTextList(raw.revealConditions || raw.reveal_conditions, 12, 240),
+      status: ['hidden', 'compromised', 'public', 'expired'].includes(statusCandidate) ? statusCandidate : 'hidden',
+      sourceType: asText(raw.sourceType || raw.source_type, 'legacy').slice(0, 60),
+      sourceId: asText(raw.sourceId || raw.source_id, 'legacy').slice(0, 100),
+      updatedAt: asText(raw.updatedAt || raw.createdAt),
+    };
+  }
+
+  function normalizeStoredTurnFact(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const content = asText(raw.content || raw.fact || raw.summary).slice(0, 600);
+    const physicalResult = asText(raw.physicalResult || raw.physical_result || raw.observable_result).slice(0, 600);
+    if (!content && !physicalResult) return null;
+    const visibilityCandidate = asText(raw.visibility, 'private').toLowerCase();
+    const visibility = ['private', 'addressed', 'scene_visible', 'local_public'].includes(visibilityCandidate)
+      ? visibilityCandidate
+      : 'private';
+    const alias = asText(raw.alias || raw.local_id || raw.localId).slice(0, 100);
+    const id = cleanId(raw.id, 'TF', raw.sourceRevision || raw.source_revision, alias, content, physicalResult);
+    return {
+      id,
+      alias,
+      content: content || physicalResult,
+      visibility,
+      witnesses:
+        visibility === 'private' ? [] : uniqueTextList(raw.witnesses || raw.observers || raw.recipients, 24, 100),
+      evidence: asText(raw.evidence || raw.quote).slice(0, 800),
+      location: asText(raw.location || raw.place).slice(0, 160),
+      physicalResult: physicalResult || content,
+      traces: uniqueTextList(raw.traces || raw.clues, 16, 240),
+      discoveryConditions: uniqueTextList(raw.discoveryConditions || raw.discovery_conditions, 16, 240),
+      discoveredBy: asArray(raw.discoveredBy || raw.discovered_by)
+        .map(item => ({
+          actorId: asText(item?.actorId || item?.actor_id).slice(0, 100),
+          actorName: asText(item?.actorName || item?.actor_name).slice(0, 100),
+          conclusion: asText(item?.conclusion).slice(0, 360),
+          sourceId: asText(item?.sourceId || item?.source_id).slice(0, 100),
+          discoveredAt: asText(item?.discoveredAt || item?.discovered_at),
+        }))
+        .filter(item => item.actorId || item.actorName)
+        .slice(-24),
+      sourceRevision: Math.max(0, Number(raw.sourceRevision ?? raw.source_revision) || 0),
+      sourceMessageId: Number.isFinite(Number(raw.sourceMessageId ?? raw.source_message_id))
+        ? Number(raw.sourceMessageId ?? raw.source_message_id)
+        : -1,
+      createdAt: asText(raw.createdAt || raw.created_at),
+      updatedAt: asText(raw.updatedAt || raw.updated_at),
+    };
+  }
+
+  function normalizeScenePresence(raw) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    return {
+      location: asText(source.location).slice(0, 160),
+      actors: uniqueTextList(source.actors, 24, 100),
+      updatedAt: asText(source.updatedAt || source.updated_at),
+    };
   }
 
   function upsertById(current, updates, limit, prefix, normalizer) {
@@ -2165,6 +2677,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       ),
       knowledge: operationTextArray(raw?.knowledge || raw?.knows),
       does_not_know: operationTextArray(raw?.does_not_know || raw?.doesNotKnow || raw?.unknown),
+      knowledge_ledger: normalizeKnowledgeLedger(raw?.knowledge_ledger || raw?.knowledgeLedger, id),
       next_decision: firstOperationText(raw?.next_decision, raw?.nextDecision, raw?.goal),
       updated_reason: firstOperationText(
         raw?.updated_reason,
@@ -2174,6 +2687,9 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         raw?.status,
         name ? '本轮被识别为相关人物' : '',
       ),
+      cause_type: firstOperationText(raw?.cause_type, raw?.causeType).toLowerCase(),
+      cause_id: firstOperationText(raw?.cause_id, raw?.causeId),
+      basis_ids: operationTextArray(raw?.basis_ids || raw?.basisIds),
     };
   }
 
@@ -2219,6 +2735,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       reliability:
         Number.isFinite(reliability) && reliability > 0 ? (reliability > 1 ? reliability / 100 : reliability) : 0.7,
       known_by: receivers,
+      source_fact_ids: operationTextArray(raw?.source_fact_ids || raw?.sourceFactIds),
     };
   }
 
@@ -2250,6 +2767,23 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         summary ? '伏线被化解或失去现实条件' : '',
       ),
       source_fact_ids: operationTextArray(raw?.source_fact_ids || raw?.sourceFactIds),
+    };
+  }
+
+  function secretInput(raw, id = raw?.id) {
+    const content = firstOperationText(raw?.content, raw?.fact, raw?.secret, raw?.summary, raw?.description);
+    const levelCandidate = asText(raw?.level || raw?.priority, 'high').toLowerCase();
+    const statusCandidate = asText(raw?.status, 'hidden').toLowerCase();
+    return {
+      id,
+      title: firstOperationText(raw?.title, semanticTitle(content, 48)),
+      content,
+      level: ['critical', 'high', 'normal'].includes(levelCandidate) ? levelCandidate : 'high',
+      holders: operationTextArray(raw?.holders || raw?.authorized || raw?.known_by || raw?.knownBy),
+      reveal_conditions: operationTextArray(raw?.reveal_conditions || raw?.revealConditions || raw?.conditions),
+      status: ['hidden', 'compromised', 'public', 'expired'].includes(statusCandidate) ? statusCandidate : 'hidden',
+      source_type: firstOperationText(raw?.source_type, raw?.sourceType, content ? 'direct_observation' : ''),
+      source_id: firstOperationText(raw?.source_id, raw?.sourceId),
     };
   }
 
@@ -2327,6 +2861,16 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     return /抵达|已达|公开|送达|arrived|delivered/i.test(asText(item?.status));
   }
 
+  function intelIsPublic(item) {
+    return /公开|公示|张榜|众人|全城|全县|public|broadcast/i.test(
+      [
+        asText(item?.status),
+        asText(item?.destination),
+        ...asArray(item?.known_by || item?.knownBy).map(value => asText(value)),
+      ].join(' '),
+    );
+  }
+
   function recordRecency(item, index) {
     const parsed = Date.parse(asText(item?.updatedAt));
     return { item, index, timestamp: Number.isFinite(parsed) ? parsed : 0 };
@@ -2355,6 +2899,22 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       .some(identity =>
         packetItems.some(item => item.startsWith(identity) || (identity.length >= 6 && item.includes(identity))),
       );
+  }
+
+  function turnFactKnowledgeConstraint(fact) {
+    const label = shortText(fact?.content || fact?.physicalResult, 180);
+    if (!label) return '';
+    const witnesses = uniqueTextList(fact?.witnesses, 24, 100);
+    if (fact?.visibility === 'private' || !witnesses.length) {
+      const observable = [
+        asText(fact?.physicalResult) && `可见结果：${shortText(fact.physicalResult, 140)}`,
+        asArray(fact?.traces).length && `可发现痕迹：${uniqueTextList(fact.traces, 6, 100).join('、')}`,
+      ]
+        .filter(Boolean)
+        .join('；');
+      return `无人目击事实「${label}」：任何 NPC 当前都不知道；${observable || '只能在实际调查后获得有限结论'}。`;
+    }
+    return `有限可见事实「${label}」：当前仅 ${witnesses.join('、')} 可据此行动，其他人物须等待告知或情报传播。`;
   }
 
   function buildPersistentMainModelPacket(state, latestPacket = normalizePacket(state?.nextTurnPacket)) {
@@ -2402,7 +2962,9 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       uncertainties: uncertainties
         .map(item => `${asText(item?.content)}｜可靠度：${Math.round(Number(item?.reliability) * 100)}%`)
         .filter(Boolean),
-      constraints: [],
+      constraints: selectRecentPersistentRecords(state?.turnFacts, MAIN_MODEL_CONTEXT_LIMITS.persistentItems)
+        .map(turnFactKnowledgeConstraint)
+        .filter(Boolean),
     });
   }
 
@@ -2413,11 +2975,16 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     const changedEvents = asArray(legacy.upsert_events);
     const changedActors = asArray(legacy.upsert_actors);
     const changedHooks = asArray(legacy.upsert_hooks);
+    const knowledgeActors = asArray(legacy.knowledge_updates).map(item => ({
+      name: asText(item?.actorName || item?.actorId),
+      knowledge: [asText(item?.content)],
+      does_not_know: [],
+    }));
     return {
       offscreenMoves: changedActors.map(actorPacketLabel).filter(Boolean).slice(0, 12),
       arrivingIntel: arrived.map(intelPacketLabel).filter(Boolean).slice(0, 12),
       intelInTransit: inTransit.map(intelPacketLabel).filter(Boolean).slice(0, 12),
-      npcKnowledge: changedActors
+      npcKnowledge: [...changedActors, ...knowledgeActors]
         .map(actorKnowledgePacket)
         .filter(item => item.name && (item.knows.length || item.doesNotKnow.length))
         .slice(0, 12),
@@ -2428,14 +2995,820 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         .map(item => `${asText(item?.content)}｜可靠度：${Math.round(Number(item.reliability) * 100)}%`)
         .filter(Boolean)
         .slice(0, 12),
-      constraints: [],
+      constraints: asArray(legacy.turn_facts).map(turnFactKnowledgeConstraint).filter(Boolean).slice(0, 12),
     };
   }
 
-  function buildTransitionFromOperations(baseState, result, currentStat) {
+  const KNOWLEDGE_SOURCE_TYPES = new Set([
+    'direct_observation',
+    'witnessed_event',
+    'received_intel',
+    'told_by_actor',
+    'public_information',
+    'correction',
+  ]);
+  const SECRET_SOURCE_TYPES = new Set([
+    'direct_observation',
+    'witnessed_event',
+    'received_intel',
+    'public_information',
+    'correction',
+  ]);
+
+  function normalizedKnowledgeText(value) {
+    return asText(value)
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/[\s、，。；：:,.!?！？'"“”‘’（）()[\]{}<>《》【】｜|]+/gu, '');
+  }
+
+  function knowledgeTextsRelated(left, right) {
+    const first = normalizedKnowledgeText(left);
+    const second = normalizedKnowledgeText(right);
+    if (!first || !second) return false;
+    if (first === second || first.includes(second) || second.includes(first)) return true;
+    const sample = first.length <= second.length ? first : second;
+    const target = first.length <= second.length ? second : first;
+    if (sample.length < 6) return false;
+    const fragments = Array.from({ length: sample.length - 3 }, (_, index) => sample.slice(index, index + 4));
+    return fragments.some(fragment => target.includes(fragment));
+  }
+
+  function actorReferenceMatches(actor, id, name) {
+    const actorId = asText(actor?.id);
+    const actorName = firstOperationText(actor?.name, actor?.actor_name, actor?.actorName);
+    if (id && actorId && String(id) === String(actorId)) return true;
+    return Boolean(name && actorName && comparableIdentity(name) === comparableIdentity(actorName));
+  }
+
+  function actorDisplayName(actor) {
+    return firstOperationText(actor?.name, actor?.actor_name, actor?.actorName);
+  }
+
+  function findKnowledgeActor(baseState, transition, value, prefix = '人物') {
+    const actorId = asText(value?.actor_id || value?.actorId);
+    const actorName = firstOperationText(value?.actor_name, value?.actorName, value?.name);
+    const candidates = [...asArray(baseState?.actors), ...asArray(transition?.upsert_actors)].filter(actor =>
+      actorReferenceMatches(actor, actorId, actorName),
+    );
+    const unique = new Map(candidates.map(actor => [asText(actor?.id) || actorDisplayName(actor), actor]));
+    if (!unique.size) return { error: `${prefix} ${actorId || actorName || '未指明'} 不存在` };
+    if (unique.size > 1 && !actorId) return { error: `${prefix}姓名 ${actorName} 无法唯一定位` };
+    return { actor: [...unique.values()].at(-1) };
+  }
+
+  function stagedRecordById(baseState, transition, sourceId, baseKey, transitionKey) {
+    return [...asArray(baseState?.[baseKey]), ...asArray(transition?.[transitionKey])].find(
+      item => String(item?.id) === String(sourceId),
+    );
+  }
+
+  function recordActors(record) {
+    return operationTextArray(record?.actors || record?.participants || record?.known_by || record?.knownBy);
+  }
+
+  function actorListed(values, actor) {
+    const actorId = asText(actor?.id);
+    const actorName = actorDisplayName(actor);
+    return asArray(values).some(
+      value =>
+        (actorId && String(value) === String(actorId)) ||
+        (actorName && comparableIdentity(value) === comparableIdentity(actorName)),
+    );
+  }
+
+  function actorKnowsContent(actor, content, secrets) {
+    const known = [
+      ...asArray(actor?.knowledge),
+      ...asArray(actor?.knowledgeLedger)
+        .filter(item => asText(item?.state) === 'known')
+        .map(item => item?.content),
+    ];
+    if (known.some(item => knowledgeTextsRelated(item, content))) return true;
+    return asArray(secrets).some(
+      secret =>
+        knowledgeTextsRelated(secret?.content, content) &&
+        actorListed(secret?.holders, actor) &&
+        !['public', 'expired'].includes(asText(secret?.status)),
+    );
+  }
+
+  function referencedParallelScene(result, sourceId) {
+    const match = /^PARALLEL_SCENE[_-]?(\d+)$/i.exec(asText(sourceId));
+    if (!match) return null;
+    const index = Number(match[1]) - 1;
+    return index >= 0 ? asArray(result?.parallel_scenes)[index] || null : null;
+  }
+
+  function textsStronglyRelated(left, right) {
+    const first = normalizedKnowledgeText(left);
+    const second = normalizedKnowledgeText(right);
+    if (!first || !second) return false;
+    const sample = first.length <= second.length ? first : second;
+    const target = first.length <= second.length ? second : first;
+    if (sample.length >= 8 && target.includes(sample)) return true;
+    if (sample.length < 8) return false;
+    const fragments = new Set();
+    for (let index = 0; index <= sample.length - 4; index += 2) fragments.add(sample.slice(index, index + 4));
+    let matches = 0;
+    for (const fragment of fragments) {
+      if (!target.includes(fragment)) continue;
+      matches += 1;
+      if (matches >= 2) return true;
+    }
+    return false;
+  }
+
+  function evidenceAppearsVerbatim(currentTurnText, evidence) {
+    const haystack = normalizedKnowledgeText(currentTurnText);
+    const needle = normalizedKnowledgeText(evidence);
+    return Boolean(needle.length >= 4 && haystack.includes(needle));
+  }
+
+  function turnFactText(fact) {
+    return [
+      asText(fact?.content),
+      asText(fact?.physicalResult || fact?.physical_result),
+      ...asArray(fact?.traces),
+      asText(fact?.evidence),
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+
+  function findTurnFact(baseState, transition, sourceId) {
+    const identity = asText(sourceId);
+    if (!identity) return null;
+    return [...asArray(transition?.turn_facts), ...asArray(baseState?.turnFacts).slice().reverse()].find(
+      fact =>
+        String(fact?.id) === identity ||
+        (asText(fact?.alias) && comparableIdentity(fact.alias) === comparableIdentity(identity)),
+    );
+  }
+
+  function actorAuthorizedForTurnFact(actor, fact) {
+    return Boolean(fact && actorListed(fact?.witnesses, actor));
+  }
+
+  function normalizeAndValidateTurnFacts(baseState, result, currentStat, currentTurnText) {
+    const sceneEvidence = buildSceneEvidence(baseState, currentStat, currentTurnText);
+    const reliableWitnesses = sceneEvidence.reliableWitnesses;
+    const warnings = [];
+    const facts = [];
+    const aliases = new Set();
+    for (const [index, raw] of asArray(result?.turn_facts).entries()) {
+      const candidate = normalizeTurnFactCandidate(raw);
+      if (!candidate) {
+        warnings.push(`turn_fact ${index + 1}：缺少事实内容或物理结果`);
+        continue;
+      }
+      const alias = asText(candidate.id, `TF-${index + 1}`);
+      if (aliases.has(comparableIdentity(alias))) {
+        warnings.push(`turn_fact ${alias}：本轮事实 ID 重复`);
+        continue;
+      }
+      aliases.add(comparableIdentity(alias));
+      if (!['private', 'addressed', 'scene_visible', 'local_public'].includes(candidate.visibility)) {
+        warnings.push(`turn_fact ${alias}：visibility=${candidate.visibility || '空'} 无效`);
+        continue;
+      }
+      if (!candidate.evidence || !evidenceAppearsVerbatim(currentTurnText, candidate.evidence)) {
+        warnings.push(`turn_fact ${alias}：evidence 不是 assistantOutput 中可核对的原句`);
+        continue;
+      }
+      if (
+        !knowledgeTextsRelated(currentTurnText, candidate.content) &&
+        !knowledgeTextsRelated(currentTurnText, candidate.physical_result)
+      ) {
+        warnings.push(`turn_fact ${alias}：事实内容与本轮正文证据不一致`);
+        continue;
+      }
+      const requestedWitnesses = uniqueTextList(candidate.witnesses, 24, 100);
+      const verifiedWitnesses = requestedWitnesses.filter(witness =>
+        reliableWitnesses.some(name => comparableIdentity(name) === comparableIdentity(witness)),
+      );
+      let visibility = candidate.visibility;
+      let witnesses = verifiedWitnesses;
+      if (visibility === 'private') {
+        witnesses = [];
+      } else if (!witnesses.length) {
+        warnings.push(`turn_fact ${alias}：没有通过在场校验的目击者，已降级为 private`);
+        visibility = 'private';
+      } else if (verifiedWitnesses.length < requestedWitnesses.length) {
+        const rejectedNames = requestedWitnesses.filter(
+          witness => !verifiedWitnesses.some(name => comparableIdentity(name) === comparableIdentity(witness)),
+        );
+        warnings.push(`turn_fact ${alias}：移除未核实目击者 ${rejectedNames.join('、')}`);
+      }
+      const verifiedTraces = uniqueTextList(candidate.traces, 16, 240).filter(
+        trace =>
+          knowledgeTextsRelated(currentTurnText, trace) ||
+          knowledgeTextsRelated(candidate.physical_result, trace) ||
+          knowledgeTextsRelated(candidate.evidence, trace),
+      );
+      const stableFactId = stableId('TF', Number(baseState?.revision || 0) + 1, alias, candidate.content);
+      const fact = normalizeStoredTurnFact({
+        ...candidate,
+        id: stableFactId,
+        alias,
+        visibility,
+        witnesses,
+        physicalResult: candidate.physical_result,
+        traces: verifiedTraces,
+        discoveryConditions: candidate.discovery_conditions,
+        sourceRevision: Number(baseState?.revision || 0) + 1,
+      });
+      if (fact) facts.push(fact);
+    }
+    return {
+      facts,
+      warnings,
+      scenePresence: {
+        location: sceneEvidence.currentLocation,
+        actors: sceneEvidence.reliableWitnesses,
+        updatedAt: nowIso(),
+      },
+    };
+  }
+
+  const ACTOR_CAUSE_TYPES = new Set([
+    'autonomous',
+    'observation',
+    'knowledge',
+    'received_intel',
+    'event',
+    'elapsed_time',
+  ]);
+
+  function acceptedKnowledgeFromFact(transition, actor, fact) {
+    return asArray(transition?.knowledge_updates).some(
+      update =>
+        actorReferenceMatches(actor, update?.actorId, update?.actorName) &&
+        (String(update?.sourceId) === String(fact?.id) ||
+          comparableIdentity(update?.sourceId) === comparableIdentity(fact?.alias)) &&
+        ['known', 'suspected', 'believed'].includes(asText(update?.state)),
+    );
+  }
+
+  function validateActorCause(baseState, transition, actor, existing, currentTurnText) {
+    const causeType = asText(actor?.cause_type || actor?.causeType).toLowerCase();
+    const causeId = asText(actor?.cause_id || actor?.causeId);
+    const actionText = [actor?.current_action, actor?.updated_reason, actor?.next_decision].map(asText).join(' ');
+    const relatedTurnFacts = asArray(transition?.turn_facts).filter(fact =>
+      knowledgeTextsRelated(turnFactText(fact), actionText),
+    );
+    if (!causeType || !causeId) {
+      if (relatedTurnFacts.length) {
+        return `人物行动涉及本轮事实 ${relatedTurnFacts.map(fact => fact.alias || fact.id).join('、')}，但缺少 cause_type/cause_id`;
+      }
+      if (!existing && textsStronglyRelated(actionText, currentTurnText)) {
+        return '新增人物行动与本轮正文直接相关，但没有可核对的因果依据';
+      }
+      if (
+        existing &&
+        textsStronglyRelated(actionText, currentTurnText) &&
+        !asText(currentTurnText).includes(actorDisplayName(actor))
+      ) {
+        return '人物行动与本轮正文直接相关，但人物未在正文中出现且没有可核对的因果依据';
+      }
+      actor.cause_type = existing ? 'autonomous' : 'elapsed_time';
+      actor.cause_id = asText(existing?.id || actor?.id || 'ELAPSED_TIME');
+      actor.basis_ids = uniqueTextList(actor?.basis_ids, 16, 100);
+      return '';
+    }
+    if (!ACTOR_CAUSE_TYPES.has(causeType)) return `不支持的人物行动原因 ${causeType}`;
+
+    if (causeType === 'observation') {
+      const fact = findTurnFact(baseState, transition, causeId);
+      if (!fact) return `人物观察来源 ${causeId} 不存在`;
+      if (!actorAuthorizedForTurnFact(actor, fact)) {
+        return `人物 ${actorDisplayName(actor)} 不是本轮事实 ${fact.alias || fact.id} 的合法目击者`;
+      }
+      actor.cause_id = fact.id;
+      actor.basis_ids = uniqueTextList(
+        [...asArray(actor?.basis_ids).filter(id => comparableIdentity(id) !== comparableIdentity(causeId)), fact.id],
+        16,
+        100,
+      );
+      return knowledgeTextsRelated(turnFactText(fact), actionText) ? '' : '人物行动与所引用的目击事实不一致';
+    }
+
+    if (causeType === 'knowledge') {
+      const ledger = normalizeKnowledgeLedger(existing?.knowledgeLedger || actor?.knowledge_ledger, actor?.id);
+      const entry = ledger.find(item => String(item?.id) === causeId);
+      const accepted = asArray(transition?.knowledge_updates).find(
+        item =>
+          actorReferenceMatches(actor, item?.actorId, item?.actorName) &&
+          (String(item?.sourceId) === causeId || String(item?.id) === causeId),
+      );
+      const content = asText(entry?.content || accepted?.content);
+      if (!content) return `人物已知依据 ${causeId} 不存在`;
+      return knowledgeTextsRelated(content, actionText) ? '' : '人物行动与已知依据不一致';
+    }
+
+    if (causeType === 'received_intel') {
+      const intel = stagedRecordById(baseState, transition, causeId, 'intelPackets', 'upsert_intel');
+      if (!intel) return `人物情报依据 ${causeId} 不存在`;
+      if (!intelHasArrived(intel)) return `人物情报依据 ${causeId} 尚未抵达`;
+      const recipients = operationTextArray(intel?.known_by || intel?.knownBy);
+      if (!actorListed(recipients, actor) && !asText(intel?.destination).includes(actorDisplayName(actor))) {
+        return `情报 ${causeId} 未送达 ${actorDisplayName(actor)}`;
+      }
+      return knowledgeTextsRelated(intel?.content, actionText) ? '' : '人物行动与收到的情报不一致';
+    }
+
+    if (causeType === 'event') {
+      const event = stagedRecordById(baseState, transition, causeId, 'activeEvents', 'upsert_events');
+      if (!event) return `人物事件依据 ${causeId} 不存在`;
+      if (!actorListed(recordActors(event), actor)) return `人物 ${actorDisplayName(actor)} 不在事件 ${causeId} 中`;
+      return knowledgeTextsRelated(`${event?.title} ${event?.summary}`, actionText) ? '' : '人物行动与事件依据不一致';
+    }
+
+    if (findTurnFact(baseState, transition, causeId)) {
+      return `${causeType} 不能直接引用本轮事实 ${causeId}`;
+    }
+    const unauthorized = relatedTurnFacts.filter(fact => !actorAuthorizedForTurnFact(actor, fact));
+    if (unauthorized.length) {
+      return `人物 ${actorDisplayName(actor)} 未获知本轮事实 ${unauthorized.map(fact => fact.alias || fact.id).join('、')}，不能据此行动`;
+    }
+    if (!existing && causeType === 'autonomous' && textsStronglyRelated(actionText, currentTurnText)) {
+      return '新增人物不能用 autonomous 绕过本轮正文的知识边界';
+    }
+    return '';
+  }
+
+  function validateRecordFactCausality(baseState, transition, type, record) {
+    if (!['event.upsert', 'event.patch', 'intel.upsert', 'intel.patch', 'hook.upsert', 'hook.patch'].includes(type)) {
+      return '';
+    }
+    const recordText = type.startsWith('event.')
+      ? `${asText(record?.title)} ${asText(record?.summary)}`
+      : type.startsWith('intel.')
+        ? asText(record?.content)
+        : `${asText(record?.title)} ${asText(record?.summary)} ${asArray(record?.visible_signs).join(' ')}`;
+    const relatedFacts = asArray(transition?.turn_facts).filter(fact =>
+      textsStronglyRelated(turnFactText(fact), recordText),
+    );
+    const sourceFactIds = uniqueTextList(record?.source_fact_ids || record?.sourceFactIds, 16, 100);
+    const declaredFacts = sourceFactIds.map(id => findTurnFact(baseState, transition, id)).filter(Boolean);
+    if (declaredFacts.length !== sourceFactIds.length) return 'source_fact_ids 引用了不存在的本轮事实';
+    record.source_fact_ids = sourceFactIds.map(id => findTurnFact(baseState, transition, id)?.id || id);
+    const unclaimed = relatedFacts.filter(
+      fact =>
+        !sourceFactIds.some(
+          id => String(id) === String(fact?.id) || comparableIdentity(id) === comparableIdentity(fact?.alias),
+        ),
+    );
+    if (unclaimed.length) {
+      return `内容使用了本轮事实 ${unclaimed.map(fact => fact.alias || fact.id).join('、')}，但未写入 source_fact_ids`;
+    }
+    if (type.startsWith('intel.') && declaredFacts.length) {
+      const origin = asText(record?.origin);
+      for (const fact of declaredFacts) {
+        const originAuthorized = asArray(fact?.witnesses).some(
+          witness =>
+            comparableIdentity(witness) === comparableIdentity(origin) ||
+            (witness.length >= 2 && origin.includes(witness)),
+        );
+        if (!originAuthorized) {
+          return `情报起点 ${origin || '未明'} 不是本轮事实 ${fact.alias || fact.id} 的合法知情者`;
+        }
+      }
+    }
+    return '';
+  }
+
+  function validateEventFactAuthorization(baseState, transition, event, actor, content) {
+    const sourceFacts = uniqueTextList(event?.source_fact_ids || event?.sourceFactIds, 16, 100)
+      .map(id => findTurnFact(baseState, transition, id))
+      .filter(Boolean)
+      .filter(fact => knowledgeTextsRelated(turnFactText(fact), content));
+    const unauthorized = sourceFacts.find(fact => !actorAuthorizedForTurnFact(actor, fact));
+    return unauthorized
+      ? `人物 ${actorDisplayName(actor)} 虽列在事件中，但不是来源事实 ${unauthorized.alias || unauthorized.id} 的目击者`
+      : '';
+  }
+
+  function validateKnowledgeSource(baseState, transition, result, value, actor, operationType = '') {
+    const sourceType = asText(value?.source_type || value?.sourceType).toLowerCase();
+    const sourceId = asText(value?.source_id || value?.sourceId);
+    const content = asText(value?.content);
+    if (!KNOWLEDGE_SOURCE_TYPES.has(sourceType)) return `不支持的知识来源 ${sourceType || '空'}`;
+    if (!sourceId) return '缺少知识来源 source_id';
+
+    const currentTurnSource = sourceId.toUpperCase() === 'CURRENT_TURN';
+    if (currentTurnSource) return 'CURRENT_TURN 不再直接授予人物知识；请引用已校验的 TF-* 本轮事实';
+    const turnFact = findTurnFact(baseState, transition, sourceId);
+    const event = stagedRecordById(baseState, transition, sourceId, 'activeEvents', 'upsert_events');
+    const intel = stagedRecordById(baseState, transition, sourceId, 'intelPackets', 'upsert_intel');
+    const parallelScene = referencedParallelScene(result, sourceId);
+
+    if (sourceType === 'direct_observation') {
+      if (
+        turnFact &&
+        actorAuthorizedForTurnFact(actor, turnFact) &&
+        knowledgeTextsRelated(turnFactText(turnFact), content)
+      ) {
+        return '';
+      }
+      if (
+        event &&
+        actorListed(recordActors(event), actor) &&
+        knowledgeTextsRelated(`${asText(event?.title)} ${asText(event?.summary)}`, content)
+      ) {
+        return validateEventFactAuthorization(baseState, transition, event, actor, content);
+      }
+      if (
+        parallelScene &&
+        actorListed(parallelScene?.actors, actor) &&
+        (knowledgeTextsRelated(parallelScene?.body, content) || knowledgeTextsRelated(parallelScene?.action, content))
+      ) {
+        return '';
+      }
+      return '直接观察缺少在场人物或可核对场景';
+    }
+
+    if (sourceType === 'witnessed_event') {
+      if (turnFact) {
+        if (!actorAuthorizedForTurnFact(actor, turnFact)) {
+          return `人物 ${actorDisplayName(actor)} 不在本轮事实 ${turnFact.alias || turnFact.id} 的目击者中`;
+        }
+        return knowledgeTextsRelated(turnFactText(turnFact), content)
+          ? ''
+          : `知识内容与本轮事实 ${turnFact.alias || turnFact.id} 不一致`;
+      }
+      if (!event) return `目击事件 ${sourceId} 不存在`;
+      if (!actorListed(recordActors(event), actor)) return `人物 ${actorDisplayName(actor)} 不在事件参与者中`;
+      if (!knowledgeTextsRelated(`${asText(event?.title)} ${asText(event?.summary)}`, content)) {
+        return `知识内容与事件 ${sourceId} 不一致`;
+      }
+      return validateEventFactAuthorization(baseState, transition, event, actor, content);
+    }
+
+    if (sourceType === 'received_intel') {
+      if (!intel) return `情报来源 ${sourceId} 不存在`;
+      if (!intelHasArrived(intel)) return `情报 ${sourceId} 尚未抵达`;
+      if (
+        ['knowledge.grant', 'knowledge.correct', 'secret.reveal'].includes(operationType) &&
+        Number(intel?.reliability) < 0.6
+      ) {
+        return `情报 ${sourceId} 可靠度不足，不能登记为确定知识`;
+      }
+      const recipients = operationTextArray(intel?.known_by || intel?.knownBy);
+      const destination = asText(intel?.destination);
+      if (!actorListed(recipients, actor) && !destination.includes(actorDisplayName(actor))) {
+        return `情报 ${sourceId} 未送达 ${actorDisplayName(actor)}`;
+      }
+      return knowledgeTextsRelated(intel?.content, content) ? '' : `知识内容与情报 ${sourceId} 不一致`;
+    }
+
+    if (sourceType === 'told_by_actor') {
+      const explicitSourceActorId = asText(value?.source_actor_id || value?.sourceActorId);
+      const explicitSourceActorName = asText(value?.source_actor_name || value?.sourceActorName);
+      const sourceActorResult = findKnowledgeActor(
+        baseState,
+        transition,
+        {
+          actor_id: explicitSourceActorId || (turnFact || event ? '' : sourceId),
+          actor_name: explicitSourceActorName,
+        },
+        '告知者',
+      );
+      if (sourceActorResult.error) return sourceActorResult.error;
+      const secrets = [...asArray(baseState?.secrets), ...asArray(transition?.upsert_secrets)];
+      const sourceMustKnow = ['knowledge.grant', 'knowledge.correct', 'secret.reveal'].includes(operationType);
+      if (sourceMustKnow && !actorKnowsContent(sourceActorResult.actor, content, secrets)) {
+        return `告知者 ${actorDisplayName(sourceActorResult.actor)} 本身没有该知识`;
+      }
+      if (
+        turnFact &&
+        actorAuthorizedForTurnFact(actor, turnFact) &&
+        actorAuthorizedForTurnFact(sourceActorResult.actor, turnFact) &&
+        knowledgeTextsRelated(turnFactText(turnFact), content)
+      ) {
+        return '';
+      }
+      if (
+        event &&
+        actorListed(recordActors(event), actor) &&
+        actorListed(recordActors(event), sourceActorResult.actor) &&
+        knowledgeTextsRelated(`${asText(event?.title)} ${asText(event?.summary)}`, content)
+      ) {
+        return (
+          validateEventFactAuthorization(baseState, transition, event, actor, content) ||
+          validateEventFactAuthorization(baseState, transition, event, sourceActorResult.actor, content)
+        );
+      }
+      if (
+        parallelScene &&
+        actorListed(parallelScene?.actors, actor) &&
+        actorListed(parallelScene?.actors, sourceActorResult.actor) &&
+        (knowledgeTextsRelated(parallelScene?.body, content) || knowledgeTextsRelated(parallelScene?.action, content))
+      ) {
+        return '';
+      }
+      return `没有证据表明 ${actorDisplayName(sourceActorResult.actor)} 已向 ${actorDisplayName(actor)} 传达该知识`;
+    }
+
+    if (sourceType === 'public_information') {
+      if (
+        turnFact &&
+        turnFact.visibility === 'local_public' &&
+        actorAuthorizedForTurnFact(actor, turnFact) &&
+        knowledgeTextsRelated(turnFactText(turnFact), content)
+      ) {
+        return '';
+      }
+      if (intel && intelHasArrived(intel) && intelIsPublic(intel))
+        return knowledgeTextsRelated(intel?.content, content) ? '' : '公开情报内容不符';
+      return `公开信息来源 ${sourceId} 不存在或尚未公开`;
+    }
+
+    if (sourceType === 'correction') {
+      if (
+        turnFact &&
+        actorAuthorizedForTurnFact(actor, turnFact) &&
+        knowledgeTextsRelated(turnFactText(turnFact), content)
+      ) {
+        return '';
+      }
+      if (intel && intelHasArrived(intel) && knowledgeTextsRelated(intel?.content, content)) {
+        const recipients = operationTextArray(intel?.known_by || intel?.knownBy);
+        if (actorListed(recipients, actor) || asText(intel?.destination).includes(actorDisplayName(actor))) return '';
+      }
+      if (
+        event &&
+        actorListed(recordActors(event), actor) &&
+        knowledgeTextsRelated(`${asText(event?.title)} ${asText(event?.summary)}`, content)
+      ) {
+        return validateEventFactAuthorization(baseState, transition, event, actor, content);
+      }
+      return `纠正来源 ${sourceId} 无法核对`;
+    }
+
+    return '知识来源无法核对';
+  }
+
+  function normalizeKnowledgeUpdate(type, value, actor) {
+    const content = asText(value?.content).slice(0, 360);
+    const state = {
+      'knowledge.grant': 'known',
+      'knowledge.suspect': 'suspected',
+      'knowledge.mislead': 'believed',
+      'knowledge.correct': 'known',
+    }[type];
+    const confidence = clamp(value?.confidence, 0, 1);
+    if (!content || !state) return null;
+    if (state === 'known' && confidence < 0.6) return null;
+    return {
+      actorId: asText(actor?.id),
+      actorName: actorDisplayName(actor),
+      state,
+      mode: type.split('.')[1],
+      content,
+      replaces: asText(value?.replaces).slice(0, 360),
+      sourceType: asText(value?.source_type || value?.sourceType).toLowerCase(),
+      sourceId: asText(value?.source_id || value?.sourceId),
+      sourceActorId: asText(value?.source_actor_id || value?.sourceActorId),
+      sourceActorName: asText(value?.source_actor_name || value?.sourceActorName),
+      confidence,
+    };
+  }
+
+  function validateSecretSource(baseState, transition, secret, trustExistingHolders = false) {
+    const sourceType = asText(secret?.source_type || secret?.sourceType).toLowerCase();
+    const sourceId = asText(secret?.source_id || secret?.sourceId);
+    if (!SECRET_SOURCE_TYPES.has(sourceType)) return `不支持的秘密来源 ${sourceType || '空'}`;
+    if (!sourceId) return '秘密缺少 source_id';
+    const holders = uniqueTextList(secret?.holders, 30, 100);
+    const holdersAppearIn = values =>
+      holders.every(holder =>
+        asArray(values).some(
+          value => comparableIdentity(value) === comparableIdentity(holder) || asText(value).includes(holder),
+        ),
+      );
+    if (sourceId.toUpperCase() === 'CURRENT_TURN') {
+      return '秘密不能再引用 CURRENT_TURN；请引用已校验的 TF-* 本轮事实';
+    }
+    const turnFact = findTurnFact(baseState, transition, sourceId);
+    if (turnFact) {
+      if (!['direct_observation', 'witnessed_event', 'public_information', 'correction'].includes(sourceType)) {
+        return `秘密来源类型 ${sourceType} 与本轮事实 ${turnFact.alias || turnFact.id} 不匹配`;
+      }
+      if (!knowledgeTextsRelated(turnFactText(turnFact), secret?.content)) {
+        return `秘密内容与本轮事实 ${turnFact.alias || turnFact.id} 不一致`;
+      }
+      if (sourceType === 'public_information' && turnFact.visibility !== 'local_public') {
+        return `本轮事实 ${turnFact.alias || turnFact.id} 不是本地公开信息`;
+      }
+      return trustExistingHolders || holdersAppearIn(turnFact.witnesses)
+        ? ''
+        : `秘密知情者不全在本轮事实 ${turnFact.alias || turnFact.id} 的合法目击者中`;
+    }
+    const event = stagedRecordById(baseState, transition, sourceId, 'activeEvents', 'upsert_events');
+    if (event) {
+      if (!['direct_observation', 'witnessed_event', 'correction'].includes(sourceType)) {
+        return `秘密来源类型 ${sourceType} 与事件 ${sourceId} 不匹配`;
+      }
+      if (!knowledgeTextsRelated(`${asText(event?.title)} ${asText(event?.summary)}`, secret?.content)) {
+        return `秘密内容与事件 ${sourceId} 不一致`;
+      }
+      return trustExistingHolders || holdersAppearIn(recordActors(event))
+        ? ''
+        : `秘密知情者不全在事件 ${sourceId} 的参与者中`;
+    }
+    const intel = stagedRecordById(baseState, transition, sourceId, 'intelPackets', 'upsert_intel');
+    if (intel) {
+      if (!['received_intel', 'public_information', 'correction'].includes(sourceType)) {
+        return `秘密来源类型 ${sourceType} 与情报 ${sourceId} 不匹配`;
+      }
+      if (!intelHasArrived(intel)) return `秘密来源情报 ${sourceId} 尚未抵达`;
+      if (Number(intel?.reliability) < 0.6) return `秘密来源情报 ${sourceId} 可靠度不足`;
+      if (sourceType === 'public_information' && !intelIsPublic(intel)) {
+        return `秘密来源情报 ${sourceId} 尚未公开`;
+      }
+      if (!knowledgeTextsRelated(intel?.content, secret?.content)) return `秘密内容与情报 ${sourceId} 不一致`;
+      const recipients = [...operationTextArray(intel?.known_by || intel?.knownBy), asText(intel?.destination)];
+      return trustExistingHolders || holdersAppearIn(recipients) ? '' : `秘密知情者不全在情报 ${sourceId} 的接收者中`;
+    }
+    return `秘密证据来源 ${sourceId} 不存在`;
+  }
+
+  function validateTraceDiscovery(baseState, transition, result, operation, actor) {
+    const value = operation?.value && typeof operation.value === 'object' ? operation.value : {};
+    const fact = findTurnFact(baseState, transition, operation?.id);
+    if (!fact) return { error: `痕迹所属事实 ${asText(operation?.id) || '未指明'} 不存在` };
+    const trace = asText(value?.trace).slice(0, 360);
+    const conclusion = asText(value?.conclusion).slice(0, 360);
+    const sourceType = asText(value?.source_type || value?.sourceType).toLowerCase();
+    const sourceId = asText(value?.source_id || value?.sourceId);
+    const observable = [asText(fact?.physicalResult), ...asArray(fact?.traces)].filter(Boolean).join(' ');
+    if (!trace || !conclusion || !sourceId) return { error: '痕迹发现缺少 trace、conclusion 或 source_id' };
+    if (!['direct_observation', 'witnessed_event'].includes(sourceType)) {
+      return { error: `不支持的痕迹发现来源 ${sourceType || '空'}` };
+    }
+    if (!knowledgeTextsRelated(observable, trace)) return { error: '所报痕迹不在该事实的可发现结果中' };
+    if (!knowledgeTextsRelated(observable, conclusion)) {
+      return { error: '发现结论超出了物理结果或痕迹能够支持的范围' };
+    }
+    if (
+      fact.visibility === 'private' &&
+      textsStronglyRelated(fact.content, conclusion) &&
+      !textsStronglyRelated(observable, conclusion)
+    ) {
+      return { error: '无人目击事实的发现者不能从痕迹直接推断隐藏行为或行为人' };
+    }
+    const scene = referencedParallelScene(result, sourceId);
+    const event = stagedRecordById(baseState, transition, sourceId, 'activeEvents', 'upsert_events');
+    if (scene) {
+      if (!actorListed(scene?.actors, actor)) return { error: `人物 ${actorDisplayName(actor)} 不在发现痕迹的旁线中` };
+      if (!knowledgeTextsRelated(`${scene?.action} ${scene?.body}`, trace)) {
+        return { error: `旁线 ${sourceId} 没有实际发现所报痕迹` };
+      }
+    } else if (event) {
+      if (!actorListed(recordActors(event), actor))
+        return { error: `人物 ${actorDisplayName(actor)} 不在发现痕迹的事件中` };
+      if (!knowledgeTextsRelated(`${event?.title} ${event?.summary}`, trace)) {
+        return { error: `事件 ${sourceId} 没有实际发现所报痕迹` };
+      }
+    } else {
+      return { error: `痕迹发现来源 ${sourceId} 不存在` };
+    }
+    const confidence = clamp(value?.confidence, 0, 1);
+    return {
+      update: {
+        actorId: asText(actor?.id),
+        actorName: actorDisplayName(actor),
+        state: confidence >= 0.6 ? 'known' : 'suspected',
+        mode: confidence >= 0.6 ? 'grant' : 'suspect',
+        content: conclusion,
+        replaces: '',
+        sourceType,
+        sourceId,
+        sourceActorId: '',
+        sourceActorName: '',
+        confidence,
+      },
+      discovery: {
+        factId: fact.id,
+        actorId: asText(actor?.id),
+        actorName: actorDisplayName(actor),
+        trace,
+        conclusion,
+        sourceId,
+      },
+    };
+  }
+
+  function validateParallelScenes(baseState, transition) {
+    const accepted = [];
+    const acceptedSourceIndexes = new Set();
+    const facts = [...asArray(transition?.turn_facts), ...asArray(baseState?.turnFacts)];
+    const stagedActors = [...asArray(baseState?.actors), ...asArray(transition?.upsert_actors)];
+    const validBasisIds = new Set(
+      [
+        ...facts.flatMap(fact => [fact?.id, fact?.alias]),
+        ...stagedActors.map(item => item?.id),
+        ...asArray(baseState?.activeEvents).map(item => item?.id),
+        ...asArray(transition?.upsert_events).map(item => item?.id),
+        ...asArray(baseState?.intelPackets).map(item => item?.id),
+        ...asArray(transition?.upsert_intel).map(item => item?.id),
+        ...asArray(baseState?.hooks).map(item => item?.id),
+        ...asArray(transition?.upsert_hooks).map(item => item?.id),
+      ]
+        .map(value => asText(value))
+        .filter(Boolean),
+    );
+    for (const [index, scene] of asArray(transition?.parallel_scenes).entries()) {
+      const sourceIndex = index + 1;
+      const sceneText = `${asText(scene?.action)} ${asText(scene?.body)}`;
+      const basisIds = uniqueTextList(scene?.basis_ids || scene?.basisIds, 16, 100);
+      const claimIds = uniqueTextList(scene?.knowledge_claim_ids || scene?.knowledgeClaimIds, 16, 100);
+      const invalidBasis = basisIds.filter(id => !validBasisIds.has(id));
+      if (invalidBasis.length) {
+        transition.operation_stats.warnings.push(
+          `parallel_scene ${sourceIndex}：无效因果依据 ${invalidBasis.join('、')}`.slice(0, 300),
+        );
+        transition.operation_stats.rejected += 1;
+        continue;
+      }
+      const claimedFacts = claimIds.map(id => findTurnFact(baseState, transition, id)).filter(Boolean);
+      if (claimedFacts.length !== claimIds.length) {
+        transition.operation_stats.warnings.push(`parallel_scene ${sourceIndex}：引用了不存在的本轮事实`);
+        transition.operation_stats.rejected += 1;
+        continue;
+      }
+      const relatedFacts = facts.filter(fact => textsStronglyRelated(turnFactText(fact), sceneText));
+      const unclaimed = relatedFacts.filter(
+        fact =>
+          !claimIds.some(
+            id => String(id) === String(fact?.id) || comparableIdentity(id) === comparableIdentity(fact?.alias),
+          ),
+      );
+      if (unclaimed.length) {
+        transition.operation_stats.warnings.push(
+          `parallel_scene ${sourceIndex}：使用了本轮事实 ${unclaimed
+            .map(fact => fact.alias || fact.id)
+            .join('、')}，但未声明 knowledge_claim_ids`.slice(0, 300),
+        );
+        transition.operation_stats.rejected += 1;
+        continue;
+      }
+      let authorizationError = '';
+      for (const fact of claimedFacts) {
+        for (const actorName of asArray(scene?.actors)) {
+          const actor = stagedActors.find(
+            item => comparableIdentity(actorDisplayName(item)) === comparableIdentity(actorName),
+          ) || {
+            name: actorName,
+          };
+          const traceDiscovery = asArray(transition?.trace_discoveries).find(
+            item =>
+              String(item?.factId) === String(fact?.id) &&
+              actorReferenceMatches(actor, item?.actorId, item?.actorName) &&
+              item?.sourceId?.toUpperCase() === `PARALLEL_SCENE_${sourceIndex}`,
+          );
+          const authorized =
+            actorAuthorizedForTurnFact(actor, fact) ||
+            acceptedKnowledgeFromFact(transition, actor, fact) ||
+            Boolean(traceDiscovery);
+          if (!authorized) {
+            authorizationError = `${actorDisplayName(actor)} 无权使用本轮事实 ${fact.alias || fact.id}`;
+            break;
+          }
+          if (
+            fact.visibility === 'private' &&
+            !actorAuthorizedForTurnFact(actor, fact) &&
+            textsStronglyRelated(fact.content, sceneText)
+          ) {
+            authorizationError = `${actorDisplayName(actor)} 只能发现痕迹，不能直接知道无人目击的隐藏行为`;
+            break;
+          }
+        }
+        if (authorizationError) break;
+      }
+      if (authorizationError) {
+        transition.operation_stats.warnings.push(`parallel_scene ${sourceIndex}：${authorizationError}`.slice(0, 300));
+        transition.operation_stats.rejected += 1;
+        continue;
+      }
+      accepted.push({
+        ...scene,
+        basis_ids: basisIds.map(id => findTurnFact(baseState, transition, id)?.id || id),
+        knowledge_claim_ids: claimedFacts.map(fact => fact.id),
+      });
+      acceptedSourceIndexes.add(sourceIndex);
+    }
+    return { scenes: accepted, acceptedSourceIndexes };
+  }
+
+  function buildTransitionFromOperations(baseState, result, currentStat, currentTurnText = '') {
+    const factValidation = normalizeAndValidateTurnFacts(baseState, result, currentStat, currentTurnText);
     const transition = {
       world_summary: '',
       new_facts: [],
+      turn_facts: factValidation.facts,
+      scene_presence: factValidation.scenePresence,
       upsert_events: [],
       resolve_event_ids: [],
       upsert_actors: [],
@@ -2443,10 +3816,18 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       remove_intel_ids: [],
       upsert_hooks: [],
       resolve_hook_ids: [],
-      camera_history: asArray(result.parallel_scenes).map(cameraLabel).filter(Boolean),
+      upsert_secrets: [],
+      knowledge_updates: [],
+      secret_reveals: [],
+      trace_discoveries: [],
+      camera_history: [],
       next_turn_packet: {},
       parallel_scenes: normalizeParallelScenes(result.parallel_scenes),
-      operation_stats: { accepted: 0, rejected: 0, warnings: [] },
+      operation_stats: {
+        accepted: factValidation.facts.length,
+        rejected: factValidation.warnings.length,
+        warnings: factValidation.warnings,
+      },
     };
     const stats = transition.operation_stats;
     const reject = (operation, reason) => {
@@ -2465,13 +3846,33 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       stats.accepted += 1;
     };
     const existingById = (collection, id) => asArray(collection).find(item => String(item?.id) === String(id));
+    const deferredKnowledgeOperations = [];
 
-    for (const operation of asArray(result.operations)) {
+    const operationPriority = operation => {
+      const type = asText(operation?.type);
+      if (type.startsWith('event.') || type.startsWith('intel.')) return 0;
+      if (type.startsWith('hook.') || type.startsWith('secret.')) return 1;
+      if (type.startsWith('actor.')) return 2;
+      return 3;
+    };
+    const orderedOperations = asArray(result.operations)
+      .map((operation, index) => ({ operation, index }))
+      .sort(
+        (left, right) =>
+          operationPriority(left.operation) - operationPriority(right.operation) || left.index - right.index,
+      )
+      .map(item => item.operation);
+
+    for (const operation of orderedOperations) {
       const type = asText(operation?.type);
       const id = asText(operation?.id);
       const value = operation?.value && typeof operation.value === 'object' ? operation.value : {};
       const patch = operation?.set && typeof operation.set === 'object' ? operation.set : {};
       try {
+        if (type.startsWith('knowledge.') || type === 'secret.reveal' || type === 'trace.discover') {
+          deferredKnowledgeOperations.push(operation);
+          continue;
+        }
         if (type === 'summary.replace') {
           const summary = asText(operation?.value).replace(/\s+/g, ' ').slice(0, 600);
           if (!summary) reject(operation, '摘要为空');
@@ -2527,6 +3928,8 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           'intel.patch': ['intelPackets', 'upsert_intel', intelInput],
           'hook.upsert': ['hooks', 'upsert_hooks', hookInput],
           'hook.patch': ['hooks', 'upsert_hooks', hookInput],
+          'secret.upsert': ['secrets', 'upsert_secrets', secretInput],
+          'secret.patch': ['secrets', 'upsert_secrets', secretInput],
         };
         const descriptor = descriptors[type];
         if (!descriptor) {
@@ -2562,11 +3965,24 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           continue;
         }
 
-        const input = repairedUnknownPatch
+        let input = repairedUnknownPatch
           ? patch
           : isPatch || existing
             ? { ...existing, ...(isPatch ? patch : value) }
             : value;
+        if (type.startsWith('actor.') && existing) {
+          input = {
+            ...input,
+            knowledge: asArray(existing?.knowledge),
+            does_not_know: asArray(existing?.doesNotKnow || existing?.does_not_know),
+          };
+        }
+        if (type === 'secret.patch' && existing) {
+          input = {
+            ...input,
+            holders: asArray(existing?.holders),
+          };
+        }
         if (!effectiveId || repairedUnknownPatch) {
           effectiveId = deriveUpsertId(type.replace('.patch', '.upsert'), input);
         }
@@ -2581,17 +3997,35 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
             ? merged.name
             : type.startsWith('intel.')
               ? merged.content
-              : merged.title && merged.summary;
+              : type.startsWith('secret.')
+                ? merged.content
+                : merged.title && merged.summary;
         const invalidReason = type.startsWith('event.')
           ? '缺少事件标题或内容'
           : type.startsWith('actor.')
             ? '缺少人物名称'
             : type.startsWith('intel.')
               ? '缺少情报内容'
-              : '缺少伏线标题或内容';
+              : type.startsWith('secret.')
+                ? '缺少秘密内容'
+                : '缺少伏线标题或内容';
+        const sourceError = type.startsWith('secret.')
+          ? validateSecretSource(baseState, transition, merged, type === 'secret.patch' && existing)
+          : '';
+        const actorCauseError = type.startsWith('actor.')
+          ? validateActorCause(baseState, transition, merged, existing, currentTurnText)
+          : '';
+        const recordCauseError = validateRecordFactCausality(baseState, transition, type, merged);
         if (!valid) reject(operation, invalidReason);
+        else if (sourceError) reject(operation, sourceError);
+        else if (actorCauseError) reject(operation, actorCauseError);
+        else if (recordCauseError) reject(operation, recordCauseError);
         else if (!effectiveId) reject(operation, '无法根据实体内容生成稳定 ID');
         else {
+          if (type.startsWith('secret.')) {
+            const sourceFact = findTurnFact(baseState, transition, merged?.source_id);
+            if (sourceFact) merged.source_id = sourceFact.id;
+          }
           transition[output].push(merged);
           accept();
         }
@@ -2599,8 +4033,226 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         reject(operation, error instanceof Error ? error.message : String(error));
       }
     }
+
+    for (const operation of deferredKnowledgeOperations) {
+      const type = asText(operation?.type);
+      const value = operation?.value && typeof operation.value === 'object' ? operation.value : {};
+      try {
+        const actorResult = findKnowledgeActor(baseState, transition, value);
+        if (actorResult.error) {
+          reject(operation, actorResult.error);
+          continue;
+        }
+        if (type === 'trace.discover') {
+          const traceResult = validateTraceDiscovery(baseState, transition, result, operation, actorResult.actor);
+          if (traceResult.error) {
+            reject(operation, traceResult.error);
+            continue;
+          }
+          transition.knowledge_updates.push(traceResult.update);
+          transition.trace_discoveries.push(traceResult.discovery);
+          accept();
+          continue;
+        }
+        if (type === 'secret.reveal') {
+          const secretId = asText(operation?.id);
+          const secret =
+            existingById(baseState?.secrets, secretId) || existingById(transition.upsert_secrets, secretId);
+          if (!secret) {
+            reject(operation, `秘密 ${secretId || '未指明'} 不存在`);
+            continue;
+          }
+          if (['public', 'expired'].includes(asText(secret?.status))) {
+            reject(operation, `秘密 ${secretId} 已经公开或失效`);
+            continue;
+          }
+          const sourceError = validateKnowledgeSource(
+            baseState,
+            transition,
+            result,
+            { ...value, content: secret.content },
+            actorResult.actor,
+            'secret.reveal',
+          );
+          if (sourceError) {
+            reject(operation, sourceError);
+            continue;
+          }
+          transition.secret_reveals.push({
+            secretId,
+            actorId: asText(actorResult.actor?.id),
+            actorName: actorDisplayName(actorResult.actor),
+          });
+          const revealKnowledge = normalizeKnowledgeUpdate(
+            'knowledge.grant',
+            { ...value, content: secret.content, confidence: Math.max(0.8, Number(value?.confidence) || 0) },
+            actorResult.actor,
+          );
+          const revealSourceFact = findTurnFact(baseState, transition, revealKnowledge?.sourceId);
+          if (revealSourceFact) revealKnowledge.sourceId = revealSourceFact.id;
+          transition.knowledge_updates.push(revealKnowledge);
+          accept();
+          continue;
+        }
+
+        const update = normalizeKnowledgeUpdate(type, value, actorResult.actor);
+        if (!update) {
+          reject(
+            operation,
+            type.endsWith('grant') || type.endsWith('correct') ? '确定知识置信度必须不低于 0.6' : '知识内容无效',
+          );
+          continue;
+        }
+        if (
+          update.state !== 'known' &&
+          (actorKnowsContent(actorResult.actor, update.content, [
+            ...asArray(baseState?.secrets),
+            ...asArray(transition?.upsert_secrets),
+          ]) ||
+            asArray(transition?.knowledge_updates).some(
+              item =>
+                item?.state === 'known' &&
+                actorReferenceMatches(actorResult.actor, item?.actorId, item?.actorName) &&
+                knowledgeTextsRelated(item?.content, update.content),
+            ))
+        ) {
+          reject(operation, `人物 ${actorDisplayName(actorResult.actor)} 已经确定知道该内容，不能降级为怀疑或误信`);
+          continue;
+        }
+        const sourceError = validateKnowledgeSource(baseState, transition, result, value, actorResult.actor, type);
+        if (sourceError) {
+          reject(operation, sourceError);
+          continue;
+        }
+        const sourceFact = findTurnFact(baseState, transition, update.sourceId);
+        if (sourceFact) update.sourceId = sourceFact.id;
+        transition.knowledge_updates.push(update);
+        accept();
+      } catch (error) {
+        reject(operation, error instanceof Error ? error.message : String(error));
+      }
+    }
+    transition.knowledge_updates = transition.knowledge_updates.filter(Boolean);
+    const validatedScenes = validateParallelScenes(baseState, transition);
+    const rejectedSceneSources = new Set(
+      asArray(result?.parallel_scenes)
+        .map((_, index) => index + 1)
+        .filter(index => !validatedScenes.acceptedSourceIndexes.has(index))
+        .map(index => `PARALLEL_SCENE_${index}`),
+    );
+    if (rejectedSceneSources.size) {
+      const rejectedKnowledge = transition.knowledge_updates.filter(update =>
+        rejectedSceneSources.has(asText(update?.sourceId).toUpperCase()),
+      );
+      const rejectedDiscoveries = transition.trace_discoveries.filter(item =>
+        rejectedSceneSources.has(asText(item?.sourceId).toUpperCase()),
+      );
+      const rejectedDerived = Math.max(rejectedKnowledge.length, rejectedDiscoveries.length);
+      if (rejectedDerived) {
+        transition.operation_stats.accepted = Math.max(0, transition.operation_stats.accepted - rejectedDerived);
+        transition.operation_stats.rejected += rejectedDerived;
+        transition.operation_stats.warnings.push(
+          `旁线未通过因果校验，已撤销 ${rejectedDerived} 条由该旁线产生的知识或痕迹发现`,
+        );
+      }
+      transition.knowledge_updates = transition.knowledge_updates.filter(
+        update => !rejectedSceneSources.has(asText(update?.sourceId).toUpperCase()),
+      );
+      transition.trace_discoveries = transition.trace_discoveries.filter(
+        item => !rejectedSceneSources.has(asText(item?.sourceId).toUpperCase()),
+      );
+    }
+    transition.parallel_scenes = validatedScenes.scenes;
+    transition.camera_history = transition.parallel_scenes.map(cameraLabel).filter(Boolean);
     transition.next_turn_packet = deriveNextTurnPacket(transition);
     return transition;
+  }
+
+  function applyKnowledgeUpdates(actors, updates) {
+    const values = asArray(actors).map(actor => clone(actor));
+    const changedAt = nowIso();
+
+    for (const raw of asArray(updates)) {
+      const update = raw && typeof raw === 'object' ? raw : {};
+      const actor = values.find(item => actorReferenceMatches(item, update.actorId, update.actorName));
+      const content = asText(update.content).slice(0, 360);
+      if (!actor || !content) continue;
+
+      let ledger = normalizeKnowledgeLedger(actor.knowledgeLedger, actor.id);
+      const replaces = asText(update.replaces).slice(0, 360);
+      if (update.mode === 'correct') {
+        const correctionTarget = replaces || content;
+        ledger = ledger.filter(item => !knowledgeTextsRelated(item.content, correctionTarget));
+        actor.knowledge = asArray(actor.knowledge).filter(item => !knowledgeTextsRelated(item, correctionTarget));
+      } else if (update.state === 'known') {
+        ledger = ledger.filter(item => item.state === 'known' || !knowledgeTextsRelated(item.content, content));
+      }
+      ledger = ledger.filter(item => !(item.state === update.state && knowledgeTextsRelated(item.content, content)));
+
+      const entry = {
+        id: stableId('KN', actor.id, update.state, content),
+        state: update.state,
+        content,
+        sourceType: asText(update.sourceType),
+        sourceId: asText(update.sourceId),
+        sourceActorId: asText(update.sourceActorId),
+        sourceActorName: asText(update.sourceActorName),
+        confidence: clamp(update.confidence, 0, 1),
+        acquiredAt: changedAt,
+        updatedAt: changedAt,
+      };
+      actor.knowledgeLedger = normalizeKnowledgeLedger([...ledger, entry], actor.id);
+
+      if (update.state === 'known') {
+        actor.knowledge = uniqueTextList([...asArray(actor.knowledge), content], 30, 240);
+        actor.doesNotKnow = asArray(actor.doesNotKnow).filter(item => !knowledgeTextsRelated(item, content));
+      }
+      actor.updatedAt = changedAt;
+      actor.updatedReason = asText(actor.updatedReason, '知识边界发生变化').slice(0, 240);
+    }
+
+    return values;
+  }
+
+  function applySecretReveals(secrets, reveals) {
+    const values = asArray(secrets).map(secret => clone(secret));
+    const changedAt = nowIso();
+    for (const raw of asArray(reveals)) {
+      const secret = values.find(item => String(item?.id) === String(raw?.secretId || ''));
+      if (!secret) continue;
+      const holder = asText(raw?.actorName || raw?.actorId);
+      if (holder) secret.holders = uniqueTextList([...asArray(secret.holders), holder], 30, 100);
+      if (secret.status === 'hidden') secret.status = 'compromised';
+      secret.updatedAt = changedAt;
+    }
+    return values;
+  }
+
+  function applyTraceDiscoveries(turnFacts, discoveries) {
+    const values = asArray(turnFacts).map(fact => clone(fact));
+    for (const discovery of asArray(discoveries)) {
+      const fact = values.find(item => String(item?.id) === String(discovery?.factId));
+      if (!fact) continue;
+      fact.discoveredBy = [
+        ...asArray(fact.discoveredBy).filter(
+          item =>
+            !actorReferenceMatches(
+              { id: item?.actorId, name: item?.actorName },
+              discovery?.actorId,
+              discovery?.actorName,
+            ) || !knowledgeTextsRelated(item?.conclusion, discovery?.conclusion),
+        ),
+        {
+          actorId: asText(discovery?.actorId),
+          actorName: asText(discovery?.actorName),
+          conclusion: asText(discovery?.conclusion).slice(0, 360),
+          sourceId: asText(discovery?.sourceId).slice(0, 100),
+          discoveredAt: nowIso(),
+        },
+      ].slice(-24);
+      fact.updatedAt = nowIso();
+    }
+    return values;
   }
 
   function applyTransition(baseState, result, messageKey, currentStat) {
@@ -2659,8 +4311,12 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           .map(value => asText(value).slice(0, 240))
           .filter(Boolean)
           .slice(0, 20),
+        knowledgeLedger: normalizeKnowledgeLedger(raw?.knowledge_ledger || raw?.knowledgeLedger, raw?.id),
         nextDecision: asText(raw?.next_decision).slice(0, 280),
         updatedReason: asText(raw?.updated_reason).slice(0, 240),
+        causeType: asText(raw?.cause_type || raw?.causeType).slice(0, 60),
+        causeId: asText(raw?.cause_id || raw?.causeId).slice(0, 100),
+        basisIds: uniqueTextList(raw?.basis_ids || raw?.basisIds, 16, 100),
       };
     });
 
@@ -2691,6 +4347,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           .map(value => asText(value))
           .filter(Boolean)
           .slice(0, 30),
+        sourceFactIds: uniqueTextList(raw?.source_fact_ids || raw?.sourceFactIds, 16, 100),
       };
     });
 
@@ -2723,6 +4380,31 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           .slice(0, 20),
       };
     });
+
+    state.secrets = upsertById(state.secrets, source.upsert_secrets, LIMITS.secrets, 'SEC', raw =>
+      normalizeStoredSecret({
+        ...raw,
+        revealConditions: raw?.reveal_conditions || raw?.revealConditions,
+        sourceType: raw?.source_type || raw?.sourceType,
+        sourceId: raw?.source_id || raw?.sourceId,
+      }),
+    );
+    state.secrets = applySecretReveals(state.secrets, source.secret_reveals);
+    state.actors = applyKnowledgeUpdates(state.actors, source.knowledge_updates);
+    state.turnFacts = upsertById(
+      state.turnFacts,
+      asArray(source.turn_facts).map(fact => ({
+        ...fact,
+        sourceMessageId: messageKey.messageId,
+        sourceRevision: state.revision,
+        createdAt: fact?.createdAt || nowIso(),
+      })),
+      LIMITS.turnFacts,
+      'TF',
+      normalizeStoredTurnFact,
+    );
+    state.turnFacts = applyTraceDiscoveries(state.turnFacts, source.trace_discoveries);
+    state.scenePresence = normalizeScenePresence(source.scene_presence || state.scenePresence);
 
     state.cameraHistory = [
       ...state.cameraHistory,
@@ -2793,36 +4475,12 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     return `${title}:\n${values.map(value => `- ${value}`).join('\n')}`;
   }
 
-  function formatKnowledgeSection(title, items, limit) {
-    const values = asArray(items)
-      .filter(item => asText(item?.name))
-      .slice(0, limit)
-      .map(item => {
-        const knows = asArray(item?.knows)
-          .map(value => shortText(value, MAIN_MODEL_CONTEXT_LIMITS.knowledgeFactChars))
-          .filter(Boolean)
-          .slice(0, MAIN_MODEL_CONTEXT_LIMITS.knowledgeFacts);
-        const doesNotKnow = asArray(item?.doesNotKnow)
-          .map(value => shortText(value, MAIN_MODEL_CONTEXT_LIMITS.knowledgeFactChars))
-          .filter(Boolean)
-          .slice(0, MAIN_MODEL_CONTEXT_LIMITS.knowledgeFacts);
-        const knownText = knows.length ? `已知：${knows.join('；')}` : '已知：无新增信息';
-        const unknownText = doesNotKnow.length ? `未知：${doesNotKnow.join('；')}` : '';
-        return `- ${asText(item.name)}：${knownText}${unknownText ? `；${unknownText}` : ''}`;
-      });
-    return values.length ? `${title}:\n${values.join('\n')}` : '';
-  }
-
   function buildPacketSections(packet, persistent = false) {
     const itemLimit = persistent ? MAIN_MODEL_CONTEXT_LIMITS.persistentItems : MAIN_MODEL_CONTEXT_LIMITS.latestItems;
-    const knowledgeLimit = persistent
-      ? MAIN_MODEL_CONTEXT_LIMITS.persistentKnowledgeActors
-      : MAIN_MODEL_CONTEXT_LIMITS.latestKnowledgeActors;
     return [
       formatBulletSection('玩家视野外正在进行的行动', packet.offscreenMoves, itemLimit),
       formatBulletSection('已经进入玩家可知范围的情报', packet.arrivingIntel, itemLimit),
       formatBulletSection('仍在传播、尚不可直接得知的情报', packet.intelInTransit, itemLimit),
-      formatKnowledgeSection('相关人物知识边界', packet.npcKnowledge, knowledgeLimit),
       formatBulletSection('正在施压的世界事件', packet.activePressures, itemLimit),
       formatBulletSection('等待条件兑现的延迟后果', packet.pendingConsequences, itemLimit),
       formatBulletSection('仍未证实或彼此冲突的信息', packet.uncertainties, itemLimit),
@@ -2830,19 +4488,172 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     ].filter(Boolean);
   }
 
-  function buildMainModelInjection(state) {
+  function recentConversationFocusText() {
+    const getLast = api('getLastMessageId');
+    const getMessages = api('getChatMessages');
+    if (typeof getLast !== 'function' || typeof getMessages !== 'function') return '';
+    const values = [];
+    for (let id = Number(getLast()), count = 0; id >= 0 && count < 6; id -= 1) {
+      const message = getMessages(id)?.[0];
+      if (!message || !['user', 'assistant'].includes(asText(message.role))) continue;
+      const text = stripForContext(message.message).slice(-5000);
+      if (!text) continue;
+      values.unshift(`${message.role}:${text}`);
+      count += 1;
+    }
+    return values.join('\n').slice(-18000);
+  }
+
+  function identityAppearsInText(actor, text) {
+    const normalizedText = normalizedPromptIdentity(text);
+    return [actor?.id, actor?.name]
+      .map(normalizedPromptIdentity)
+      .filter(value => value.length >= 2)
+      .some(value => normalizedText.includes(value));
+  }
+
+  function selectKnowledgeActors(state, focusText, packet) {
+    const actors = asArray(state?.actors);
+    const packetText = [
+      ...asArray(packet?.offscreenMoves),
+      ...asArray(packet?.arrivingIntel),
+      ...asArray(packet?.intelInTransit),
+      ...asArray(packet?.activePressures),
+      ...asArray(packet?.pendingConsequences),
+      ...asArray(packet?.uncertainties),
+      ...asArray(packet?.npcKnowledge).flatMap(item => [
+        item?.name,
+        ...asArray(item?.knows),
+        ...asArray(item?.doesNotKnow),
+      ]),
+    ].join('\n');
+    const direct = actors.filter(actor => identityAppearsInText(actor, focusText));
+    const packetActors = actors.filter(actor => identityAppearsInText(actor, packetText));
+    const scored = selectRelevantRecords(
+      actors,
+      `${focusText}\n${packetText}`,
+      MAIN_MODEL_CONTEXT_LIMITS.relevantKnowledgeActors,
+      ['id', 'name', 'location', 'goal', 'currentAction', 'knowledge', 'doesNotKnow', 'knowledgeLedger'],
+    );
+    return mergeRecords([...direct, ...packetActors], scored, MAIN_MODEL_CONTEXT_LIMITS.relevantKnowledgeActors);
+  }
+
+  function knowledgeFactLabel(item) {
+    const source =
+      asText(item?.sourceActorName) ||
+      asText(item?.sourceActorId) ||
+      asText(item?.sourceId) ||
+      asText(item?.sourceType);
+    return `${shortText(item?.content, MAIN_MODEL_CONTEXT_LIMITS.knowledgeFactChars)}${
+      source ? `〔来源：${shortText(source, 50)}〕` : ''
+    }`;
+  }
+
+  function uniqueKnowledgeEntries(entries, limit) {
+    const seen = new Set();
+    return asArray(entries)
+      .filter(item => {
+        const key = normalizedKnowledgeText(item?.content);
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, limit);
+  }
+
+  function formatActorKnowledgeBoundaries(state, focusText, packet) {
+    const actors = selectKnowledgeActors(state, focusText, packet);
+    if (!actors.length) return '';
+    const cards = actors.map(actor => {
+      const ledger = normalizeKnowledgeLedger(actor?.knowledgeLedger, actor?.id);
+      const known = uniqueKnowledgeEntries(
+        [
+          ...ledger.filter(item => item.state === 'known'),
+          ...asArray(actor?.knowledge).map(content => ({
+            content,
+            sourceType: 'legacy',
+            sourceId: '既有档案',
+          })),
+        ],
+        MAIN_MODEL_CONTEXT_LIMITS.knownFacts,
+      );
+      const suspected = uniqueKnowledgeEntries(
+        ledger.filter(item => item.state === 'suspected'),
+        MAIN_MODEL_CONTEXT_LIMITS.softKnowledgeFacts,
+      );
+      const believed = uniqueKnowledgeEntries(
+        ledger.filter(item => item.state === 'believed'),
+        MAIN_MODEL_CONTEXT_LIMITS.softKnowledgeFacts,
+      );
+      const doesNotKnow = uniqueTextList(
+        actor?.doesNotKnow,
+        LIMITS.knowledgeLedgerPerActor,
+        MAIN_MODEL_CONTEXT_LIMITS.knowledgeFactChars,
+      );
+      const heldSecrets = asArray(state?.secrets)
+        .filter(secret => secret?.status !== 'expired' && actorListed(secret?.holders, actor))
+        .map(secret => `${asText(secret?.id)} ${shortText(secret?.title || secret?.content, 80)}`)
+        .filter(Boolean);
+      return [
+        `人物：${actorDisplayName(actor)}〔${asText(actor?.id)}｜位置：${asText(actor?.location, '未知')}〕`,
+        `可当作事实使用：${known.length ? known.map(knowledgeFactLabel).join('；') : '无已登记事实'}`,
+        suspected.length ? `仅为怀疑：${suspected.map(knowledgeFactLabel).join('；')}` : '',
+        believed.length ? `主观相信但未证实：${believed.map(knowledgeFactLabel).join('；')}` : '',
+        `明确不知道：${doesNotKnow.length ? doesNotKnow.join('；') : '无逐项登记；仍执行默认拒绝规则'}`,
+        `秘密权限：${heldSecrets.length ? heldSecrets.join('；') : '无；不得知晓秘密登记簿中的任何隐藏内容'}`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+    });
+    return `当前相关人物的知识权限卡（硬约束）:\n${cards.join('\n\n')}`;
+  }
+
+  function formatSecretRegistry(state) {
+    const priority = { critical: 0, high: 1, normal: 2 };
+    const secrets = asArray(state?.secrets)
+      .filter(secret => ['hidden', 'compromised'].includes(asText(secret?.status)))
+      .sort(
+        (left, right) =>
+          (priority[asText(left?.level)] ?? 9) - (priority[asText(right?.level)] ?? 9) ||
+          (Date.parse(asText(right?.updatedAt)) || 0) - (Date.parse(asText(left?.updatedAt)) || 0),
+      );
+    if (!secrets.length) return '';
+    const values = secrets.map(secret => {
+      const holders = uniqueTextList(secret?.holders, 30, 100);
+      const conditions = uniqueTextList(secret?.revealConditions, 12, 160);
+      return [
+        `- [${asText(secret?.id)}｜${asText(secret?.level)}｜${asText(secret?.status)}]`,
+        shortText(secret?.title || secret?.content, 80),
+        `内容：${shortText(secret?.content, 300)}`,
+        `合法知情者：${holders.length ? holders.join('、') : '无人'}`,
+        `允许揭露条件：${conditions.length ? conditions.join('；') : '未登记，禁止自动揭露'}`,
+      ].join('｜');
+    });
+    return `秘密与信息盲区登记簿（系统真相，不是人物共有知识）:\n${values.join('\n')}`;
+  }
+
+  function buildMainModelInjection(state, focusText = recentConversationFocusText()) {
     const packet = normalizePacket(state.nextTurnPacket);
     const persistentPacket = buildPersistentMainModelPacket(state, packet);
     const latestSections = buildPacketSections(packet);
     const persistentSections = buildPacketSections(persistentPacket, true);
+    const secretRegistry = formatSecretRegistry(state);
+    const knowledgeBoundaries = formatActorKnowledgeBoundaries(state, focusText, packet);
     const sections = [
       `<天下演化上下文 version="${state.revision}">`,
       latestSections.length ? `本轮新近变化:\n\n${latestSections.join('\n\n')}` : '',
       persistentSections.length
         ? `持续核心状态（未在本轮更新，但仍未结束）:\n\n${persistentSections.join('\n\n')}`
         : '',
+      secretRegistry,
+      knowledgeBoundaries,
       `主模型联动协议：
-  - 正文只允许人物使用其有合理渠道知道的内容；模型知道不等于人物知道。
+  - 知识采用默认拒绝：世界书、状态栏、变量和本注入中出现的客观真相，都不自动等于人物知道。
+  - 当前相关人物只能使用其“可当作事实使用”与获准秘密；“怀疑”只能表现为试探，“主观相信”可以驱动行动但不得写成已证实。
+  - “明确不知道”以及无秘密权限的内容不得通过直觉、巧合、梦境或作者旁白偷渡；只有正文中实际发生观察、告知、情报抵达等传播后才可改变。
+  - “无人目击事实”虽然已经改变客观世界，但 NPC 不能直接知道行为、行为人或动机；后来发现物品缺失、血迹、损坏等，只能得到痕迹本身支持的有限结论。
+  - 秘密登记簿的“合法知情者”是白名单；未列名人物一律不知道，即使该秘密已写在世界书或系统上下文中。
+  - 未列出权限卡的人物若临时进入正文，只能使用本轮亲历的公开信息；不得自行假定其知道档案、在途情报或隐藏秘密。
   - “持续核心状态”只作为因果与知识约束；若尚未与当前视角建立合理联系，不得强行播报或切换镜头。
   - 联动包没有列出某项档案不代表该事件已经结束；不得自行宣布未获确认的伏线、行动或情报失效。
   - 只负责玩家当前视角内的正文、变量更新、状态栏与行动选项，不要生成平行世界、远景旁白或 <平行世界> 标签。
@@ -2866,7 +4677,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     }
   }
 
-  function refreshInjection(state = getChatState()) {
+  function refreshInjection(state = getChatState(), focusText = recentConversationFocusText()) {
     clearInjection();
     if (!settings.enabled) return;
     const inject = api('injectPrompts');
@@ -2877,7 +4688,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         position: 'in_chat',
         depth: 0,
         role: 'system',
-        content: buildMainModelInjection(state),
+        content: buildMainModelInjection(state, focusText),
         should_scan: true,
       },
     ]);
@@ -2932,6 +4743,12 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     runtime.lastNotice = source === 'manual' ? '正在重新推演本轮天下……' : `正在结算第 ${messageId} 楼……`;
     updateLampState();
     renderPanel();
+    showEvolutionBanner(
+      'running',
+      source === 'manual' ? '正在重新演化' : '天下演化中',
+      `正在结算第 ${messageId} 楼，最长等待 ${durationLabel(settings.requestTimeoutMs)}。`,
+      { cancellable: true },
+    );
 
     try {
       const currentStat = await waitForMessageVariables(messageId, job);
@@ -2944,12 +4761,12 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       }
       const worldInfoSupplement = await resolveWorldInfoSupplement(payload, promptSnapshot);
       if (!jobStillValid(job)) throw new Error('聊天或回复版本已经改变，本次推演结果已作废。');
-      const result = await callWorldModel(payload, generationId, promptSnapshot, worldInfoSupplement);
+      const result = await callWorldModel(payload, generationId, promptSnapshot, worldInfoSupplement, job);
       if (!jobStillValid(job)) throw new Error('聊天或回复版本已经改变，本次推演结果已作废。');
       if (Number(result.base_revision) !== Number(baseState.revision)) {
         throw new Error(`副模型基线 revision ${result.base_revision} 与当前档案 ${baseState.revision} 不一致。`);
       }
-      const transition = buildTransitionFromOperations(baseState, result, currentStat || {});
+      const transition = buildTransitionFromOperations(baseState, result, currentStat || {}, messageKey.message);
       if (transition.operation_stats.rejected > 0) {
         console.warn('[天下演化] 部分 operations 未通过校验', {
           accepted: transition.operation_stats.accepted,
@@ -2980,10 +4797,19 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       const sceneCount =
         saved.parallelTurns.at(-1)?.messageId === messageId ? saved.parallelTurns.at(-1).scenes.length : 0;
       runtime.lastNotice = `第 ${messageId} 楼推演完成：接受 ${saved.lastRun?.acceptedOperations ?? 0} 项变化，忽略 ${saved.lastRun?.rejectedOperations ?? 0} 项，收录 ${sceneCount} 段旁线。`;
+      showEvolutionBanner('success', '天下演化完成', runtime.lastNotice, { autoHideMs: 7000 });
       console.info('[天下演化] 结算完成', { chatId, messageId, revision: saved.revision });
       return saved;
     } catch (error) {
+      if (job.cancelled || isCancellationError(error)) {
+        runtime.lastError = '';
+        runtime.lastNotice = job.cancelReason || '本轮天下演化已取消。';
+        showEvolutionBanner('cancelled', '天下演化已取消', runtime.lastNotice, { autoHideMs: 4500 });
+        console.info('[天下演化] 本轮结算已取消', { chatId, messageId });
+        return getChatState();
+      }
       runtime.lastError = error instanceof Error ? error.message : String(error);
+      showEvolutionBanner('error', '天下演化失败', runtime.lastError);
       console.error('[天下演化] 结算失败', error);
       throw error;
     } finally {
@@ -2999,10 +4825,14 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     }
   }
 
-  function cancelActiveJob(reason = '任务已取消') {
+  function cancelActiveJob(reason = '任务已取消', { notify = false } = {}) {
     const job = runtime.activeJob;
     if (!job) return;
     job.cancelled = true;
+    job.cancelReason = reason;
+    const error = cancellationError(reason);
+    [...(job.cancelListeners || [])].forEach(reject => reject(error));
+    job.cancelListeners?.clear();
     const stop = api('stopGenerationById');
     if (typeof stop === 'function') {
       try {
@@ -3012,6 +4842,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       }
     }
     runtime.lastNotice = reason;
+    if (notify) showEvolutionBanner('cancelled', '天下演化已取消', reason, { autoHideMs: 4500 });
   }
 
   function scheduleProcess(messageId, { force = false, source = 'auto', delayMs = settings.settleDelayMs } = {}) {
@@ -3300,11 +5131,53 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           )
           .join('')
       : emptyBlock('暂无活跃伏线');
-    const blindSpots = [
-      ...packet.intelInTransit.map(value => ({ tone: '在途', value })),
+    const blindSpotCandidates = [
+      ...asArray(state.turnFacts).map(fact => {
+        const witnesses = uniqueTextList(fact?.witnesses, 24, 100);
+        const traces = uniqueTextList(fact?.traces, 8, 120);
+        const privateFact = fact?.visibility === 'private' || !witnesses.length;
+        return {
+          tone: privateFact ? '无人目击' : `有限可见·${witnesses.join('、')}`,
+          value: [
+            asText(fact?.content),
+            asText(fact?.physicalResult) && `物理结果：${asText(fact.physicalResult)}`,
+            traces.length && `可发现痕迹：${traces.join('、')}`,
+          ]
+            .filter(Boolean)
+            .join('｜'),
+        };
+      }),
+      ...asArray(state.secrets)
+        .filter(secret => ['hidden', 'compromised'].includes(asText(secret?.status)))
+        .map(secret => ({
+          tone: `秘密·${asText(secret?.level, 'high')}`,
+          value: `${asText(secret?.title)}｜${asText(secret?.content)}｜合法知情者：${
+            uniqueTextList(secret?.holders, 30, 100).join('、') || '无人'
+          }`,
+        })),
+      ...asArray(state.actors).flatMap(actor => [
+        ...asArray(actor?.doesNotKnow).map(value => ({ tone: `${actorDisplayName(actor)}·不知道`, value })),
+        ...normalizeKnowledgeLedger(actor?.knowledgeLedger, actor?.id)
+          .filter(item => item.state === 'suspected')
+          .map(item => ({ tone: `${actorDisplayName(actor)}·怀疑`, value: item.content })),
+        ...normalizeKnowledgeLedger(actor?.knowledgeLedger, actor?.id)
+          .filter(item => item.state === 'believed')
+          .map(item => ({ tone: `${actorDisplayName(actor)}·误信/相信`, value: item.content })),
+      ]),
+      ...asArray(state.intelPackets)
+        .filter(item => !intelHasArrived(item))
+        .map(item => ({ tone: '在途', value: intelPacketLabel(item) })),
       ...packet.uncertainties.map(value => ({ tone: '未证', value })),
-      ...packet.npcKnowledge.flatMap(item => item.doesNotKnow.map(value => ({ tone: `${item.name}未知`, value }))),
-    ].slice(0, 24);
+    ];
+    const blindSpotKeys = new Set();
+    const blindSpots = blindSpotCandidates
+      .filter(item => {
+        const key = `${asText(item?.tone)}|${normalizedKnowledgeText(item?.value)}`;
+        if (!asText(item?.value) || blindSpotKeys.has(key)) return false;
+        blindSpotKeys.add(key);
+        return true;
+      })
+      .slice(0, 60);
     const blindSpotCards = blindSpots.length
       ? blindSpots
           .map(
@@ -3490,6 +5363,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           <header><div><small>运行方式</small><h3>自动结算</h3></div><label class="cwe-switch"><input type="checkbox" data-setting="enabled" ${settings.enabled ? 'checked' : ''}><i></i></label></header>
           <label class="cwe-check"><input type="checkbox" data-setting="autoRun" ${settings.autoRun ? 'checked' : ''}><span>正文与 MVU 更新完成后，由副模型提交世界变化并把旁线收录到天下演化档案</span></label>
           <div class="cwe-field-row"><label><span>回看最近几轮</span><input type="number" min="1" max="8" data-setting="lookbackRounds" value="${settings.lookbackRounds}"></label><label><span>等待 MVU 完成（毫秒）</span><input type="number" min="400" max="5000" step="100" data-setting="settleDelayMs" value="${settings.settleDelayMs}"></label></div>
+          <label class="cwe-field"><span>副模型请求超时（秒）</span><input type="number" min="30" max="900" step="10" data-setting="requestTimeoutSeconds" value="${Math.round(settings.requestTimeoutMs / 1000)}"><small class="cwe-model-status">可设置 30—900 秒；到时仍未返回会停止本轮推演，并在酒馆主界面显示失败横幅。</small></label>
           <p class="cwe-help">最新一轮可产生新事实，回看的旧轮次只负责理解“他”“那封信”等承接关系。</p>
         </section>
         <section class="cwe-settings-section">
@@ -3579,11 +5453,15 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
   function readSettingsFromPanel() {
     const doc = runtime.frameDocument;
     const get = key => doc?.querySelector(`[data-setting="${key}"]`);
+    const requestTimeoutSeconds = Number(get('requestTimeoutSeconds')?.value);
     return {
       enabled: Boolean(get('enabled')?.checked),
       autoRun: Boolean(get('autoRun')?.checked),
       lookbackRounds: Number(get('lookbackRounds')?.value),
       settleDelayMs: Number(get('settleDelayMs')?.value),
+      requestTimeoutMs: Number.isFinite(requestTimeoutSeconds)
+        ? requestTimeoutSeconds * 1000
+        : settings.requestTimeoutMs,
       connectionMode: doc?.querySelector('[data-setting="connectionMode"]:checked')?.value || 'tavern',
       apiUrl: get('apiUrl')?.value?.trim() || '',
       apiKey: get('apiKey')?.value || '',
@@ -3789,6 +5667,49 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     applyFrameLayout();
   }
 
+  function hideEvolutionBanner() {
+    clearTimeout(runtime.bannerTimer);
+    runtime.bannerTimer = null;
+    const banner = hostDocument.getElementById(BANNER_ID);
+    if (banner) banner.hidden = true;
+  }
+
+  function showEvolutionBanner(kind, title, detail, { autoHideMs = 0, cancellable = false } = {}) {
+    clearTimeout(runtime.bannerTimer);
+    runtime.bannerTimer = null;
+    const banner = hostDocument.getElementById(BANNER_ID);
+    if (!banner) return;
+    const safeKind = ['running', 'success', 'error', 'cancelled'].includes(kind) ? kind : 'running';
+    const token = `${Date.now()}-${Math.random()}`;
+    banner.dataset.bannerToken = token;
+    banner.className = `cwe-host-banner is-${safeKind}`;
+    banner.hidden = false;
+    banner.setAttribute('role', safeKind === 'error' ? 'alert' : 'status');
+    banner.innerHTML = `
+      <div class="cwe-host-banner-mark" aria-hidden="true"><span>演</span></div>
+      <div class="cwe-host-banner-copy">
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(detail)}</span>
+      </div>
+      <div class="cwe-host-banner-actions">
+        ${cancellable ? '<button type="button" class="cwe-host-banner-cancel" data-banner-action="cancel">取消</button>' : ''}
+        <button type="button" class="cwe-host-banner-close" data-banner-action="close" aria-label="关闭提示"><span aria-hidden="true">×</span></button>
+      </div>`;
+    banner.querySelector('[data-banner-action="close"]')?.addEventListener('click', hideEvolutionBanner);
+    banner.querySelector('[data-banner-action="cancel"]')?.addEventListener('click', () => {
+      clearTimeout(runtime.scheduledTimer);
+      runtime.pendingMessageId = null;
+      runtime.pendingForce = false;
+      runtime.queuedProcess = null;
+      cancelActiveJob('已由用户取消本轮天下演化。', { notify: true });
+    });
+    if (autoHideMs > 0) {
+      runtime.bannerTimer = setTimeout(() => {
+        if (banner.dataset.bannerToken === token) hideEvolutionBanner();
+      }, autoHideMs);
+    }
+  }
+
   function updateLampState() {
     const lamp = runtime.lamp;
     if (!lamp) return;
@@ -3807,6 +5728,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
   function mountUi() {
     hostDocument.getElementById(LAMP_ID)?.remove();
     hostDocument.getElementById(FRAME_ID)?.remove();
+    hostDocument.getElementById(BANNER_ID)?.remove();
     hostDocument.getElementById(STYLE_ID)?.remove();
 
     const style = hostDocument.createElement('style');
@@ -3833,8 +5755,38 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       #${LAMP_ID}.theme-ink{border-color:rgba(20,25,22,.34);background:linear-gradient(145deg,#f5f0e4,#d8d0bf);box-shadow:0 8px 22px rgba(25,30,24,.28),inset 0 0 0 3px rgba(47,105,101,.06)}
       #${LAMP_ID}.theme-ink:before{border-color:rgba(47,105,101,.32)}
       #${LAMP_ID}.theme-ink .cwe-status-dot{border-color:#eee9dc}
+      #${BANNER_ID}[hidden]{display:none!important}
+      #${BANNER_ID}{position:fixed;z-index:100004;top:max(12px,env(safe-area-inset-top));left:50%;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;width:min(720px,calc(100vw - 28px));min-height:58px;padding:8px 10px 8px 9px;transform:translateX(-50%);overflow:hidden;border:1px solid rgba(104,78,43,.48);border-radius:12px;background:linear-gradient(102deg,rgba(251,244,221,.98),rgba(240,224,184,.98));box-shadow:0 12px 34px rgba(28,20,12,.28),inset 0 1px rgba(255,255,255,.72);color:#2e251a;font-family:"Noto Serif SC","Source Han Serif SC","Songti SC",serif;isolation:isolate;animation:cwe-banner-enter .24s cubic-bezier(.2,.8,.2,1)}
+      #${BANNER_ID}:after{content:"";position:absolute;z-index:-1;inset:0;background:repeating-linear-gradient(110deg,transparent 0 18px,rgba(110,77,37,.025) 18px 19px);pointer-events:none}
+      #${BANNER_ID}.is-running:before{content:"";position:absolute;left:0;bottom:0;width:42%;height:3px;background:linear-gradient(90deg,transparent,#a44232,#d39a50,transparent);animation:cwe-banner-progress 1.45s ease-in-out infinite}
+      #${BANNER_ID}.is-success{border-color:rgba(63,110,82,.52)}
+      #${BANNER_ID}.is-error{border-color:rgba(169,62,45,.62);background:linear-gradient(102deg,rgba(255,240,221,.98),rgba(239,211,177,.98))}
+      #${BANNER_ID}.is-cancelled{filter:saturate(.72)}
+      #${BANNER_ID} .cwe-host-banner-mark{display:grid;width:39px;height:39px;place-items:center;margin-right:10px;border:1px solid rgba(164,66,50,.5);border-radius:50%;background:rgba(255,250,233,.66);box-shadow:inset 0 0 0 3px rgba(164,66,50,.06)}
+      #${BANNER_ID} .cwe-host-banner-mark span{font-size:18px;font-weight:800;color:#a44232}
+      #${BANNER_ID}.is-success .cwe-host-banner-mark{border-color:rgba(58,112,82,.52)}
+      #${BANNER_ID}.is-success .cwe-host-banner-mark span{color:#3d7358}
+      #${BANNER_ID} .cwe-host-banner-copy{display:grid;min-width:0;gap:2px}
+      #${BANNER_ID} .cwe-host-banner-copy strong{font-size:14px;letter-spacing:.08em}
+      #${BANNER_ID} .cwe-host-banner-copy span{overflow:hidden;color:#695b49;font-family:"Noto Sans SC","Source Han Sans SC",sans-serif;font-size:12px;line-height:1.45;text-overflow:ellipsis;white-space:nowrap}
+      #${BANNER_ID} .cwe-host-banner-actions{display:flex;align-items:center;gap:6px;margin-left:12px}
+      #${BANNER_ID} button{min-height:34px;border:1px solid rgba(96,72,42,.28);border-radius:8px;background:rgba(255,251,238,.72);color:#514331;font:600 12px/1 "Noto Sans SC","Source Han Sans SC",sans-serif;cursor:pointer}
+      #${BANNER_ID} button:hover{border-color:rgba(164,66,50,.52);color:#9b3f30}
+      #${BANNER_ID} .cwe-host-banner-cancel{padding:0 14px;border-color:rgba(164,66,50,.42);color:#993f31}
+      #${BANNER_ID} .cwe-host-banner-close{display:grid;width:34px;padding:0;place-items:center;font-size:20px;font-weight:400}
+      @media(max-width:720px){#${BANNER_ID}{top:max(8px,env(safe-area-inset-top));width:calc(100vw - 16px);min-height:62px;padding:8px;grid-template-columns:auto minmax(0,1fr) auto;border-radius:10px}#${BANNER_ID} .cwe-host-banner-mark{width:36px;height:36px;margin-right:8px}#${BANNER_ID} .cwe-host-banner-copy strong{font-size:13px}#${BANNER_ID} .cwe-host-banner-copy span{font-size:11px;white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}#${BANNER_ID} .cwe-host-banner-actions{margin-left:7px;gap:4px}#${BANNER_ID} button{min-height:40px}#${BANNER_ID} .cwe-host-banner-cancel{padding:0 10px}#${BANNER_ID} .cwe-host-banner-close{width:32px}}
+      @keyframes cwe-banner-enter{from{opacity:0;transform:translate(-50%,-12px) scale(.985)}to{opacity:1;transform:translate(-50%,0) scale(1)}}
+      @keyframes cwe-banner-progress{0%{transform:translateX(-110%)}50%{transform:translateX(120%)}100%{transform:translateX(260%)}}
       @keyframes cwe-lamp-pulse{50%{opacity:.35;transform:scale(.75)}}`;
     hostDocument.head.append(style);
+
+    const banner = hostDocument.createElement('section');
+    banner.id = BANNER_ID;
+    banner.className = 'cwe-host-banner';
+    banner.hidden = true;
+    banner.setAttribute('aria-live', 'polite');
+    banner.setAttribute('aria-atomic', 'true');
+    hostDocument.body.append(banner);
 
     const lamp = hostDocument.createElement('div');
     lamp.id = LAMP_ID;
@@ -3947,6 +5899,11 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         startedAt: Date.now(),
         snapshot: null,
       };
+      try {
+        refreshInjection(getChatState(), recentConversationFocusText());
+      } catch (error) {
+        console.warn('[天下演化] 刷新人物知识权限卡失败，将沿用现有注入。', error);
+      }
     });
     on(events.GENERATE_AFTER_DATA, (generateData, dryRun) => {
       const snapshot = chatPromptSnapshot(
@@ -4045,6 +6002,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     });
     on(events.CHAT_CHANGED, chatId => {
       cancelActiveJob('已切换聊天，旧聊天的推演结果将被丢弃。');
+      hideEvolutionBanner();
       clearTimeout(runtime.scheduledTimer);
       runtime.pendingMessageId = null;
       runtime.pendingForce = false;
@@ -4067,6 +6025,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
   function cleanup() {
     cancelActiveJob('天下演化脚本已卸载。');
     clearTimeout(runtime.scheduledTimer);
+    clearTimeout(runtime.bannerTimer);
     clearInterval(runtime.themeTimer);
     clearInjection();
     runtime.cleanupFns.splice(0).forEach(fn => {
@@ -4078,6 +6037,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     });
     runtime.frame?.remove();
     runtime.lamp?.remove();
+    hostDocument.getElementById(BANNER_ID)?.remove();
     hostDocument.getElementById(STYLE_ID)?.remove();
     if (hostWindow[RUNTIME_KEY] === runtime) delete hostWindow[RUNTIME_KEY];
   }

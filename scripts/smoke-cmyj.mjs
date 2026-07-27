@@ -47,10 +47,7 @@ const originalTongchengOverview = JSON.parse(
   await readFile(path.join(root, 'src', 'cmyj-1.7', 'statusbar', 'original-tongcheng-character-overview.json'), 'utf8'),
 );
 const originalTongchengRelationshipGraph = JSON.parse(
-  await readFile(
-    path.join(root, 'src', 'cmyj-1.7', 'statusbar', 'original-tongcheng-relationship-graph.json'),
-    'utf8',
-  ),
+  await readFile(path.join(root, 'src', 'cmyj-1.7', 'statusbar', 'original-tongcheng-relationship-graph.json'), 'utf8'),
 );
 
 assert.ok(loader.length > 300_000, '共享加载器未包含完整脚本集');
@@ -325,12 +322,23 @@ assert.doesNotMatch(releaseStatusbarSource, /rebindCharWorldbooks/);
 assert.match(releaseGeneratorSource, /STORAGE_KEY_API = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /API_SETTINGS_KEY = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /minBaseVersion: '1\.7\.0'/);
-assert.match(releaseWorldEngineSource, /VERSION = '1\.7\.5'/);
-assert.match(releaseWorldEngineSource, /settingsVersion: 3/);
+assert.match(releaseWorldEngineSource, /VERSION = '1\.7\.8'/);
+assert.match(releaseWorldEngineSource, /settingsVersion: 4/);
+assert.match(releaseWorldEngineSource, /requestTimeoutMs: 90000/);
+assert.match(releaseWorldEngineSource, /data-setting="requestTimeoutSeconds"/);
+assert.match(releaseWorldEngineSource, /canming-world-engine-banner/);
+assert.match(releaseWorldEngineSource, /data-banner-action="cancel"/);
+assert.match(releaseWorldEngineSource, /turn_facts/);
+assert.match(releaseWorldEngineSource, /trace\.discover/);
+assert.match(releaseWorldEngineSource, /CURRENT_TURN 不再直接授予人物知识/);
 assert.match(releaseWorldEngineSource, /temperature: 1/);
 assert.match(releaseWorldEngineSource, /maxTokens: 10000/);
 assert.match(releaseWorldEngineSource, /buildPersistentMainModelPacket/);
 assert.match(releaseWorldEngineSource, /持续核心状态（未在本轮更新，但仍未结束）/);
+assert.match(releaseWorldEngineSource, /knowledge\.grant/);
+assert.match(releaseWorldEngineSource, /secret\.reveal/);
+assert.match(releaseWorldEngineSource, /秘密与信息盲区登记簿/);
+assert.match(releaseWorldEngineSource, /知识采用默认拒绝/);
 assert.match(
   releaseWorldEngineStyle,
   /grid-template-rows: minmax\(max-content, 1\.1fr\) minmax\(max-content, 0\.9fr\)/,

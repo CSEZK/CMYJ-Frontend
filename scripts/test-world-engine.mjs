@@ -7,7 +7,7 @@ let source = fullSource.slice(fullSource.indexOf('(() =>'));
 const end = source.lastIndexOf('})();');
 source =
   source.slice(0, end) +
-  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection };\n' +
+  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, cancelActiveJob, runtime };\n' +
   source.slice(end);
 
 const sandbox = {
@@ -38,12 +38,15 @@ vm.runInNewContext(source, sandbox);
 const {
   normalizeIncrementalResult,
   buildTransitionFromOperations,
+  applyTransition,
   callWorldModel,
   normalizeState,
   buildPersistentMainModelPacket,
   buildMainModelInjection,
+  cancelActiveJob,
+  runtime,
 } = sandbox.__cweTest;
-const emptyState = () => ({ activeEvents: [], actors: [], intelPackets: [], hooks: [] });
+const emptyState = () => ({ activeEvents: [], actors: [], intelPackets: [], hooks: [], secrets: [] });
 const currentStat = { 世界运转: { 当前地点: '桐城县和济堂药铺' } };
 
 // 2026-07-26 酒馆实测：Gemini 忽略 value 约定，把全部实体放进 attributes。
@@ -421,7 +424,7 @@ const migratedState = normalizeState(
         name: '朱由检',
         currentAction: '批阅奏疏',
         nextDecision: '',
-        knowledge: [],
+        knowledge: ['王承恩正在暗查宫门值守'],
       },
     ],
     intelPackets: [],
@@ -438,6 +441,8 @@ const migratedState = normalizeState(
   'test-chat',
 );
 assert.match(migratedState.actors[0].id, /^AC-/);
+assert.equal(migratedState.actors[0].knowledgeLedger[0].state, 'known');
+assert.equal(migratedState.actors[0].knowledgeLedger[0].sourceType, 'legacy');
 assert.match(migratedState.hooks[0].id, /^HK-/);
 
 // 下一轮主模型同时收到本轮变化与仍未结束的核心状态，但不接收完整档案或平行世界正文。
@@ -501,6 +506,22 @@ const mainModelState = normalizeState(
         currentAction: '连夜清点存粮',
         knowledge: ['粮价上涨'],
         doesNotKnow: ['粮船已经改道'],
+        knowledgeLedger: [
+          {
+            state: 'suspected',
+            content: '粮商可能暗中囤粮',
+            sourceType: 'received_intel',
+            sourceId: 'IN-old',
+            confidence: 0.5,
+          },
+          {
+            state: 'believed',
+            content: '粮船仍会按期抵达',
+            sourceType: 'told_by_actor',
+            sourceId: 'AC-zhang',
+            confidence: 0.7,
+          },
+        ],
         nextDecision: '天亮后寻找粮商',
         updatedReason: '持续行动',
         updatedAt: '2026-07-25T12:00:00.000Z',
@@ -566,6 +587,20 @@ const mainModelState = normalizeState(
         updatedAt: '2026-07-25T12:00:00.000Z',
       },
     ],
+    secrets: [
+      {
+        id: 'SEC-ledger',
+        title: '缺页下落',
+        content: '账册缺页藏在李四的旧木箱中',
+        level: 'critical',
+        holders: ['张三'],
+        revealConditions: ['张三亲口告知或李四亲自发现'],
+        status: 'hidden',
+        sourceType: 'CURRENT_TURN',
+        sourceId: 'CURRENT_TURN',
+        updatedAt: '2026-07-26T12:00:00.000Z',
+      },
+    ],
     parallelTurns: [
       {
         messageId: 6,
@@ -616,15 +651,608 @@ assert.equal(
 );
 assert.ok(persistentPacket.offscreenMoves.length <= 4);
 
-const mainModelInjection = buildMainModelInjection(mainModelState);
+const mainModelInjection = buildMainModelInjection(mainModelState, '李四正在城外粮仓清点存粮。');
 assert.match(mainModelInjection, /本轮新近变化/);
 assert.match(mainModelInjection, /持续核心状态（未在本轮更新，但仍未结束）/);
 assert.match(mainModelInjection, /张三的回报已经送达/);
 assert.match(mainModelInjection, /城外粮价仍在上涨/);
 assert.match(mainModelInjection, /旧债主仍在寻找主角/);
 assert.match(mainModelInjection, /连夜清点存粮/);
+assert.match(mainModelInjection, /秘密与信息盲区登记簿/);
+assert.match(mainModelInjection, /账册缺页藏在李四的旧木箱中/);
+assert.match(mainModelInjection, /人物：李四/);
+assert.match(mainModelInjection, /仅为怀疑：粮商可能暗中囤粮/);
+assert.match(mainModelInjection, /主观相信但未证实：粮船仍会按期抵达/);
+assert.match(mainModelInjection, /明确不知道：粮船已经改道/);
+assert.match(mainModelInjection, /秘密权限：无/);
+assert.match(mainModelInjection, /合法知情者.*白名单/s);
 assert.match(mainModelInjection, /持续核心状态.*不代表.*本轮/s);
 assert.doesNotMatch(mainModelInjection, /这段平行世界正文绝不能注入主模型/);
+
+// 知识与秘密只做本地因果校验：合法传播写入，模型臆造的“公开消息”直接拒绝，不增加第二次生成调用。
+const knowledgeBase = normalizeState(
+  {
+    version: 1,
+    chatId: 'test-chat',
+    revision: 2,
+    activeEvents: [],
+    actors: [
+      {
+        id: 'AC-zhang',
+        name: '张三',
+        location: '城南',
+        goal: '守住旧账',
+        currentAction: '看守佛塔',
+        knowledge: [],
+        doesNotKnow: [],
+        nextDecision: '等待风声',
+        updatedReason: '既有档案',
+      },
+      {
+        id: 'AC-li',
+        name: '李四',
+        location: '粮仓',
+        goal: '查明粮船去向',
+        currentAction: '核对驿报',
+        knowledge: [],
+        doesNotKnow: ['旧账册藏在城南佛塔夹层'],
+        nextDecision: '寻找张三',
+        updatedReason: '既有档案',
+      },
+    ],
+    intelPackets: [
+      {
+        id: 'IN-grain',
+        content: '粮船已经改道芜湖',
+        origin: '上游码头',
+        destination: '李四',
+        channel: '驿递',
+        status: '已抵达',
+        eta: '本日',
+        reliability: 0.9,
+        knownBy: ['李四'],
+      },
+    ],
+    hooks: [],
+    secrets: [
+      {
+        id: 'SEC-old-ledger',
+        title: '旧账册下落',
+        content: '旧账册藏在城南佛塔夹层',
+        level: 'critical',
+        holders: ['张三'],
+        revealConditions: ['张三亲口告知'],
+        status: 'hidden',
+        sourceType: 'legacy',
+        sourceId: '既有档案',
+      },
+    ],
+  },
+  'test-chat',
+);
+const knowledgeResult = normalizeIncrementalResult(
+  {
+    schema_version: 2,
+    base_revision: 2,
+    turn_facts: [
+      {
+        id: 'TF-ledger-suspect',
+        content: '粮仓账册可能被人调换',
+        visibility: 'scene_visible',
+        witnesses: ['李四'],
+        evidence: '怀疑粮仓账册可能被人调换',
+        location: '粮仓',
+        physical_result: '账册墨迹存在可疑差异',
+        traces: ['墨迹差异'],
+        discovery_conditions: ['近距离核对账册墨迹'],
+      },
+      {
+        id: 'TF-copy-found',
+        content: '账房夹层另藏一份赊粮副本',
+        visibility: 'scene_visible',
+        witnesses: ['李四'],
+        evidence: '发现里面确有一份赊粮副本',
+        location: '账房',
+        physical_result: '账房夹层内存在一份赊粮副本',
+        traces: ['夹层被掀开', '赊粮副本'],
+        discovery_conditions: ['打开账房夹层'],
+      },
+      {
+        id: 'TF-ledger-told',
+        content: '旧账册藏在城南佛塔夹层',
+        visibility: 'addressed',
+        witnesses: ['张三', '李四'],
+        evidence: '张三随后亲口告诉李四：旧账册藏在城南佛塔夹层',
+        location: '粮仓',
+        physical_result: '李四已听见张三说明旧账册下落',
+        traces: [],
+        discovery_conditions: [],
+      },
+    ],
+    operations: [
+      {
+        type: 'knowledge.grant',
+        value: {
+          actor_name: '李四',
+          content: '粮船已经改道芜湖',
+          source_type: 'received_intel',
+          source_id: 'IN-grain',
+          confidence: 0.9,
+        },
+      },
+      {
+        type: 'knowledge.suspect',
+        value: {
+          actor_name: '李四',
+          content: '粮仓账册可能被人调换',
+          source_type: 'direct_observation',
+          source_id: 'TF-ledger-suspect',
+          confidence: 0.45,
+        },
+      },
+      {
+        type: 'knowledge.grant',
+        value: {
+          actor_name: '李四',
+          content: '皇帝已经秘密南迁',
+          source_type: 'public_information',
+          source_id: 'CURRENT_TURN',
+          confidence: 0.95,
+        },
+      },
+      {
+        type: 'knowledge.grant',
+        value: {
+          actor_name: '张三',
+          content: '粮船已经改道芜湖',
+          source_type: 'public_information',
+          source_id: 'IN-grain',
+          confidence: 0.9,
+        },
+      },
+      {
+        type: 'knowledge.grant',
+        value: {
+          actor_name: '李四',
+          content: '旧账册藏在城南佛塔夹层',
+          source_type: 'told_by_actor',
+          source_id: 'AC-zhang',
+          source_actor_id: 'AC-zhang',
+          source_actor_name: '张三',
+          confidence: 0.9,
+        },
+      },
+      {
+        type: 'secret.upsert',
+        id: 'SEC-new-ledger',
+        value: {
+          title: '账房副本',
+          content: '账房夹层另藏一份赊粮副本',
+          level: 'high',
+          holders: ['李四'],
+          reveal_conditions: ['李四亲自取出副本'],
+          status: 'hidden',
+          source_type: 'direct_observation',
+          source_id: 'TF-copy-found',
+        },
+      },
+      {
+        type: 'secret.upsert',
+        id: 'SEC-remote-leak',
+        value: {
+          title: '越权知情者',
+          content: '账房夹层另藏一份赊粮副本',
+          level: 'high',
+          holders: ['王五'],
+          reveal_conditions: ['王五得知'],
+          status: 'hidden',
+          source_type: 'direct_observation',
+          source_id: 'TF-copy-found',
+        },
+      },
+      {
+        type: 'secret.reveal',
+        id: 'SEC-old-ledger',
+        value: {
+          actor_name: '李四',
+          source_type: 'told_by_actor',
+          source_id: 'TF-ledger-told',
+          source_actor_id: 'AC-zhang',
+          source_actor_name: '张三',
+          confidence: 0.9,
+        },
+      },
+    ],
+    parallel_scenes: [],
+  },
+  2,
+);
+const currentTurnText =
+  '李四核对墨迹后，怀疑粮仓账册可能被人调换。他又掀开账房夹层，发现里面确有一份赊粮副本。张三随后亲口告诉李四：旧账册藏在城南佛塔夹层。';
+const knowledgeTransition = buildTransitionFromOperations(knowledgeBase, knowledgeResult, currentStat, currentTurnText);
+assert.equal(
+  knowledgeTransition.operation_stats.accepted,
+  7,
+  JSON.stringify(knowledgeTransition.operation_stats, null, 2),
+);
+assert.equal(
+  knowledgeTransition.operation_stats.rejected,
+  4,
+  JSON.stringify(knowledgeTransition.operation_stats, null, 2),
+);
+const knowledgeWarnings = knowledgeTransition.operation_stats.warnings.join('\n');
+assert.match(knowledgeWarnings, /CURRENT_TURN 不再直接授予人物知识/);
+assert.match(knowledgeWarnings, /公开信息来源 IN-grain 不存在或尚未公开/);
+assert.match(knowledgeWarnings, /没有证据表明\s*张三\s*已向\s*李四\s*传达该知识/);
+assert.match(knowledgeWarnings, /秘密知情者不全在本轮事实 TF-copy-found 的合法目击者中/);
+
+const knowledgeApplied = applyTransition(
+  knowledgeBase,
+  knowledgeTransition,
+  { messageId: 8, swipeId: 0, hash: 'knowledge-test' },
+  currentStat,
+);
+const updatedLi = knowledgeApplied.actors.find(actor => actor.id === 'AC-li');
+assert.equal(updatedLi.knowledge.includes('粮船已经改道芜湖'), true);
+assert.equal(
+  updatedLi.knowledgeLedger.some(item => item.state === 'suspected' && item.content === '粮仓账册可能被人调换'),
+  true,
+);
+assert.equal(updatedLi.knowledge.includes('皇帝已经秘密南迁'), false);
+assert.equal(
+  knowledgeApplied.actors.find(actor => actor.id === 'AC-zhang').knowledge.includes('粮船已经改道芜湖'),
+  false,
+);
+assert.equal(
+  knowledgeApplied.secrets.some(secret => secret.id === 'SEC-remote-leak'),
+  false,
+);
+assert.equal(updatedLi.doesNotKnow.includes('旧账册藏在城南佛塔夹层'), false);
+assert.equal(knowledgeApplied.secrets.find(secret => secret.id === 'SEC-old-ledger').holders.includes('李四'), true);
+
+const parallelKnowledgeResult = normalizeIncrementalResult(
+  {
+    schema_version: 2,
+    base_revision: knowledgeApplied.revision,
+    operations: [
+      {
+        type: 'knowledge.grant',
+        value: {
+          actor_name: '李四',
+          content: '佛塔梁上刻着米铺暗记',
+          source_type: 'direct_observation',
+          source_id: 'PARALLEL_SCENE_1',
+          confidence: 0.85,
+        },
+      },
+      {
+        type: 'knowledge.grant',
+        value: {
+          actor_name: '李四',
+          content: '佛塔梁上刻着米铺暗记',
+          source_type: 'direct_observation',
+          source_id: 'FAKE_SCENE',
+          confidence: 0.85,
+        },
+      },
+    ],
+    parallel_scenes: [
+      {
+        location: '城南佛塔',
+        time: '夜间',
+        actors: ['李四'],
+        action: '查看梁上暗记',
+        body: '李四举灯细看，发现佛塔梁上刻着米铺暗记。',
+      },
+    ],
+  },
+  knowledgeApplied.revision,
+);
+const parallelKnowledgeTransition = buildTransitionFromOperations(
+  knowledgeApplied,
+  parallelKnowledgeResult,
+  currentStat,
+  '',
+);
+assert.equal(parallelKnowledgeTransition.operation_stats.accepted, 1);
+assert.equal(parallelKnowledgeTransition.operation_stats.rejected, 1);
+assert.match(parallelKnowledgeTransition.operation_stats.warnings[0], /直接观察缺少在场人物或可核对场景/);
+
+// 人物行动 patch 不能再夹带 knowledge，并且已有知识账本不能在行动更新时被清空。
+const smuggledKnowledge = buildTransitionFromOperations(
+  knowledgeApplied,
+  normalizeIncrementalResult(
+    {
+      schema_version: 2,
+      base_revision: knowledgeApplied.revision,
+      operations: [
+        {
+          type: 'actor.patch',
+          id: 'AC-li',
+          set: {
+            name: '李四',
+            current_action: '前往城南佛塔',
+            updated_reason: '收到张三告知',
+            knowledge: ['无来源的额外秘密'],
+          },
+        },
+      ],
+      parallel_scenes: [],
+    },
+    knowledgeApplied.revision,
+  ),
+  currentStat,
+  currentTurnText,
+);
+assert.equal(smuggledKnowledge.operation_stats.accepted, 1);
+assert.equal(smuggledKnowledge.upsert_actors[0].knowledge.includes('无来源的额外秘密'), false);
+const patchedKnowledgeState = applyTransition(
+  knowledgeApplied,
+  smuggledKnowledge,
+  { messageId: 9, swipeId: 0, hash: 'actor-patch-test' },
+  currentStat,
+);
+assert.equal(
+  patchedKnowledgeState.actors
+    .find(actor => actor.id === 'AC-li')
+    .knowledgeLedger.some(item => item.content === '粮船已经改道芜湖'),
+  true,
+);
+
+// 模型字段顺序不应影响依赖：即使 actor.patch 写在 intel.upsert 前，也先结算情报再校验人物行动。
+const dependencyOrderTransition = buildTransitionFromOperations(
+  knowledgeApplied,
+  normalizeIncrementalResult(
+    {
+      schema_version: 2,
+      base_revision: knowledgeApplied.revision,
+      turn_facts: [],
+      operations: [
+        {
+          type: 'actor.patch',
+          id: 'AC-li',
+          set: {
+            name: '李四',
+            current_action: '处理盐船已经抵达渡口的消息',
+            updated_reason: '收到渡口驿报',
+            cause_type: 'received_intel',
+            cause_id: 'IN-order-test',
+            basis_ids: ['IN-order-test'],
+          },
+        },
+        {
+          type: 'intel.upsert',
+          id: 'IN-order-test',
+          value: {
+            content: '盐船已经抵达渡口',
+            origin: '渡口巡丁',
+            destination: '李四',
+            channel: '驿报',
+            status: '已抵达',
+            eta: '本轮',
+            reliability: 0.9,
+            known_by: ['李四'],
+            source_fact_ids: [],
+          },
+        },
+      ],
+      parallel_scenes: [],
+    },
+    knowledgeApplied.revision,
+  ),
+  currentStat,
+  '',
+);
+assert.equal(dependencyOrderTransition.operation_stats.accepted, 2);
+assert.equal(dependencyOrderTransition.operation_stats.rejected, 0);
+assert.equal(dependencyOrderTransition.upsert_actors[0].cause_id, 'IN-order-test');
+
+// 无人目击的玩家行为只改变客观世界：不能瞬间驱动远方人物、情报、知识或旁线。
+const hiddenActionBase = normalizeState(
+  {
+    version: 1,
+    chatId: 'hidden-action-chat',
+    revision: 0,
+    activeEvents: [],
+    actors: [
+      {
+        id: 'AC-wang',
+        name: '王五',
+        location: '城东客栈',
+        goal: '寻找失踪密信',
+        currentAction: '在客栈等待线索',
+        knowledge: [],
+        doesNotKnow: ['苏大郎把密信藏进井台石缝'],
+        nextDecision: '等待可靠消息',
+        updatedReason: '既有档案',
+      },
+    ],
+    intelPackets: [],
+    hooks: [],
+    secrets: [],
+  },
+  'hidden-action-chat',
+);
+const hiddenActionText = '苏大郎趁无人注意，把密信藏进井台石缝。合上石板后，井台石缝表面留下一道新擦痕。';
+const hiddenActionResult = normalizeIncrementalResult(
+  {
+    schema_version: 2,
+    base_revision: 0,
+    turn_facts: [
+      {
+        id: 'TF-hidden-letter',
+        content: '苏大郎把密信藏进井台石缝',
+        visibility: 'private',
+        witnesses: ['王五'],
+        evidence: '苏大郎趁无人注意，把密信藏进井台石缝',
+        location: '井台',
+        physical_result: '密信位于井台石缝，石缝表面留有一道新擦痕',
+        traces: ['井台石缝表面留下一道新擦痕'],
+        discovery_conditions: ['靠近井台检查石缝'],
+      },
+    ],
+    operations: [
+      {
+        type: 'actor.patch',
+        id: 'AC-wang',
+        set: {
+          name: '王五',
+          current_action: '赶往井台取出苏大郎藏下的密信',
+          updated_reason: '发现苏大郎藏信',
+          cause_type: 'observation',
+          cause_id: 'TF-hidden-letter',
+          basis_ids: ['TF-hidden-letter'],
+        },
+      },
+      {
+        type: 'intel.upsert',
+        value: {
+          content: '苏大郎把密信藏进井台石缝',
+          origin: '王五',
+          destination: '城东同党',
+          channel: '口信',
+          status: '已抵达',
+          eta: '立即',
+          reliability: 0.9,
+          known_by: ['王五'],
+          source_fact_ids: ['TF-hidden-letter'],
+        },
+      },
+      {
+        type: 'knowledge.grant',
+        value: {
+          actor_name: '王五',
+          content: '苏大郎把密信藏进井台石缝',
+          source_type: 'direct_observation',
+          source_id: 'TF-hidden-letter',
+          confidence: 0.95,
+        },
+      },
+      {
+        type: 'secret.upsert',
+        value: {
+          title: '密信藏处',
+          content: '苏大郎把密信藏进井台石缝',
+          level: 'high',
+          holders: [],
+          reveal_conditions: ['检查井台石缝并发现痕迹'],
+          status: 'hidden',
+          source_type: 'direct_observation',
+          source_id: 'TF-hidden-letter',
+        },
+      },
+    ],
+    parallel_scenes: [
+      {
+        location: '城东客栈',
+        time: '片刻后',
+        actors: ['王五'],
+        action: '得知藏信地点后动身',
+        body: '王五已经知道苏大郎把密信藏进井台石缝，立刻出门取信。',
+        basis_ids: ['AC-wang'],
+        knowledge_claim_ids: ['TF-hidden-letter'],
+      },
+    ],
+  },
+  0,
+);
+const hiddenActionTransition = buildTransitionFromOperations(
+  hiddenActionBase,
+  hiddenActionResult,
+  currentStat,
+  hiddenActionText,
+);
+assert.equal(
+  hiddenActionTransition.operation_stats.accepted,
+  2,
+  JSON.stringify(hiddenActionTransition.operation_stats),
+);
+assert.equal(
+  hiddenActionTransition.operation_stats.rejected,
+  4,
+  JSON.stringify(hiddenActionTransition.operation_stats),
+);
+assert.equal(hiddenActionTransition.turn_facts[0].visibility, 'private');
+assert.deepEqual(Array.from(hiddenActionTransition.turn_facts[0].witnesses), []);
+assert.equal(hiddenActionTransition.upsert_actors.length, 0);
+assert.equal(hiddenActionTransition.upsert_intel.length, 0);
+assert.equal(hiddenActionTransition.knowledge_updates.length, 0);
+assert.equal(hiddenActionTransition.parallel_scenes.length, 0);
+assert.match(hiddenActionTransition.operation_stats.warnings.join('\n'), /不是本轮事实 TF-hidden-letter 的合法目击者/);
+assert.match(hiddenActionTransition.operation_stats.warnings.join('\n'), /情报起点 王五 不是本轮事实/);
+assert.match(hiddenActionTransition.operation_stats.warnings.join('\n'), /无权使用本轮事实 TF-hidden-letter/);
+
+const hiddenActionApplied = applyTransition(
+  hiddenActionBase,
+  hiddenActionTransition,
+  { messageId: 10, swipeId: 0, hash: 'hidden-action' },
+  currentStat,
+);
+assert.equal(hiddenActionApplied.turnFacts.length, 1);
+assert.equal(hiddenActionApplied.turnFacts[0].witnesses.length, 0);
+assert.equal(hiddenActionApplied.actors[0].knowledge.length, 0);
+assert.equal(hiddenActionApplied.parallelTurns.length, 0);
+const hiddenActionInjection = buildMainModelInjection(hiddenActionApplied, hiddenActionText);
+assert.match(hiddenActionInjection, /无人目击事实「苏大郎把密信藏进井台石缝」/);
+assert.match(hiddenActionInjection, /任何 NPC 当前都不知道/);
+
+// 后续只允许从实际出现的痕迹得到有限结论，不能反推出隐藏行为或行为人。
+const traceDiscoveryResult = normalizeIncrementalResult(
+  {
+    schema_version: 2,
+    base_revision: hiddenActionApplied.revision,
+    turn_facts: [],
+    operations: [
+      {
+        type: 'trace.discover',
+        id: 'TF-hidden-letter',
+        value: {
+          actor_name: '王五',
+          trace: '井台石缝表面留下一道新擦痕',
+          conclusion: '井台石缝最近被人动过',
+          source_type: 'direct_observation',
+          source_id: 'PARALLEL_SCENE_1',
+          confidence: 0.85,
+        },
+      },
+    ],
+    parallel_scenes: [
+      {
+        location: '井台',
+        time: '次日清晨',
+        actors: ['王五'],
+        action: '检查井台石缝',
+        body: '王五察看井台，发现井台石缝表面留下一道新擦痕，只能判断这里最近被人动过。',
+        basis_ids: ['AC-wang'],
+        knowledge_claim_ids: ['TF-hidden-letter'],
+      },
+    ],
+  },
+  hiddenActionApplied.revision,
+);
+const traceDiscoveryTransition = buildTransitionFromOperations(
+  hiddenActionApplied,
+  traceDiscoveryResult,
+  currentStat,
+  '',
+);
+assert.equal(
+  traceDiscoveryTransition.operation_stats.accepted,
+  1,
+  JSON.stringify(traceDiscoveryTransition.operation_stats),
+);
+assert.equal(traceDiscoveryTransition.operation_stats.rejected, 0);
+assert.equal(traceDiscoveryTransition.parallel_scenes.length, 1);
+assert.equal(traceDiscoveryTransition.knowledge_updates[0].content, '井台石缝最近被人动过');
+const traceDiscoveryApplied = applyTransition(
+  hiddenActionApplied,
+  traceDiscoveryTransition,
+  { messageId: 11, swipeId: 0, hash: 'trace-discovery' },
+  currentStat,
+);
+assert.equal(traceDiscoveryApplied.actors[0].knowledge.includes('井台石缝最近被人动过'), true);
+assert.equal(traceDiscoveryApplied.actors[0].knowledge.includes('苏大郎把密信藏进井台石缝'), false);
+assert.equal(traceDiscoveryApplied.turnFacts[0].discoveredBy[0].actorName, '王五');
 
 const invalid = normalizeIncrementalResult(
   {
@@ -670,5 +1298,37 @@ const generated = await callWorldModel(
 assert.equal(generationCalls, 1);
 assert.equal(generated.operations[0].value.name, '沈大柱');
 
-assert.match(fullSource, /const VERSION = '1\.7\.5'/);
-console.info('天下演化测试通过：供应商包装、稳定 ID 派生、语义 ID 回绑、持续状态注入、旧档迁移与无效操作均已覆盖。');
+let cancelledGenerationId = '';
+sandbox.stopGenerationById = generationId => {
+  cancelledGenerationId = generationId;
+};
+sandbox.generateRaw = () => new Promise(() => {});
+const cancelledJob = {
+  generationId: 'cwe-cancel-test',
+  cancelled: false,
+};
+runtime.activeJob = cancelledJob;
+const cancelledRequest = callWorldModel(
+  {
+    baseRevision: 0,
+    currentTurn: { assistantOutput: '' },
+    canonicalState: emptyState(),
+  },
+  cancelledJob.generationId,
+  null,
+  '',
+  cancelledJob,
+);
+cancelActiveJob('测试主动取消');
+await assert.rejects(cancelledRequest, error => error?.code === 'CWE_CANCELLED');
+assert.equal(cancelledGenerationId, cancelledJob.generationId);
+assert.equal(cancelledJob.cancelled, true);
+
+assert.match(fullSource, /const VERSION = '1\.7\.8'/);
+assert.match(fullSource, /requestTimeoutMs: 90000/);
+assert.match(fullSource, /data-setting="requestTimeoutSeconds"/);
+assert.match(fullSource, /data-banner-action="cancel"/);
+assert.match(fullSource, /stopGenerationById/);
+console.info(
+  '天下演化测试通过：供应商包装、稳定 ID、知识传播、秘密白名单、无人目击事实、痕迹发现、持续状态注入、自定义超时、主动取消、旧档迁移与本地因果校验均已覆盖。',
+);
