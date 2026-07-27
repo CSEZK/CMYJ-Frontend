@@ -6,7 +6,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 (() => {
   'use strict';
 
-  const VERSION = '1.7.9';
+  const VERSION = '1.7.10';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -86,6 +86,18 @@ import integratedStyles from './styles-integrated.raw?raw';
     softKnowledgeFacts: 8,
     itemChars: 240,
     knowledgeFactChars: 160,
+  });
+
+  const WORLD_MODEL_BUDGET = Object.freeze({
+    maxPromptChars: 42000,
+    maxOutputTokens: 8000,
+    payloadChars: 15000,
+    snapshotChars: 9000,
+    worldInfoChars: 7000,
+    assistantOutputChars: 9000,
+    userIntentChars: 3000,
+    recentMessages: 3,
+    recentMessageChars: 2400,
   });
 
   const runtime = {
@@ -914,6 +926,39 @@ import integratedStyles from './styles-integrated.raw?raw';
       .map(item => item.record);
   }
 
+  function promptExcerpt(value, maxChars) {
+    const text = asText(value);
+    const limit = Math.max(0, Number(maxChars) || 0);
+    if (!limit) return '';
+    if (text.length <= limit) return text;
+    const marker = '\n…（已按天下演化请求预算省略中段）…\n';
+    const available = Math.max(0, limit - marker.length);
+    const headLength = Math.ceil(available * 0.62);
+    return `${text.slice(0, headLength)}${marker}${text.slice(-(available - headLength))}`;
+  }
+
+  function compactPromptValue(value, depth = 0) {
+    if (typeof value === 'string') return promptExcerpt(value, depth <= 1 ? 420 : 280);
+    if (Array.isArray(value)) return value.slice(-8).map(item => compactPromptValue(item, depth + 1));
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(
+      Object.entries(value)
+        .slice(0, 18)
+        .map(([key, item]) => [key, compactPromptValue(item, depth + 1)]),
+    );
+  }
+
+  function projectPromptRecord(record, fields) {
+    if (!record || typeof record !== 'object') return record;
+    return Object.fromEntries(
+      fields.filter(field => record[field] !== undefined).map(field => [field, compactPromptValue(record[field], 1)]),
+    );
+  }
+
+  function projectPromptRecords(records, fields) {
+    return asArray(records).map(record => projectPromptRecord(record, fields));
+  }
+
   function rotateRecords(records, revision, limit) {
     const source = asArray(records);
     if (source.length <= limit) return source;
@@ -949,15 +994,21 @@ import integratedStyles from './styles-integrated.raw?raw';
       'nextDecision',
     ];
     const eventFields = ['id', 'title', 'location', 'actors', 'summary', 'nextTrigger'];
-    const actors = mergeRecords(
-      selectRelevantRecords(state.actors, currentText, 2, actorFields),
-      rotateRecords(state.actors, state.revision, 4),
-      4,
+    const actors = projectPromptRecords(
+      mergeRecords(
+        selectRelevantRecords(state.actors, currentText, 2, actorFields),
+        rotateRecords(state.actors, state.revision, 4),
+        4,
+      ),
+      actorFields,
     );
-    const activeEvents = mergeRecords(
-      selectRelevantRecords(state.activeEvents, currentText, 2, eventFields),
-      rotateRecords(state.activeEvents, state.revision + 1, 3),
-      3,
+    const activeEvents = projectPromptRecords(
+      mergeRecords(
+        selectRelevantRecords(state.activeEvents, currentText, 2, eventFields),
+        rotateRecords(state.activeEvents, state.revision + 1, 3),
+        3,
+      ),
+      eventFields,
     );
     return {
       policy:
@@ -968,60 +1019,55 @@ import integratedStyles from './styles-integrated.raw?raw';
   }
 
   function compactStateForPrompt(state, currentText, autonomyFocus) {
+    const eventFields = ['id', 'title', 'location', 'actors', 'summary'];
+    const actorFields = [
+      'id',
+      'name',
+      'location',
+      'goal',
+      'currentAction',
+      'knowledge',
+      'doesNotKnow',
+      'knowledgeLedger',
+      'causeType',
+      'causeId',
+      'basisIds',
+    ];
+    const intelFields = ['id', 'content', 'origin', 'destination', 'knownBy', 'sourceFactIds'];
+    const hookFields = ['id', 'title', 'summary', 'visibleSigns', 'trigger'];
+    const secretFields = ['id', 'title', 'content', 'holders', 'revealConditions', 'status'];
+    const turnFactFields = ['id', 'alias', 'content', 'physicalResult', 'traces', 'witnesses', 'discoveredBy'];
     return {
       revision: state.revision,
-      activeEvents: mergeRecords(
-        selectRelevantRecords(state.activeEvents, currentText, 8, ['id', 'title', 'location', 'actors', 'summary']),
-        autonomyFocus?.activeEvents,
-        10,
+      activeEvents: projectPromptRecords(
+        mergeRecords(
+          selectRelevantRecords(state.activeEvents, currentText, 8, eventFields),
+          autonomyFocus?.activeEvents,
+          10,
+        ),
+        eventFields,
       ),
-      actors: mergeRecords(
-        selectRelevantRecords(state.actors, currentText, 10, [
-          'id',
-          'name',
-          'location',
-          'goal',
-          'currentAction',
-          'knowledge',
-          'doesNotKnow',
-          'knowledgeLedger',
-          'causeType',
-          'causeId',
-          'basisIds',
-        ]),
-        autonomyFocus?.actors,
-        12,
+      actors: projectPromptRecords(
+        mergeRecords(selectRelevantRecords(state.actors, currentText, 10, actorFields), autonomyFocus?.actors, 12),
+        actorFields,
       ),
-      intelPackets: selectRelevantRecords(state.intelPackets, currentText, 10, [
-        'id',
-        'content',
-        'origin',
-        'destination',
-        'knownBy',
-        'sourceFactIds',
-      ]),
-      hooks: selectRelevantRecords(state.hooks, currentText, 8, ['id', 'title', 'summary', 'visibleSigns', 'trigger']),
-      secrets: mergeRecords(
-        selectRelevantRecords(state.secrets, currentText, 12, [
-          'id',
-          'title',
-          'content',
-          'holders',
-          'revealConditions',
-          'status',
-        ]),
-        asArray(state.secrets).filter(item => ['critical', 'high'].includes(asText(item?.level))),
-        16,
+      intelPackets: projectPromptRecords(
+        selectRelevantRecords(state.intelPackets, currentText, 10, intelFields),
+        intelFields,
       ),
-      turnFacts: selectRelevantRecords(state.turnFacts, currentText, 16, [
-        'id',
-        'alias',
-        'content',
-        'physicalResult',
-        'traces',
-        'witnesses',
-        'discoveredBy',
-      ]),
+      hooks: projectPromptRecords(selectRelevantRecords(state.hooks, currentText, 8, hookFields), hookFields),
+      secrets: projectPromptRecords(
+        mergeRecords(
+          selectRelevantRecords(state.secrets, currentText, 12, secretFields),
+          asArray(state.secrets).filter(item => ['critical', 'high'].includes(asText(item?.level))),
+          16,
+        ),
+        secretFields,
+      ),
+      turnFacts: projectPromptRecords(
+        selectRelevantRecords(state.turnFacts, currentText, 16, turnFactFields),
+        turnFactFields,
+      ),
       scenePresence: normalizeScenePresence(state.scenePresence),
     };
   }
@@ -1290,7 +1336,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 6. knowledge.grant/suspect/mislead/correct 必须写明人物、内容、source_type、source_id 与 confidence。引用本轮正文时 source_id 必须使用对应 turn_facts 的 TF-* 本地别名，禁止使用 CURRENT_TURN。引用本次返回的第 N 段旁线可用 PARALLEL_SCENE_N。told_by_actor 还必须填写 source_actor_id/source_actor_name，且告知者本身必须合法知情。
 7. 每个 actor.upsert/patch 都要给 cause_type、cause_id 与 basis_ids。cause_type 只能是 autonomous、observation、knowledge、received_intel、event、elapsed_time；对玩家本轮行为作出反应时必须引用获准目击的 TF-*、已抵达情报、人物已知条目或事件，不能用“听说”“感觉”绕过。
 8. secret.upsert 用于登记容易被模型越权使用的重要秘密，必须提供知情者、解锁条件和证据来源；引用本轮正文也必须使用 TF-*。secret.reveal 只向通过来源校验的人物揭示秘密。
-9. 情报必须有起点、终点、渠道、状态和抵达时间；人物不能无渠道获得消息。
+9. 情报必须有起点、终点、渠道、状态和抵达时间；人物不能无渠道获得消息。引用 local_public 事实时，起点可以是现场合法目击者，也可以是“某地邻里传闻、坊间议论、官府告示”等明确的当地公共渠道；其他可见级别仍必须从合法知情者出发。
 10. 伏线只记录有明确触发条件或失效条件的延迟后果，不记录一般剧情摘要。
 
 三、视野外人物自主行动
@@ -1630,11 +1676,63 @@ import integratedStyles from './styles-integrated.raw?raw';
     };
   }
 
-  function customApiConfig() {
+  function compactWorldModelPayload(payload, promptSnapshot) {
+    const compacted = clone(payload);
+    compacted.currentTurn ??= {};
+    compacted.currentTurn.userInputAsIntentOnly = promptExcerpt(
+      compacted.currentTurn.userInputAsIntentOnly,
+      WORLD_MODEL_BUDGET.userIntentChars,
+    );
+    compacted.currentTurn.assistantOutput = promptExcerpt(
+      compacted.currentTurn.assistantOutput,
+      WORLD_MODEL_BUDGET.assistantOutputChars,
+    );
+    compacted.currentTurn.mvuChanges = compactPromptValue(compacted.currentTurn.mvuChanges, 1);
+    compacted.sceneEvidence = compactPromptValue(compacted.sceneEvidence, 1);
+    compacted.autonomyFocus = compactPromptValue(compacted.autonomyFocus, 1);
+    compacted.canonicalState = compactPromptValue(compacted.canonicalState, 1);
+    if (promptSnapshot) {
+      delete compacted.recentContextReadOnly;
+    } else {
+      compacted.recentContextReadOnly = asArray(compacted.recentContextReadOnly)
+        .slice(-WORLD_MODEL_BUDGET.recentMessages)
+        .map(message => ({
+          messageId: message?.messageId,
+          role: message?.role,
+          content: promptExcerpt(message?.content, WORLD_MODEL_BUDGET.recentMessageChars),
+        }));
+    }
+
+    if (JSON.stringify(compacted).length > WORLD_MODEL_BUDGET.payloadChars) {
+      compacted.currentTurn.assistantOutput = promptExcerpt(compacted.currentTurn.assistantOutput, 6500);
+      compacted.currentTurn.userInputAsIntentOnly = promptExcerpt(compacted.currentTurn.userInputAsIntentOnly, 1800);
+      compacted.recentContextReadOnly = asArray(compacted.recentContextReadOnly)
+        .slice(-2)
+        .map(message => ({ ...message, content: promptExcerpt(message?.content, 1600) }));
+      for (const key of ['activeEvents', 'actors', 'intelPackets', 'hooks', 'secrets', 'turnFacts']) {
+        if (Array.isArray(compacted.canonicalState?.[key])) {
+          compacted.canonicalState[key] = compacted.canonicalState[key].slice(0, 6);
+        }
+      }
+    }
+
+    if (JSON.stringify(compacted).length > WORLD_MODEL_BUDGET.payloadChars) {
+      compacted.currentTurn.assistantOutput = promptExcerpt(compacted.currentTurn.assistantOutput, 4500);
+      compacted.autonomyFocus = compactPromptValue(compacted.autonomyFocus, 2);
+      for (const key of ['activeEvents', 'actors', 'intelPackets', 'hooks', 'secrets', 'turnFacts']) {
+        if (Array.isArray(compacted.canonicalState?.[key])) {
+          compacted.canonicalState[key] = compacted.canonicalState[key].slice(0, 3);
+        }
+      }
+    }
+    return compacted;
+  }
+
+  function customApiConfig(maxTokens = settings.maxTokens) {
     if (settings.connectionMode !== 'custom') {
       return {
         temperature: settings.temperature,
-        max_tokens: settings.maxTokens,
+        max_tokens: maxTokens,
       };
     }
     if (!settings.apiUrl) throw new Error('独立 API 模式尚未填写 API 地址。');
@@ -1644,7 +1742,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       ...(settings.model ? { model: settings.model } : {}),
       source: settings.apiSource || 'openai',
       temperature: settings.temperature,
-      max_tokens: settings.maxTokens,
+      max_tokens: maxTokens,
     };
   }
 
@@ -2261,7 +2359,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     asArray(result.anBefore).forEach(item => add('【世界书·作者注释前】', item));
     asArray(result.anAfter).forEach(item => add('【世界书·作者注释后】', item));
     if (!structuredValues.some(worldInfoItemContent)) add('【世界书·补充】', result.worldInfoString);
-    return sections.join('\n\n').slice(0, 32000);
+    return promptExcerpt(sections.join('\n\n'), WORLD_MODEL_BUDGET.worldInfoChars);
   }
 
   function worldInfoScanMessages(payload) {
@@ -2316,39 +2414,74 @@ import integratedStyles from './styles-integrated.raw?raw';
     }
   }
 
+  function compactPromptSnapshotPrompts(promptSnapshot, assistantOutput, maxChars) {
+    const source = asArray(promptSnapshot?.prompts)
+      .map((prompt, index) => ({ ...prompt, index, content: asText(prompt?.content) }))
+      .filter(prompt => ['system', 'user', 'assistant'].includes(prompt.role) && prompt.content);
+    if (!source.length || maxChars < 300) return [];
+    const normalizedReply = normalizedKnowledgeText(assistantOutput);
+    const isCurrentReply = prompt => {
+      if (prompt.role !== 'assistant' || normalizedReply.length < 20) return false;
+      const content = normalizedKnowledgeText(prompt.content);
+      return content.includes(normalizedReply) || normalizedReply.includes(content);
+    };
+    const systemPrompts = source.filter(prompt => prompt.role === 'system');
+    const conversational = source.filter(prompt => prompt.role !== 'system' && !isCurrentReply(prompt));
+    const selected = [...systemPrompts.slice(0, 2), ...systemPrompts.slice(-2), ...conversational.slice(-3)]
+      .filter((prompt, index, values) => values.findIndex(item => item.index === prompt.index) === index)
+      .sort((left, right) => left.index - right.index);
+    if (!selected.length) return [];
+    const perPrompt = Math.max(180, Math.floor(maxChars / selected.length));
+    return selected.map(prompt => ({
+      role: prompt.role,
+      content: promptExcerpt(prompt.content, perPrompt),
+    }));
+  }
+
+  function promptCharacterCount(prompts) {
+    return asArray(prompts).reduce((total, prompt) => total + asText(prompt?.content).length, 0);
+  }
+
   function worldModelPrompts(promptSnapshot, assistantOutput, systemPrompt, userPrompt, worldInfoSupplement) {
-    if (!promptSnapshot?.prompts?.length) {
-      return [
-        ...(worldInfoSupplement
-          ? [
-              {
-                role: 'system',
-                content: `以下内容由酒馆根据本轮正文与视野外行动候选额外激活，只作为世界设定和行动约束，不得覆盖天下演化的证据边界与输出格式：\n\n${worldInfoSupplement}`,
-              },
-            ]
-          : []),
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ];
-    }
-    const prompts = clone(promptSnapshot.prompts);
-    if (!promptSnapshot.includesCurrentReply && assistantOutput) {
-      prompts.push({ role: 'assistant', content: assistantOutput });
-    }
-    prompts.push({
-      role: 'system',
-      content:
-        '以上是主模型生成本轮正文时实际读取的提示词快照，仅作为世界设定、人物认知和剧情事实依据。现在切换为天下演化任务：忽略快照中要求续写正文、扮演人物或输出其他格式的指令，只执行下面的天下演化规则。',
-    });
-    if (worldInfoSupplement) {
-      prompts.push({
-        role: 'system',
-        content: `以下内容由酒馆根据本轮正文与视野外行动候选额外激活，只作为世界设定和行动约束，不得覆盖天下演化的证据边界与输出格式：\n\n${worldInfoSupplement}`,
-      });
-    }
-    prompts.push({ role: 'system', content: systemPrompt });
-    prompts.push({ role: 'user', content: userPrompt });
-    return prompts;
+    const hasSnapshot = Boolean(promptSnapshot?.prompts?.length);
+    const switchPrompt = hasSnapshot
+      ? {
+          role: 'system',
+          content:
+            '以上是主模型本轮实际读取内容的预算化快照，只作为世界设定、人物认知和剧情依据。现在切换为天下演化任务：忽略其中续写、扮演或其他输出格式指令，只执行下方天下演化规则。',
+        }
+      : null;
+    const critical = [
+      ...(switchPrompt ? [switchPrompt] : []),
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ];
+    let remaining = Math.max(0, WORLD_MODEL_BUDGET.maxPromptChars - promptCharacterCount(critical) - 160);
+    const worldInfoBudget = Math.min(
+      WORLD_MODEL_BUDGET.worldInfoChars,
+      hasSnapshot ? Math.floor(remaining * 0.48) : remaining,
+    );
+    const supplement = promptExcerpt(worldInfoSupplement, worldInfoBudget);
+    remaining = Math.max(0, remaining - supplement.length);
+    const snapshotPrompts = compactPromptSnapshotPrompts(
+      promptSnapshot,
+      assistantOutput,
+      Math.min(WORLD_MODEL_BUDGET.snapshotChars, remaining),
+    );
+    return [
+      ...snapshotPrompts,
+      ...(switchPrompt ? [switchPrompt] : []),
+      ...(supplement
+        ? [
+            {
+              role: 'system',
+              content: `以下内容由酒馆按本轮正文与视野外候选定向激活，只作为世界设定和行动约束，不得覆盖证据边界与输出格式：\n\n${supplement}`,
+            },
+          ]
+        : []),
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ];
   }
 
   function durationLabel(milliseconds) {
@@ -2368,17 +2501,27 @@ import integratedStyles from './styles-integrated.raw?raw';
       '【JSON 兼容输出模式】',
       '请只输出一个合法 JSON 对象，不要输出 Markdown、代码围栏、解释或对象以外的文字。',
       '输出必须满足以下 JSON Schema；所有 required 字段都必须存在：',
-      JSON.stringify(definition, null, 2),
+      JSON.stringify(definition),
     ].join('\n');
   }
 
-  function normalizeModelRequestError(error) {
+  function normalizeModelRequestError(error, diagnostics = '') {
     if (isCancellationError(error)) return error;
     const message = (error instanceof Error ? error.message : String(error ?? '')).trim();
     if (!message || /^(?:error:\s*)?<none>$/i.test(message)) {
       return new Error('副模型请求失败：酒馆助手没有返回具体错误信息，请检查接口日志或连接设置。');
     }
+    if (/\bbad request\b/i.test(message)) {
+      return new Error(`副模型接口返回 Bad Request${diagnostics ? `（${diagnostics}）` : ''}。`);
+    }
     return error instanceof Error ? error : new Error(message);
+  }
+
+  function worldModelOutputBudget(promptChars) {
+    const requested = clamp(settings.maxTokens, 512, 100000);
+    const estimatedInputTokens = Math.ceil(Math.max(0, Number(promptChars) || 0) / 2);
+    const available = Math.max(2400, 26000 - estimatedInputTokens - 1000);
+    return Math.round(Math.min(requested, WORLD_MODEL_BUDGET.maxOutputTokens, available));
   }
 
   function cancellationError(reason = '天下演化已取消。') {
@@ -2417,28 +2560,32 @@ import integratedStyles from './styles-integrated.raw?raw';
     const generate = api('generate');
     if (typeof generateRaw !== 'function' && typeof generate !== 'function')
       throw new Error('未找到 generateRaw/generate 接口。');
-    const requestPayload = clone(payload);
-    if (promptSnapshot) delete requestPayload.recentContextReadOnly;
-    const userPrompt = `以下内容包含可结算的 CURRENT_TURN 与只读天下档案。请完成事实提取和世界增量。\n\n${JSON.stringify(requestPayload, null, 2)}`;
-    const customApi = customApiConfig();
+    const requestPayload = compactWorldModelPayload(payload, promptSnapshot);
+    const userPrompt = `以下内容包含可结算的 CURRENT_TURN 与只读天下档案。请完成事实提取和世界增量。\n\n${JSON.stringify(requestPayload)}`;
     const schema = incrementalOutputSchema();
     const schemaPrompt = jsonSchemaCompatibilityPrompt(schema);
     let lastError;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const retryHint = attempt ? '\n\n上次输出未通过解析。此次必须严格只返回满足上述 Schema 的 JSON 对象。' : '';
       const requestUserPrompt = `${userPrompt}${schemaPrompt}${retryHint}`;
+      const orderedPrompts = worldModelPrompts(
+        promptSnapshot,
+        payload.currentTurn?.assistantOutput || '',
+        incrementalSystemPrompt(),
+        requestUserPrompt,
+        worldInfoSupplement,
+      );
+      const promptChars = promptCharacterCount(orderedPrompts);
+      const outputTokens = worldModelOutputBudget(promptChars);
+      const customApi = customApiConfig(outputTokens);
+      const requestDiagnostics = `提示词约 ${promptChars} 字符，输出上限 ${outputTokens} tokens`;
       const config = {
         generation_id: generationId,
         should_silence: true,
-        ordered_prompts: worldModelPrompts(
-          promptSnapshot,
-          payload.currentTurn?.assistantOutput || '',
-          incrementalSystemPrompt(),
-          requestUserPrompt,
-          worldInfoSupplement,
-        ),
+        ordered_prompts: orderedPrompts,
       };
       config.custom_api = customApi;
+      console.info(`[天下演化] 请求预算：${requestDiagnostics}。`);
       try {
         runtime.worldRequestActive = true;
         const request =
@@ -2447,7 +2594,9 @@ import integratedStyles from './styles-integrated.raw?raw';
             : generate({
                 generation_id: generationId,
                 should_silence: true,
-                user_input: `${worldInfoSupplement ? `酒馆额外激活的世界书设定与行动约束：\n${worldInfoSupplement}\n\n` : ''}${incrementalSystemPrompt()}\n\n${requestUserPrompt}`,
+                user_input: orderedPrompts
+                  .map(prompt => `【${prompt.role.toUpperCase()}】\n${prompt.content}`)
+                  .join('\n\n'),
                 custom_api: customApi,
               });
         let timeoutId;
@@ -2496,7 +2645,7 @@ import integratedStyles from './styles-integrated.raw?raw';
         }
         return normalized;
       } catch (error) {
-        lastError = normalizeModelRequestError(error);
+        lastError = normalizeModelRequestError(error, requestDiagnostics);
         const message = lastError.message;
         const canRetry = /JSON|Schema|结构|工具调用|解析/i.test(message);
         if (!canRetry) break;
@@ -3134,6 +3283,47 @@ import integratedStyles from './styles-integrated.raw?raw';
     return Boolean(needle.length >= 4 && haystack.includes(needle));
   }
 
+  function sharedEvidenceFragmentScore(left, right) {
+    const first = normalizedKnowledgeText(left);
+    const second = normalizedKnowledgeText(right);
+    if (!first || !second) return 0;
+    const sample = first.length <= second.length ? first : second;
+    const target = first.length <= second.length ? second : first;
+    if (sample.length < 4) return 0;
+    const fragments = new Set();
+    for (let index = 0; index <= sample.length - 4; index += 2) fragments.add(sample.slice(index, index + 4));
+    let score = 0;
+    for (const fragment of fragments) {
+      if (target.includes(fragment)) score += 1;
+    }
+    return score;
+  }
+
+  function recoverTurnFactEvidence(currentTurnText, candidate) {
+    if (evidenceAppearsVerbatim(currentTurnText, candidate?.evidence)) return asText(candidate.evidence);
+    const targets = [
+      candidate?.evidence,
+      candidate?.content,
+      candidate?.physical_result,
+      ...asArray(candidate?.traces),
+    ].filter(Boolean);
+    const sentences = asText(currentTurnText)
+      .match(/[^。！？!?；;\n]+[。！？!?；;]?/gu)
+      ?.map(sentence => sentence.trim())
+      .filter(sentence => normalizedKnowledgeText(sentence).length >= 4);
+    let best = null;
+    for (const sentence of sentences || []) {
+      const score = targets.reduce(
+        (total, target) =>
+          total + sharedEvidenceFragmentScore(sentence, target) * 2 + Number(textsStronglyRelated(sentence, target)),
+        0,
+      );
+      if (!best || score > best.score) best = { sentence, score };
+    }
+    if (!best || best.score < 2) return '';
+    return best.sentence.slice(0, 600);
+  }
+
   function turnFactText(fact) {
     return [
       asText(fact?.content),
@@ -3181,10 +3371,12 @@ import integratedStyles from './styles-integrated.raw?raw';
         warnings.push(`turn_fact ${alias}：visibility=${candidate.visibility || '空'} 无效`);
         continue;
       }
-      if (!candidate.evidence || !evidenceAppearsVerbatim(currentTurnText, candidate.evidence)) {
+      const verifiedEvidence = recoverTurnFactEvidence(currentTurnText, candidate);
+      if (!verifiedEvidence) {
         warnings.push(`turn_fact ${alias}：evidence 不是 assistantOutput 中可核对的原句`);
         continue;
       }
+      candidate.evidence = verifiedEvidence;
       if (
         !knowledgeTextsRelated(currentTurnText, candidate.content) &&
         !knowledgeTextsRelated(currentTurnText, candidate.physical_result)
@@ -3360,25 +3552,24 @@ import integratedStyles from './styles-integrated.raw?raw';
     );
     const sourceFactIds = uniqueTextList(record?.source_fact_ids || record?.sourceFactIds, 16, 100);
     const declaredFacts = sourceFactIds.map(id => findTurnFact(baseState, transition, id)).filter(Boolean);
-    if (declaredFacts.length !== sourceFactIds.length) return 'source_fact_ids 引用了不存在的本轮事实';
-    record.source_fact_ids = sourceFactIds.map(id => findTurnFact(baseState, transition, id)?.id || id);
-    const unclaimed = relatedFacts.filter(
-      fact =>
-        !sourceFactIds.some(
-          id => String(id) === String(fact?.id) || comparableIdentity(id) === comparableIdentity(fact?.alias),
-        ),
+    const boundFacts = [...declaredFacts, ...relatedFacts].filter(
+      (fact, index, values) => values.findIndex(item => String(item?.id) === String(fact?.id)) === index,
     );
-    if (unclaimed.length) {
-      return `内容使用了本轮事实 ${unclaimed.map(fact => fact.alias || fact.id).join('、')}，但未写入 source_fact_ids`;
-    }
-    if (type.startsWith('intel.') && declaredFacts.length) {
+    record.source_fact_ids = boundFacts.map(fact => fact.id);
+    if (type.startsWith('intel.') && boundFacts.length) {
       const origin = asText(record?.origin);
-      for (const fact of declaredFacts) {
-        const originAuthorized = asArray(fact?.witnesses).some(
+      for (const fact of boundFacts) {
+        const witnessAuthorized = asArray(fact?.witnesses).some(
           witness =>
             comparableIdentity(witness) === comparableIdentity(origin) ||
             (witness.length >= 2 && origin.includes(witness)),
         );
+        const publicCollectiveOrigin =
+          asText(fact?.visibility) === 'local_public' &&
+          /(?:传闻|邻里|街坊|坊间|市井|百姓|人群|众人|商户|伙计|客商|香客|乡民|村民|居民|告示|官差|衙门|公议|口耳)/u.test(
+            origin,
+          );
+        const originAuthorized = witnessAuthorized || publicCollectiveOrigin;
         if (!originAuthorized) {
           return `情报起点 ${origin || '未明'} 不是本轮事实 ${fact.alias || fact.id} 的合法知情者`;
         }

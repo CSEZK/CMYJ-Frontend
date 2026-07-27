@@ -1255,6 +1255,98 @@ assert.equal(traceDiscoveryApplied.actors[0].knowledge.includes('井台石缝最
 assert.equal(traceDiscoveryApplied.actors[0].knowledge.includes('苏大郎把密信藏进井台石缝'), false);
 assert.equal(traceDiscoveryApplied.turnFacts[0].discoveredBy[0].actorName, '王五');
 
+// 模型把 evidence 改写成近义句、写错 TF 别名或使用“邻里传闻”作为公开消息起点时，本地应修复引用而非误删。
+const repairableFactBase = normalizeState(
+  {
+    version: 1,
+    chatId: 'repairable-fact-chat',
+    revision: 0,
+    activeEvents: [],
+    actors: [
+      {
+        id: 'AC-li-si',
+        name: '李四',
+        location: '西街',
+        goal: '维持街面秩序',
+        currentAction: '在西街巡查',
+        knowledge: [],
+        doesNotKnow: [],
+        nextDecision: '留意城门动静',
+        updatedReason: '既有档案',
+      },
+    ],
+    intelPackets: [],
+    hooks: [],
+    secrets: [],
+  },
+  'repairable-fact-chat',
+);
+const repairableFactText = '李四站在西街高声宣布：城门今夜提前关闭。围观的街坊听后纷纷议论。';
+const repairableFactTransition = buildTransitionFromOperations(
+  repairableFactBase,
+  normalizeIncrementalResult(
+    {
+      schema_version: 2,
+      base_revision: 0,
+      turn_facts: [
+        {
+          id: 'TF-local',
+          content: '城门今夜提前关闭',
+          visibility: 'local_public',
+          witnesses: ['李四'],
+          evidence: '李四在西街宣布今晚会提早关闭城门',
+          location: '西街',
+          physical_result: '城门关闭时间提前',
+          traces: ['西街街坊开始议论'],
+          discovery_conditions: [],
+        },
+      ],
+      operations: [
+        {
+          type: 'event.upsert',
+          value: {
+            title: '城门提前关闭',
+            stage: '本轮',
+            status: '进行中',
+            location: '西街',
+            actors: ['李四'],
+            summary: '城门今夜提前关闭，街面通行时间缩短。',
+            next_trigger: '闭门时刻到来',
+            source_fact_ids: ['TF-does-not-exist'],
+          },
+        },
+        {
+          type: 'intel.upsert',
+          value: {
+            content: '城门今夜提前关闭',
+            origin: '西街邻里传闻',
+            destination: '城中各坊',
+            channel: '口耳相传',
+            status: '传播中',
+            eta: '一个时辰后',
+            reliability: 0.85,
+            known_by: [],
+            source_fact_ids: ['TF-local'],
+          },
+        },
+      ],
+      parallel_scenes: [],
+    },
+    0,
+  ),
+  currentStat,
+  repairableFactText,
+);
+assert.equal(repairableFactTransition.turn_facts.length, 1);
+assert.equal(repairableFactTransition.turn_facts[0].evidence, '李四站在西街高声宣布：城门今夜提前关闭。');
+assert.equal(
+  repairableFactTransition.operation_stats.rejected,
+  0,
+  JSON.stringify(repairableFactTransition.operation_stats),
+);
+assert.equal(repairableFactTransition.upsert_events[0].source_fact_ids.length, 1);
+assert.equal(repairableFactTransition.upsert_intel[0].source_fact_ids.length, 1);
+
 const invalid = normalizeIncrementalResult(
   {
     schema_version: 2,
@@ -1310,6 +1402,50 @@ assert.match(
   '天下演化必须把结构约束写入提示词',
 );
 assert.match(normalizeModelRequestError(new Error('<none>')).message, /没有返回具体错误信息/);
+assert.match(
+  normalizeModelRequestError(new Error('Bad Request'), '提示词约 42000 字符，输出上限 4000 tokens').message,
+  /提示词约 42000 字符/,
+);
+
+const oversizedContext = '天下设定与人物档案。'.repeat(12000);
+await callWorldModel(
+  {
+    baseRevision: 0,
+    currentTurn: {
+      assistantOutput: '本轮正文。'.repeat(6000),
+      userInputAsIntentOnly: '玩家意图。'.repeat(3000),
+      mvuChanges: [],
+    },
+    recentContextReadOnly: [{ role: 'assistant', content: oversizedContext }],
+    canonicalState: {
+      actors: Array.from({ length: 30 }, (_, index) => ({
+        id: `AC-${index}`,
+        name: `人物${index}`,
+        knowledge: Array.from({ length: 30 }, () => oversizedContext.slice(0, 500)),
+      })),
+    },
+  },
+  'cwe-budget-test',
+  {
+    prompts: [
+      { role: 'system', content: oversizedContext },
+      { role: 'user', content: oversizedContext },
+      { role: 'assistant', content: oversizedContext },
+    ],
+    includesCurrentReply: true,
+  },
+  oversizedContext,
+);
+const budgetedPromptChars = sandbox.__lastWorldModelConfig.ordered_prompts.reduce(
+  (total, prompt) => total + String(prompt.content || '').length,
+  0,
+);
+assert.ok(budgetedPromptChars <= 42000, `提示词预算失效：${budgetedPromptChars}`);
+assert.ok(sandbox.__lastWorldModelConfig.custom_api.max_tokens <= 8000);
+assert.match(
+  sandbox.__lastWorldModelConfig.ordered_prompts.map(prompt => prompt.content).join('\n'),
+  /已按天下演化请求预算省略中段/,
+);
 
 let cancelledGenerationId = '';
 sandbox.stopGenerationById = generationId => {
@@ -1337,12 +1473,12 @@ await assert.rejects(cancelledRequest, error => error?.code === 'CWE_CANCELLED')
 assert.equal(cancelledGenerationId, cancelledJob.generationId);
 assert.equal(cancelledJob.cancelled, true);
 
-assert.match(fullSource, /const VERSION = '1\.7\.9'/);
+assert.match(fullSource, /const VERSION = '1\.7\.10'/);
 assert.match(fullSource, /requestTimeoutMs: 90000/);
 assert.match(fullSource, /data-setting="requestTimeoutSeconds"/);
 assert.match(fullSource, /data-banner-action="cancel"/);
 assert.match(fullSource, /stopGenerationById/);
 assert.doesNotMatch(fullSource, /json_schema:\s*schema/);
 console.info(
-  '天下演化测试通过：通用提示词 Schema、供应商包装、稳定 ID、知识传播、秘密白名单、无人目击事实、痕迹发现、持续状态注入、自定义超时、主动取消、旧档迁移与本地因果校验均已覆盖。',
+  '天下演化测试通过：请求预算、通用提示词 Schema、供应商包装、稳定 ID、事实引用修复、公共传闻、知识传播、秘密白名单、无人目击事实、痕迹发现、持续状态注入、自定义超时、主动取消、旧档迁移与本地因果校验均已覆盖。',
 );
