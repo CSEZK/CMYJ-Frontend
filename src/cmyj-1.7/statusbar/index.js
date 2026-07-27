@@ -4979,22 +4979,20 @@ async function uninstallCurrentScenario() {
     const installed = character?.extensions?.canming_dlc;
     if (!installed?.id) throw new Error('当前没有已安装的身份 DLC。');
     const name = installed.name || installed.id;
-    const confirmed = await canmingUiDialog(
-      `确定卸载身份 DLC「${name}」吗？\n\n基础卡自带的开场会恢复；当前聊天不会回滚，之后请新建聊天。`,
-      {
-        title: '卸载身份开场',
-        confirmText: '确认卸载',
-        cancelText: '保留当前开场',
-        danger: true,
-      },
-    );
-    if (!confirmed) return { cancelled: true, scenarioId: installed.id, name };
     await uninstallWorkshopInstall({ scenarios: [installed.id] });
     await getCanmingWorkshop()?.forgetScenarioInstall?.(installed.id, {
       cleanup: true,
       bridge: createWorkshopBridge(),
     });
     showToast(`✓ 已卸载身份 DLC「${name}」，基础卡开场已经恢复`, 'ok');
+    await canmingUiDialog(
+      `身份 DLC「${name}」已经卸载完成。\n\n基础卡自带开场与人物适配已恢复。当前聊天不会回滚，请新建聊天后继续。`,
+      {
+        kind: 'alert',
+        title: '身份开场卸载成功',
+        confirmText: '我知道了',
+      },
+    );
     return { scenarioId: installed.id, name };
   } catch (error) {
     showToast(`✗ 身份 DLC 卸载失败：${error?.message || '未知错误'}`, 'err');
