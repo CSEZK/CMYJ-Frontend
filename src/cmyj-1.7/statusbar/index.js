@@ -3684,7 +3684,7 @@ async function openScenarioGenerator() {
       theme,
       showToast,
       openWorkshop: workshopOptions => openCanmingWorkshop(workshopOptions),
-      installScenarioPackage: bundle => importScenarioWorkshopPackage(bundle),
+      installScenarioPackage: bundle => importScenarioWorkshopPackage(bundle, { showSuccessDialog: true }),
       listCharacterProfiles: () => JSON.parse(JSON.stringify(getCharacterProfiles().profiles || [])),
     });
   } catch (error) {
@@ -4574,9 +4574,14 @@ async function installBuiltinTongchengScenario() {
       resources: [resource],
     };
     if (installed?.id) {
-      const hostWindow = window.parent ?? window;
-      const confirmed = hostWindow.confirm(
+      const confirmed = await canmingUiDialog(
         `角色卡中仍记录着身份 DLC「${installed.name}」。\n\n是否先彻底卸载它，再安装原版桐城开局？当前聊天不会回滚，完成后必须新建聊天。`,
+        {
+          title: '替换身份开场',
+          confirmText: '卸载并安装',
+          cancelText: '保留当前开场',
+          danger: true,
+        },
       );
       if (!confirmed) {
         const cancelled = new Error('已取消替换当前身份 DLC。');
@@ -4589,7 +4594,7 @@ async function installBuiltinTongchengScenario() {
         bridge: createWorkshopBridge(),
       });
     }
-    return await importScenarioWorkshopPackage(bundle);
+    return await importScenarioWorkshopPackage(bundle, { showSuccessDialog: true });
   } catch (error) {
     if (error?.code !== 'SCENARIO_REPLACE_CANCELLED')
       showToast(`✗ 原版桐城开局安装失败：${error?.message || '未知错误'}`, 'err');
@@ -4597,7 +4602,7 @@ async function installBuiltinTongchengScenario() {
   }
 }
 
-async function importScenarioWorkshopPackage(bundle) {
+async function importScenarioWorkshopPackage(bundle, options = {}) {
   const workshop = getCanmingWorkshop();
   const checked = typeof workshop?.validatePackage === 'function' ? workshop.validatePackage(bundle) : bundle;
   const resource = checked?.version === 2 ? checked.resources?.find(item => item.kind === 'scenario') : null;
@@ -4621,8 +4626,14 @@ async function importScenarioWorkshopPackage(bundle) {
   character.extensions = character.extensions && typeof character.extensions === 'object' ? character.extensions : {};
   let previous = character.extensions.canming_dlc;
   if (previous?.id && previous.id !== resource.scenario.id) {
-    const confirmed = (window.parent ?? window).confirm(
+    const confirmed = await canmingUiDialog(
       `检测到尚未卸载的身份 DLC「${previous.name || previous.id}」。\n\n每张基础卡只能启用一个身份 DLC。是否先卸载旧 DLC，再安装「${resource.name}」？完成后必须新建聊天。`,
+      {
+        title: '替换身份开场',
+        confirmText: '卸载并安装',
+        cancelText: '保留当前开场',
+        danger: true,
+      },
     );
     if (!confirmed) {
       const cancelled = new Error('已取消替换当前身份 DLC。');
@@ -4750,6 +4761,16 @@ async function importScenarioWorkshopPackage(bundle) {
   getCharacterProfiles();
   await syncPortraitIllustrationRule();
   showToast(`✓ 已安装身份 DLC「${resource.name}」；请新建聊天后选择开场`, 'ok');
+  if (options.showSuccessDialog) {
+    await canmingUiDialog(
+      `身份 DLC「${resource.name}」已经安装完成。\n\n新开场不会写入当前聊天。请新建聊天，再从开场列表中选择要使用的开局。`,
+      {
+        kind: 'alert',
+        title: '身份开场安装成功',
+        confirmText: '我知道了',
+      },
+    );
+  }
   return { scenarioId: resource.scenario.id, characterName, openingCount: resource.openings.length };
 }
 
@@ -4958,6 +4979,16 @@ async function uninstallCurrentScenario() {
     const installed = character?.extensions?.canming_dlc;
     if (!installed?.id) throw new Error('当前没有已安装的身份 DLC。');
     const name = installed.name || installed.id;
+    const confirmed = await canmingUiDialog(
+      `确定卸载身份 DLC「${name}」吗？\n\n基础卡自带的开场会恢复；当前聊天不会回滚，之后请新建聊天。`,
+      {
+        title: '卸载身份开场',
+        confirmText: '确认卸载',
+        cancelText: '保留当前开场',
+        danger: true,
+      },
+    );
+    if (!confirmed) return { cancelled: true, scenarioId: installed.id, name };
     await uninstallWorkshopInstall({ scenarios: [installed.id] });
     await getCanmingWorkshop()?.forgetScenarioInstall?.(installed.id, {
       cleanup: true,
@@ -6565,7 +6596,7 @@ function canmingUiToast(message, type = 'ok') {
 function canmingUiDialog(message, options = {}) {
   const host = getCanmingUiHost();
   const doc = host.document;
-  if (!doc?.body) return Promise.resolve(options.kind === 'prompt' ? null : false);
+  if (!doc?.body) return Promise.resolve(options.kind === 'prompt' ? null : options.kind === 'alert');
   ensureCanmingUiStyle(doc);
   return new Promise(resolve => {
     doc.getElementById('canming-ui-dialog')?.remove();
@@ -6605,13 +6636,15 @@ function canmingUiDialog(message, options = {}) {
     cancel.onclick = () => finish(options.kind === 'prompt' ? null : false);
     confirm.onclick = () => finish(options.kind === 'prompt' ? input.value : true);
     overlay.onclick = event => {
-      if (event.target === overlay) finish(options.kind === 'prompt' ? null : false);
+      if (event.target === overlay)
+        finish(options.kind === 'prompt' ? null : options.kind === 'alert' ? true : false);
     };
     input?.addEventListener('keydown', event => {
       if (event.key === 'Enter') finish(input.value);
     });
     card.append(head, body, actions);
-    actions.append(cancel, confirm);
+    if (options.kind === 'alert') actions.append(confirm);
+    else actions.append(cancel, confirm);
     overlay.appendChild(card);
     doc.body.appendChild(overlay);
     setTimeout(() => input?.focus(), 0);
