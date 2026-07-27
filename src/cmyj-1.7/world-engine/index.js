@@ -2,12 +2,11 @@ import compassSeal from './assets/compass-seal-v2.webp?url';
 import ledgerStyles from './styles.raw?raw';
 import faithfulStyles from './styles-faithful.raw?raw';
 import integratedStyles from './styles-integrated.raw?raw';
-import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJsonSchema } from '../shared/api-compat.js';
 
 (() => {
   'use strict';
 
-  const VERSION = '1.7.8';
+  const VERSION = '1.7.9';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -1693,7 +1692,7 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
       });
     }
 
-    // 部分兼容 OpenAI 的服务会忽略 json_schema，但仍返回语义完整的常见 camelCase 结构。
+    // 部分兼容 OpenAI 的服务会偏离提示词中的 Schema，但仍返回语义完整的常见 camelCase 结构。
     // 在本地归一化它，避免请求成功却被误判成“新增 0 条”。
     const incrementCandidates = [result.worldStateIncrement, result.transition, result.data, result.result, result];
     const increment = incrementCandidates.find(
@@ -2360,6 +2359,28 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     return remainder ? `${minutes} 分 ${remainder} 秒` : `${minutes} 分钟`;
   }
 
+  function jsonSchemaCompatibilityPrompt(schema) {
+    const definition = schema?.value ?? schema;
+    if (!definition || typeof definition !== 'object') return '';
+    return [
+      '',
+      '',
+      '【JSON 兼容输出模式】',
+      '请只输出一个合法 JSON 对象，不要输出 Markdown、代码围栏、解释或对象以外的文字。',
+      '输出必须满足以下 JSON Schema；所有 required 字段都必须存在：',
+      JSON.stringify(definition, null, 2),
+    ].join('\n');
+  }
+
+  function normalizeModelRequestError(error) {
+    if (isCancellationError(error)) return error;
+    const message = (error instanceof Error ? error.message : String(error ?? '')).trim();
+    if (!message || /^(?:error:\s*)?<none>$/i.test(message)) {
+      return new Error('副模型请求失败：酒馆助手没有返回具体错误信息，请检查接口日志或连接设置。');
+    }
+    return error instanceof Error ? error : new Error(message);
+  }
+
   function cancellationError(reason = '天下演化已取消。') {
     const error = new Error(reason);
     error.name = 'AbortError';
@@ -2401,16 +2422,10 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
     const userPrompt = `以下内容包含可结算的 CURRENT_TURN 与只读天下档案。请完成事实提取和世界增量。\n\n${JSON.stringify(requestPayload, null, 2)}`;
     const customApi = customApiConfig();
     const schema = incrementalOutputSchema();
-    let forcePromptJsonSchema = isOfficialDeepSeekApi(customApi);
+    const schemaPrompt = jsonSchemaCompatibilityPrompt(schema);
     let lastError;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const usePromptJsonSchema = forcePromptJsonSchema;
-      const schemaPrompt = usePromptJsonSchema ? deepSeekJsonSchemaPrompt(schema) : '';
-      const retryHint = attempt
-        ? forcePromptJsonSchema
-          ? '\n\n上次请求不兼容严格 JSON Schema 或输出未通过解析。此次只返回满足上述 Schema 的 JSON 对象。'
-          : '\n\n上次输出未通过解析。此次必须严格只返回符合 Schema 的 JSON。'
-        : '';
+      const retryHint = attempt ? '\n\n上次输出未通过解析。此次必须严格只返回满足上述 Schema 的 JSON 对象。' : '';
       const requestUserPrompt = `${userPrompt}${schemaPrompt}${retryHint}`;
       const config = {
         generation_id: generationId,
@@ -2422,7 +2437,6 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
           requestUserPrompt,
           worldInfoSupplement,
         ),
-        ...(usePromptJsonSchema ? {} : { json_schema: schema }),
       };
       config.custom_api = customApi;
       try {
@@ -2434,7 +2448,6 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
                 generation_id: generationId,
                 should_silence: true,
                 user_input: `${worldInfoSupplement ? `酒馆额外激活的世界书设定与行动约束：\n${worldInfoSupplement}\n\n` : ''}${incrementalSystemPrompt()}\n\n${requestUserPrompt}`,
-                ...(usePromptJsonSchema ? {} : { json_schema: schema }),
                 custom_api: customApi,
               });
         let timeoutId;
@@ -2483,12 +2496,8 @@ import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi, shouldFallbackFromJson
         }
         return normalized;
       } catch (error) {
-        lastError = error;
-        if (!usePromptJsonSchema && shouldFallbackFromJsonSchema(error)) {
-          forcePromptJsonSchema = true;
-          continue;
-        }
-        const message = error instanceof Error ? error.message : String(error);
+        lastError = normalizeModelRequestError(error);
+        const message = lastError.message;
         const canRetry = /JSON|Schema|结构|工具调用|解析/i.test(message);
         if (!canRetry) break;
       } finally {

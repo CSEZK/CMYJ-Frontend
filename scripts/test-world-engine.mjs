@@ -7,7 +7,7 @@ let source = fullSource.slice(fullSource.indexOf('(() =>'));
 const end = source.lastIndexOf('})();');
 source =
   source.slice(0, end) +
-  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, cancelActiveJob, runtime };\n' +
+  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, normalizeModelRequestError, cancelActiveJob, runtime };\n' +
   source.slice(end);
 
 const sandbox = {
@@ -43,6 +43,7 @@ const {
   normalizeState,
   buildPersistentMainModelPacket,
   buildMainModelInjection,
+  normalizeModelRequestError,
   cancelActiveJob,
   runtime,
 } = sandbox.__cweTest;
@@ -1269,8 +1270,9 @@ assert.equal(invalidTransition.operation_stats.rejected, 1);
 assert.match(invalidTransition.operation_stats.warnings[0], /缺少人物名称/);
 
 let generationCalls = 0;
-sandbox.generateRaw = async () => {
+sandbox.generateRaw = async config => {
   generationCalls += 1;
+  sandbox.__lastWorldModelConfig = config;
   return {
     schema_version: 2,
     base_revision: 0,
@@ -1297,6 +1299,17 @@ const generated = await callWorldModel(
 );
 assert.equal(generationCalls, 1);
 assert.equal(generated.operations[0].value.name, '沈大柱');
+assert.equal(
+  Object.prototype.hasOwnProperty.call(sandbox.__lastWorldModelConfig, 'json_schema'),
+  false,
+  '天下演化不得默认向代理发送原生 json_schema',
+);
+assert.match(
+  sandbox.__lastWorldModelConfig.ordered_prompts.at(-1).content,
+  /【JSON 兼容输出模式】/,
+  '天下演化必须把结构约束写入提示词',
+);
+assert.match(normalizeModelRequestError(new Error('<none>')).message, /没有返回具体错误信息/);
 
 let cancelledGenerationId = '';
 sandbox.stopGenerationById = generationId => {
@@ -1324,11 +1337,12 @@ await assert.rejects(cancelledRequest, error => error?.code === 'CWE_CANCELLED')
 assert.equal(cancelledGenerationId, cancelledJob.generationId);
 assert.equal(cancelledJob.cancelled, true);
 
-assert.match(fullSource, /const VERSION = '1\.7\.8'/);
+assert.match(fullSource, /const VERSION = '1\.7\.9'/);
 assert.match(fullSource, /requestTimeoutMs: 90000/);
 assert.match(fullSource, /data-setting="requestTimeoutSeconds"/);
 assert.match(fullSource, /data-banner-action="cancel"/);
 assert.match(fullSource, /stopGenerationById/);
+assert.doesNotMatch(fullSource, /json_schema:\s*schema/);
 console.info(
-  '天下演化测试通过：供应商包装、稳定 ID、知识传播、秘密白名单、无人目击事实、痕迹发现、持续状态注入、自定义超时、主动取消、旧档迁移与本地因果校验均已覆盖。',
+  '天下演化测试通过：通用提示词 Schema、供应商包装、稳定 ID、知识传播、秘密白名单、无人目击事实、痕迹发现、持续状态注入、自定义超时、主动取消、旧档迁移与本地因果校验均已覆盖。',
 );
