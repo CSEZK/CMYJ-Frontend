@@ -7,7 +7,7 @@ let source = fullSource.slice(fullSource.indexOf('(() =>'));
 const end = source.lastIndexOf('})();');
 source =
   source.slice(0, end) +
-  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, normalizeModelRequestError, cancelActiveJob, runtime };\n' +
+  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, normalizeModelRequestError, cancelActiveJob, buildSceneEvidence, buildAutonomyFocus, compactStateForPrompt, buildGenerationLicense, incrementalSystemPrompt, runtime };\n' +
   source.slice(end);
 
 const sandbox = {
@@ -45,10 +45,91 @@ const {
   buildMainModelInjection,
   normalizeModelRequestError,
   cancelActiveJob,
+  buildSceneEvidence,
+  buildAutonomyFocus,
+  compactStateForPrompt,
+  buildGenerationLicense,
+  incrementalSystemPrompt,
   runtime,
 } = sandbox.__cweTest;
 const emptyState = () => ({ activeEvents: [], actors: [], intelPackets: [], hooks: [], secrets: [] });
 const currentStat = { 世界运转: { 当前地点: '桐城县和济堂药铺' } };
+
+// 目击许可必须以剔除状态栏后的正文为准：状态栏滞后不能抹掉正文明确出场者，
+// 但只在 initvar 中出现的远方人物也不能被误判为目击者。
+const sceneEvidence = buildSceneEvidence(
+  emptyState(),
+  {
+    世界运转: { 当前地点: '桐城县和济堂药铺后宅' },
+    人物: {
+      杨尔铭: { 是否在场: false },
+      方孔炤: { 是否在场: false },
+    },
+  },
+  '杨尔铭赶到后宅，当面扶起主角。<initvar>方孔炤：是否在场 false</initvar>',
+);
+assert.deepEqual(Array.from(sceneEvidence.reliableWitnesses), ['杨尔铭']);
+assert.equal(sceneEvidence.excludedKnownActors.includes('方孔炤'), true);
+assert.equal(sceneEvidence.excludedKnownActors.includes('杨尔铭'), false);
+
+// 生成许可把人物可用的因果 ID 按类型预先列明，避免模型把 TF-* 填成 event/received_intel。
+const licensedState = normalizeState(
+  {
+    version: 1,
+    chatId: 'test-chat',
+    revision: 2,
+    activeEvents: [
+      {
+        id: 'EV-fang-duty',
+        title: '安庆守备',
+        stage: '整饬中',
+        location: '安庆府',
+        actors: ['方孔炤'],
+        summary: '方孔炤整饬守备。',
+        nextTrigger: '流寇前锋抵近安庆时',
+        status: 'active',
+      },
+    ],
+    actors: [
+      {
+        id: 'AC-fang',
+        name: '方孔炤',
+        location: '安庆府',
+        goal: '守住府城',
+        currentAction: '清点城防',
+        knowledge: ['流寇逼近安庆'],
+        doesNotKnow: ['桐城后宅刚发生的事情'],
+      },
+    ],
+    intelPackets: [
+      {
+        id: 'IN-fang',
+        content: '流寇前锋已过潜山',
+        origin: '潜山塘报',
+        destination: '方孔炤',
+        channel: '塘马',
+        status: '已抵达',
+        eta: '已经抵达',
+        reliability: 0.9,
+        knownBy: ['方孔炤'],
+      },
+    ],
+    hooks: [],
+    secrets: [],
+    turnFacts: [],
+  },
+  'test-chat',
+);
+const autonomyFocus = buildAutonomyFocus(licensedState, '');
+const canonicalState = compactStateForPrompt(licensedState, '', autonomyFocus);
+const generationLicense = buildGenerationLicense(licensedState, canonicalState, sceneEvidence, autonomyFocus);
+assert.deepEqual(Array.from(generationLicense.witnessPolicy.allowedNames), ['杨尔铭']);
+assert.equal(generationLicense.patchTargets.actors[0].id, 'AC-fang');
+assert.equal(generationLicense.safeAutonomyCandidates[0].independentAction.cause_id, 'AC-fang');
+assert.deepEqual(Array.from(generationLicense.safeAutonomyCandidates[0].receivedIntelCauseIds), ['IN-fang']);
+assert.deepEqual(Array.from(generationLicense.safeAutonomyCandidates[0].eventCauseIds), ['EV-fang-duty']);
+assert.match(incrementalSystemPrompt(), /先读取 GENERATION_LICENSE/);
+assert.match(incrementalSystemPrompt(), /silentPreflight/);
 
 // 2026-07-26 酒馆实测：Gemini 忽略 value 约定，把全部实体放进 attributes。
 const liveAttributesResult = normalizeIncrementalResult(

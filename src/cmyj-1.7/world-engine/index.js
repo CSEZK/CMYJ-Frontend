@@ -852,7 +852,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     return /^(?:true|是|在场|当前在场|已在场|1)$/i.test(asText(value));
   }
 
-  function collectPresentActorNames(currentStat) {
+  function collectStatActorNames(currentStat, presentOnly = false) {
     const names = new Set();
     const visited = new Set();
     const walk = (value, keyHint = '', depth = 0) => {
@@ -860,7 +860,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       visited.add(value);
       if (!Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, '是否在场')) {
         const name = firstOperationText(value.姓名, value.名字, value.名称, value.name, keyHint);
-        if (name && presenceFlagIsTrue(value.是否在场)) names.add(name);
+        if (name && (!presentOnly || presenceFlagIsTrue(value.是否在场))) names.add(name);
       }
       if (Array.isArray(value)) {
         value.forEach(item => walk(item, keyHint, depth + 1));
@@ -872,15 +872,20 @@ import integratedStyles from './styles-integrated.raw?raw';
     return [...names];
   }
 
+  function collectPresentActorNames(currentStat) {
+    return collectStatActorNames(currentStat, true);
+  }
+
   function buildSceneEvidence(baseState, currentStat, currentText) {
     const location = asText(currentStat?.世界运转?.当前地点);
+    const narrativeText = stripForContext(currentText);
     const statPresent = collectPresentActorNames(currentStat);
-    const actorNames = uniqueTextList(
-      [...statPresent, ...asArray(baseState?.actors).map(actor => actorDisplayName(actor))],
+    const knownActorNames = uniqueTextList(
+      [...collectStatActorNames(currentStat), ...asArray(baseState?.actors).map(actor => actorDisplayName(actor))],
       80,
       100,
     );
-    const explicitlyObserved = actorNames.filter(name => asText(currentText).includes(name));
+    const explicitlyObserved = knownActorNames.filter(name => narrativeText.includes(name));
     const previousPresence = normalizeScenePresence(baseState?.scenePresence);
     const carried =
       location &&
@@ -891,12 +896,18 @@ import integratedStyles from './styles-integrated.raw?raw';
           )
         : [];
     const reliableWitnesses = uniqueTextList([...explicitlyObserved, ...carried], 24, 100);
+    const excludedKnownActors = knownActorNames.filter(
+      name => !reliableWitnesses.some(candidate => comparableIdentity(candidate) === comparableIdentity(name)),
+    );
     return {
       currentLocation: location,
-      eligibleWitnesses: statPresent,
+      knownActorNames,
+      eligibleWitnesses: uniqueTextList([...statPresent, ...explicitlyObserved], 24, 100),
       explicitlyObserved,
+      carriedPresence: carried,
       reliableWitnesses,
-      rule: '只有 reliableWitnesses 可被写入本轮事实 witnesses；未列名人物即使存在于世界书或上下文，也不得视为目击者。',
+      excludedKnownActors,
+      rule: 'witnesses 只能逐字复制 reliableWitnesses 中的姓名。explicitlyObserved 来自剔除状态栏后的正文；excludedKnownActors 是已知但本轮未被核实在场的人物。',
     };
   }
 
@@ -1015,6 +1026,119 @@ import integratedStyles from './styles-integrated.raw?raw';
         '这是视野外行动的轮换候选，不是强制更新清单。只选择具备时间、动机、资源和机会的 0—3 名人物推进；其余保持原行动。',
       actors,
       activeEvents,
+    };
+  }
+
+  function generationPatchTargets(canonicalState) {
+    const project = (records, labelFields, limit = 16) =>
+      asArray(records)
+        .map(record => ({
+          id: asText(record?.id),
+          label: firstOperationText(...labelFields.map(field => record?.[field])),
+        }))
+        .filter(record => record.id && record.label)
+        .slice(0, limit);
+    return {
+      actors: project(canonicalState?.actors, ['name']),
+      events: project(canonicalState?.activeEvents, ['title']),
+      intel: project(canonicalState?.intelPackets, ['content'], 12),
+      hooks: project(canonicalState?.hooks, ['title'], 12),
+      secrets: project(canonicalState?.secrets, ['title', 'content'], 12),
+    };
+  }
+
+  function actorGenerationPermission(state, actor) {
+    const actorName = actorDisplayName(actor);
+    const actorId = asText(actor?.id);
+    const knowledge = normalizeKnowledgeLedger(actor?.knowledgeLedger, actorId)
+      .filter(item => ['known', 'suspected', 'believed'].includes(asText(item?.state)))
+      .slice(-12)
+      .map(item => ({
+        id: asText(item?.id),
+        state: asText(item?.state),
+        content: promptExcerpt(item?.content, 180),
+      }))
+      .filter(item => item.id && item.content);
+    const observedFactIds = asArray(state?.turnFacts)
+      .filter(fact => actorAuthorizedForTurnFact(actor, fact))
+      .slice(-12)
+      .map(fact => asText(fact?.id))
+      .filter(Boolean);
+    const arrivedIntelIds = asArray(state?.intelPackets)
+      .filter(intelHasArrived)
+      .filter(
+        item =>
+          actorListed(operationTextArray(item?.known_by || item?.knownBy), actor) ||
+          (actorName && asText(item?.destination).includes(actorName)),
+      )
+      .slice(-8)
+      .map(item => asText(item?.id))
+      .filter(Boolean);
+    const activeEventIds = asArray(state?.activeEvents)
+      .filter(item => actorListed(recordActors(item), actor))
+      .slice(-8)
+      .map(item => asText(item?.id))
+      .filter(Boolean);
+    return {
+      actorId,
+      actorName,
+      patchId: actorId,
+      independentAction: {
+        cause_type: actorId ? 'autonomous' : 'elapsed_time',
+        cause_id: actorId || 'ELAPSED_TIME',
+      },
+      observationCauseIds: observedFactIds,
+      knowledgeCauseEntries: knowledge,
+      receivedIntelCauseIds: arrivedIntelIds,
+      eventCauseIds: activeEventIds,
+      doesNotKnow: uniqueTextList(actor?.doesNotKnow || actor?.does_not_know, 12, 180),
+    };
+  }
+
+  function buildGenerationLicense(baseState, canonicalState, sceneEvidence, autonomyFocus) {
+    const actorCandidates = asArray(autonomyFocus?.actors)
+      .map(candidate =>
+        asArray(baseState?.actors).find(
+          actor =>
+            (candidate?.id && String(actor?.id) === String(candidate.id)) ||
+            comparableIdentity(actorDisplayName(actor)) === comparableIdentity(actorDisplayName(candidate)),
+        ),
+      )
+      .filter(Boolean)
+      .map(actor => actorGenerationPermission(baseState, actor));
+    const existingNames = asArray(baseState?.actors).map(actor => actorDisplayName(actor));
+    const newNarrativeActors = asArray(sceneEvidence?.reliableWitnesses).filter(
+      name => !existingNames.some(existing => comparableIdentity(existing) === comparableIdentity(name)),
+    );
+    return {
+      mode: 'ALLOWLIST_FIRST',
+      witnessPolicy: {
+        allowedNames: asArray(sceneEvidence?.reliableWitnesses),
+        forbiddenKnownNames: asArray(sceneEvidence?.excludedKnownActors),
+        rule: 'turn_facts.witnesses 只能从 allowedNames 逐字选择；未列名人物一律不能作为本轮目击者。',
+      },
+      patchTargets: generationPatchTargets(canonicalState),
+      newNarrativeActorCandidates: newNarrativeActors,
+      safeAutonomyCandidates: actorCandidates,
+      offscreenPolicy: {
+        currentTurnFactRule:
+          '旁线人物只有同时列入对应 turn_fact.witnesses，或在本次 operations 中通过合法传播获得该事实，才能把该 TF-* 写入 knowledge_claim_ids 并据此行动。',
+        independentRule:
+          '优先从 safeAutonomyCandidates 选择人物，并只使用该人物对应列表中的 cause_id。若候选为空，可从只读上下文选一名视野外人物新建 actor.upsert，但必须使用 elapsed_time/ELAPSED_TIME，knowledge_claim_ids 必须为空，行动不得回应或复述 CURRENT_TURN。',
+        emptyRule: '没有合法的视野外推进时 parallel_scenes 返回空数组，禁止为了凑旁线借用玩家本轮信息。',
+      },
+      referenceRules: [
+        'patch/resolve/remove 的 id 只能逐字复制 patchTargets 对应分类中的 id；目标不在列表时必须 upsert。',
+        'observation 只能引用人物亲历的旧 observationCauseIds，或本次输出中该人物被列为 witnesses 的 TF-*。',
+        'knowledge、received_intel、event 只能分别引用该人物列出的 knowledgeCauseEntries.id、receivedIntelCauseIds、eventCauseIds，不得混用类型。',
+        '新增正文人物只能从 newNarrativeActorCandidates 选择并使用 actor.upsert；不要先 patch 一个不存在的人物。',
+      ],
+      silentPreflight: [
+        '逐项确认每个 patch/resolve/remove ID 存在于 patchTargets。',
+        '逐项确认 actor cause_type 与 cause_id 所属清单一致。',
+        '逐场景确认人物对 knowledge_claim_ids 中每个事实都有合法知识来源。',
+        '删除无法通过上述检查的操作或场景；不要把不确定项交给脚本事后修正。',
+      ],
     };
   }
 
@@ -1317,41 +1441,48 @@ import integratedStyles from './styles-integrated.raw?raw';
   function incrementalSystemPrompt() {
     return `你是《残明余烬》的天下演化史官。主模型已经完成玩家视角正文；你只提交本轮世界档案的必要变化，并写出最多两个玩家视野外场景。
 
+零、生成许可优先
+1. 先读取 GENERATION_LICENSE。它不是参考资料，而是本轮可写边界；不要先自由生成再期待脚本修正。
+2. witnesses、已有记录 ID、人物行动 cause_id 和旁线知识来源必须从对应许可清单逐字选择。列表中不存在的旧目标不得 patch/resolve/remove。
+3. safeAutonomyCandidates 已按人物分别列出合法的旧观察、知识、已抵达情报和参与事件 ID；cause_type 必须与所选清单一致，不能拿 TF-* 冒充 event 或 received_intel。
+4. 输出前在内部逐项执行 silentPreflight。无法证明合法的操作或旁线直接不输出；不要输出检查过程，也不要为了凑数量制造变化。
+
 一、证据边界
 1. CURRENT_TURN.assistantOutput 和最终 MVU 变化是本轮新增事实的主要证据。玩家输入只代表意图。
 2. 主模型当轮提示词快照与 CANONICAL_STATE 仅用于理解和延续，不得把旧资料重复当成新事实。
 3. 只有明确发生的结果才能推动事件、人物、情报或延迟后果；计划、命令、传闻、失败尝试和氛围不得伪装成已经发生的结果。
 4. 先把正文中会影响后续因果的结果写入 turn_facts。evidence 必须逐字摘录 assistantOutput 中能证明结果的短句；不得用玩家输入、世界书或推断代替证据。
-5. visibility 只能是 private、addressed、scene_visible、local_public。private 表示无人目击，witnesses 必须为空；其他可见级别的 witnesses 也只能从 SCENE_EVIDENCE.reliableWitnesses 选择。local_public 仅表示当前地点内已核实的人可见，绝不等于全城或远方人物立刻知道。
+5. visibility 只能是 private、addressed、scene_visible、local_public。private 表示无人目击，witnesses 必须为空；其他可见级别的 witnesses 只能逐字复制 GENERATION_LICENSE.witnessPolicy.allowedNames。forbiddenKnownNames 即使出现在世界书或状态栏中也不得作为目击者。local_public 仅表示当前地点内已核实的人可见，绝不等于全城或远方人物立刻知道。
 6. 无人目击不等于没有发生：仍登记 physical_result、traces 与 discovery_conditions，但任何 NPC 都不得直接获得事实内容。后来只能通过 trace.discover 发现实际痕迹，并且只能得出痕迹本身支持的结论。
 7. 平行场景只能展示本轮操作已经支持的变化，不能先写重大结果再用场景认证它。
 
 二、增量原则
 1. 只返回发生变化的内容，不重写完整档案。
-2. patch/resolve/remove 必须复用 CANONICAL_STATE 中已有的稳定 ID；upsert 可以不提供 ID，由脚本根据实体内容生成。
+2. patch/resolve/remove 必须逐字复用 GENERATION_LICENSE.patchTargets 中对应类别的稳定 ID；upsert 可以不提供 ID，由脚本根据实体内容生成。
    若目标尚未出现在对应档案数组中，必须使用 upsert，绝不能根据姓名自造 actor_xxx、event_xxx 一类 ID。patch 的 set 还要附带身份字段：人物 name、事件/伏线 title、情报 content，供脚本核对目标。
 3. 不要总结正文、复述世界现状、记录玩家履历或重写 MVU/状态栏字段；这些由聊天记忆、变量结构与状态栏负责。
 4. 事件只记录仍在自行推进、会对未来形成压力的进程，不把玩家当前任务或地图静态态势换一种说法抄入档案。
 5. 人物行动仍用 actor 操作；已有角色的 knowledge 与 does_not_know 不得通过 actor.patch 偷渡改写。新增或纠正认知必须使用 knowledge.*，重要秘密必须使用 secret.*。
 6. knowledge.grant/suspect/mislead/correct 必须写明人物、内容、source_type、source_id 与 confidence。引用本轮正文时 source_id 必须使用对应 turn_facts 的 TF-* 本地别名，禁止使用 CURRENT_TURN。引用本次返回的第 N 段旁线可用 PARALLEL_SCENE_N。told_by_actor 还必须填写 source_actor_id/source_actor_name，且告知者本身必须合法知情。
-7. 每个 actor.upsert/patch 都要给 cause_type、cause_id 与 basis_ids。cause_type 只能是 autonomous、observation、knowledge、received_intel、event、elapsed_time；对玩家本轮行为作出反应时必须引用获准目击的 TF-*、已抵达情报、人物已知条目或事件，不能用“听说”“感觉”绕过。
+7. 每个 actor.upsert/patch 都要给 cause_type、cause_id 与 basis_ids。cause_type 只能是 autonomous、observation、knowledge、received_intel、event、elapsed_time，并且 cause_id 必须来自该人物在 safeAutonomyCandidates 中同名的许可清单。唯一例外是：人物被本次 turn_fact 列为 witnesses 时，可用 observation 引用该 TF-*；从只读上下文新建的独立人物只能用 elapsed_time 与 ELAPSED_TIME。不能用“听说”“感觉”绕过。
 8. secret.upsert 用于登记容易被模型越权使用的重要秘密，必须提供知情者、解锁条件和证据来源；引用本轮正文也必须使用 TF-*。secret.reveal 只向通过来源校验的人物揭示秘密。
 9. 情报必须有起点、终点、渠道、状态和抵达时间；人物不能无渠道获得消息。引用 local_public 事实时，起点可以是现场合法目击者，也可以是“某地邻里传闻、坊间议论、官府告示”等明确的当地公共渠道；其他可见级别仍必须从合法知情者出发。
 10. 伏线只记录有明确触发条件或失效条件的延迟后果，不记录一般剧情摘要。
 
 三、视野外人物自主行动
-1. AUTONOMY_FOCUS 是轮换候选而非强制清单。每轮只推进具备足够虚构时间、行动机会、动机和资源的 0—3 名人物；没有合理推进条件时保持原行动，不得为了凑 operations 强行变化。
+1. GENERATION_LICENSE.safeAutonomyCandidates 是已经整理好因果许可的轮换候选；AUTONOMY_FOCUS 只提供其详细状态。每轮只推进具备足够虚构时间、行动机会、动机和资源的 0—3 名人物；没有合理推进条件时保持原行动，不得为了凑 operations 强行变化。
 2. 人物依据自己的目标、当前位置、既有行动、已知信息和资源约束做事，不等待玩家触发，也不要求所有人围绕玩家当轮行为作出反应。
 3. 严守知识边界：世界书和模型上下文中的真相不等于人物知道。人物只能利用明确的 knowledge、knowledgeLedger 中的 known、亲历事实和已经抵达的情报；suspected 只能怀疑，believed 可能是误信，does_not_know 与未获授权的 secret 绝不能用于决策。
 4. 先判断本轮流逝的时间与行动尺度。短暂对话不能让远方人物瞬间跨城或完成长期计划；可以只记录“继续执行”而不产生 patch。
 5. 额外激活的世界书只提供身份、地点、制度、关系和行动约束，不等于本轮新事实，也不得替人物补出无来源的知识。
 
 四、旁线场景
-1. parallel_scenes 最多两个，每个包含 location、time、actors、action、body、basis_ids、knowledge_claim_ids。basis_ids 写支撑场景的事件、人物行动或情报 ID；knowledge_claim_ids 只写场景中实际被人物使用的 TF-*。
+1. parallel_scenes 最多两个，每个包含 location、time、actors、action、body、basis_ids、knowledge_claim_ids。优先展示本次合法 actor 操作的结果；basis_ids 写支撑场景且已存在于许可清单或本次合法操作中的事件、人物行动或情报 ID，knowledge_claim_ids 只写场景中实际被人物合法使用的 TF-*。
 2. 场景必须在玩家当前视野之外，优先表现合法操作推进的事件、人物行动或情报传播。
 3. 不得重演玩家场景，不得凭空制造胜负、死亡、陷城或政局结果。
-4. 若场景内容与某个 turn_fact 有关，必须把它列入 knowledge_claim_ids；脚本会逐个人物核验其是否是合法目击者或已通过传播获得该知识。private 事实不能被旁线人物直接反应。
-5. body 不使用 <平行世界> 标签，不写“与此同时”“玩家不知道的是”“镜头转向”等元叙事。
+4. 若场景内容与某个 turn_fact 有关，必须把它列入 knowledge_claim_ids，并在输出前确认每个场景人物是该事实的 witnesses，或已经在本次 operations 中通过合法传播获得该知识。否则把场景改写为与 CURRENT_TURN 无关的自主行动；private 事实不能被旁线人物直接反应。
+5. 若 safeAutonomyCandidates 为空，可以从只读上下文选择一名远方人物做独立推进，但必须同时提交 actor.upsert，使用 elapsed_time/ELAPSED_TIME，knowledge_claim_ids 为空，且行动内容不得复述或回应 CURRENT_TURN。做不到就返回空数组。
+6. body 不使用 <平行世界> 标签，不写“与此同时”“玩家不知道的是”“镜头转向”等元叙事。
 
 五、输出
 1. 只返回符合 JSON Schema 的一个 JSON 对象。operations 可以为空；没有变化的字段不得凑数。base_revision 必须原样回传。
@@ -1386,9 +1517,16 @@ import integratedStyles from './styles-integrated.raw?raw';
       cause_type: {
         type: 'string',
         enum: ['autonomous', 'observation', 'knowledge', 'received_intel', 'event', 'elapsed_time'],
+        description: '必须与 GENERATION_LICENSE.safeAutonomyCandidates 中 cause_id 所属清单一致。',
       },
-      cause_id: text,
-      basis_ids: textArray,
+      cause_id: {
+        ...text,
+        description: '从人物许可清单逐字复制；本次合法目击用 TF-*，独立新人物用 ELAPSED_TIME。',
+      },
+      basis_ids: {
+        ...textArray,
+        description: '只填写实际支撑行动且已存在于 GENERATION_LICENSE 或本次合法输出中的 ID。',
+      },
     };
     const intelFields = {
       content: text,
@@ -1539,7 +1677,10 @@ import integratedStyles from './styles-integrated.raw?raw';
         id: text,
         content: text,
         visibility: { type: 'string', enum: ['private', 'addressed', 'scene_visible', 'local_public'] },
-        witnesses: textArray,
+        witnesses: {
+          ...textArray,
+          description: '只能逐字复制 GENERATION_LICENSE.witnessPolicy.allowedNames 中的姓名。',
+        },
         evidence: text,
         location: text,
         physical_result: text,
@@ -1641,8 +1782,14 @@ import integratedStyles from './styles-integrated.raw?raw';
                 actors: textArray,
                 action: text,
                 body: prose,
-                basis_ids: textArray,
-                knowledge_claim_ids: textArray,
+                basis_ids: {
+                  ...textArray,
+                  description: '只填写已存在且确实支撑本场景的事件、人物或情报 ID。',
+                },
+                knowledge_claim_ids: {
+                  ...textArray,
+                  description: '只填写所有场景人物均获准知道的 TF-*；纯自主场景必须为空数组。',
+                },
               },
             },
           },
@@ -1658,9 +1805,10 @@ import integratedStyles from './styles-integrated.raw?raw';
     const currentText = current?.message || '';
     const autonomyFocus = buildAutonomyFocus(baseState, currentText);
     const sceneEvidence = buildSceneEvidence(baseState, currentStat, currentText);
+    const canonicalState = compactStateForPrompt(baseState, currentText, autonomyFocus);
     return {
       instruction:
-        '先把 CURRENT_TURN 中真正发生且会影响后续的结果登记为 turn_facts，并严格按照 SCENE_EVIDENCE 限制目击者；再让具备合法知识、时间与机会的视野外人物行动，最后只提交必要 operations。CANONICAL_STATE 是只读工作集，patch 必须复用其中已有 ID。',
+        '先服从 GENERATION_LICENSE 的白名单生成，再把 CURRENT_TURN 中真正发生且会影响后续的结果登记为 turn_facts。只让具备许可知识、时间与机会的视野外人物行动；输出前完成 silentPreflight，无法通过的项目不要输出。CANONICAL_STATE 是只读工作集。',
       baseRevision: Number(baseState.revision) || 0,
       currentTurn: {
         messageId: messageKey.messageId,
@@ -1670,9 +1818,10 @@ import integratedStyles from './styles-integrated.raw?raw';
         mvuChanges: deepDiff(previousStat, currentStat).slice(0, 100),
       },
       sceneEvidence,
+      generationLicense: buildGenerationLicense(baseState, canonicalState, sceneEvidence, autonomyFocus),
       autonomyFocus,
       recentContextReadOnly: buildRecentContext(messageKey.messageId),
-      canonicalState: compactStateForPrompt(baseState, currentText, autonomyFocus),
+      canonicalState,
     };
   }
 
@@ -2561,7 +2710,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     if (typeof generateRaw !== 'function' && typeof generate !== 'function')
       throw new Error('未找到 generateRaw/generate 接口。');
     const requestPayload = compactWorldModelPayload(payload, promptSnapshot);
-    const userPrompt = `以下内容包含可结算的 CURRENT_TURN 与只读天下档案。请完成事实提取和世界增量。\n\n${JSON.stringify(requestPayload)}`;
+    const userPrompt = `以下内容包含 GENERATION_LICENSE、可结算的 CURRENT_TURN 与只读天下档案。先按许可白名单构造候选结果，再在内部完成 silentPreflight；不合格项不要输出。请完成事实提取和世界增量。\n\n${JSON.stringify(requestPayload)}`;
     const schema = incrementalOutputSchema();
     const schemaPrompt = jsonSchemaCompatibilityPrompt(schema);
     let lastError;
@@ -4996,7 +5145,8 @@ import integratedStyles from './styles-integrated.raw?raw';
       runtime.pendingMessageId = null;
       const sceneCount =
         saved.parallelTurns.at(-1)?.messageId === messageId ? saved.parallelTurns.at(-1).scenes.length : 0;
-      runtime.lastNotice = `第 ${messageId} 楼推演完成：接受 ${saved.lastRun?.acceptedOperations ?? 0} 项变化，忽略 ${saved.lastRun?.rejectedOperations ?? 0} 项，收录 ${sceneCount} 段旁线。`;
+      const proposedSceneCount = asArray(result.parallel_scenes).length;
+      runtime.lastNotice = `第 ${messageId} 楼推演完成：接受 ${saved.lastRun?.acceptedOperations ?? 0} 项变化，忽略 ${saved.lastRun?.rejectedOperations ?? 0} 项；生成 ${proposedSceneCount} 段旁线，收录 ${sceneCount} 段。`;
       showEvolutionBanner('success', '天下演化完成', runtime.lastNotice, { autoHideMs: 7000 });
       console.info('[天下演化] 结算完成', { chatId, messageId, revision: saved.revision });
       return saved;
