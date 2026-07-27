@@ -1,6 +1,12 @@
 import ORIGINAL_TONGCHENG_CHARACTER_PROFILES from './original-tongcheng-character-profiles.json';
 import ORIGINAL_TONGCHENG_CHARACTER_OVERVIEW from './original-tongcheng-character-overview.json';
 import ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH from './original-tongcheng-relationship-graph.json';
+import {
+  CHARACTER_ADAPTATION_PATTERN,
+  findCharacterAdaptationEntryIndex,
+  injectCharacterAdaptation,
+  restoreCharacterAdaptation,
+} from '../shared/character-adaptation.js';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
 const STATUSBAR_VERSION = '1.7.11';
@@ -4164,9 +4170,6 @@ async function importWorldbookWorkshopPackage(bundle) {
   return { worldbookName, count: entries.length, mode };
 }
 
-const CHARACTER_ADAPTATION_PATTERN =
-  /(<!-- CANMING_CHARACTER_ADAPTATION_START -->)([\s\S]*?)(<!-- CANMING_CHARACTER_ADAPTATION_END -->)/;
-
 function normalizeUserReference(value) {
   const sentinel = '\u0000CMYJ_USER_TOKEN\u0000';
   return String(value || '')
@@ -4254,19 +4257,17 @@ async function applyScenarioCharacterAdaptations(adaptations, version = 2) {
   const updates = new Map();
   const backups = [];
   for (const adaptation of adaptations) {
-    const candidates = [`${adaptation.character}_SFW`, adaptation.character];
-    const index = current.findIndex(entry => candidates.includes(entry?.name));
-    if (index < 0) throw new Error(`基础卡缺少角色条目「${adaptation.character}」。`);
+    const index = findCharacterAdaptationEntryIndex(current, adaptation);
+    if (index < 0)
+      throw new Error(
+        `找不到角色「${adaptation.character}」关联的完整人设。请先在“角色与立绘管理器”中关联世界书条目。`,
+      );
     const content = String(current[index].content || '');
-    const match = content.match(CHARACTER_ADAPTATION_PATTERN);
-    if (!match) throw new Error(`角色「${adaptation.character}」缺少动态人设标记，请更新基础卡。`);
-    backups.push({ entryName: current[index].name, previousBlock: match[2] });
+    const injected = injectCharacterAdaptation(content, characterAdaptationBody(adaptation, version));
+    backups.push({ entryName: current[index].name, ...injected.backup });
     updates.set(index, {
       ...current[index],
-      content: content.replace(
-        CHARACTER_ADAPTATION_PATTERN,
-        (_match, start, _previous, end) => `${start}${characterAdaptationBody(adaptation, version)}${end}`,
-      ),
+      content: injected.content,
     });
   }
   const next = current.map((entry, index) => updates.get(index) || entry);
@@ -4282,7 +4283,7 @@ async function restoreScenarioCharacterAdaptations(backups) {
     throw new Error('角色适配恢复需要世界书读写接口。');
   const worldbookName = getWorldbookName();
   const current = (await worldbook(worldbookName)) || [];
-  const backupMap = new Map(backups.map(item => [item.entryName, item.previousBlock]));
+  const backupMap = new Map(backups.map(item => [item.entryName, item]));
   const missing = backups.filter(
     item =>
       !current.some(
@@ -4293,12 +4294,10 @@ async function restoreScenarioCharacterAdaptations(backups) {
     throw new Error(`无法恢复角色适配：${missing.map(item => item.entryName).join('、')} 缺少条目或标记。`);
   const next = current.map(entry => {
     if (!backupMap.has(entry?.name)) return entry;
+    const restored = restoreCharacterAdaptation(entry.content, backupMap.get(entry.name));
     return {
       ...entry,
-      content: String(entry.content || '').replace(
-        CHARACTER_ADAPTATION_PATTERN,
-        (_match, start, _previous, end) => `${start}${backupMap.get(entry.name)}${end}`,
-      ),
+      content: restored,
     };
   });
   await replaceWorldbook(worldbookName, next, { render: 'immediate' });

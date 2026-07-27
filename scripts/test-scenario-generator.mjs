@@ -205,6 +205,11 @@ assert.ok(
   resource.characterAdaptations.some(item => item.character === '沈青梧'),
   '扩展人物应进入 DLC 长期人物适配',
 );
+assert.deepEqual(
+  resource.characterAdaptations.find(item => item.character === '沈青梧').personaEntries,
+  ['沈青梧_SFW（导入）'],
+  'DLC 应携带扩展人物实际关联的人设条目名，避免工坊重命名后无法安装',
+);
 assert.equal(resource.characterAdaptationVersion, 3);
 assert.deepEqual(resource.portraitProfiles, [], 'DLC 不应重复携带基础卡的内置立绘');
 const protagonistEntry = resource.worldbookEntries.find(entry => entry.name === '[scenario]<user>身份');

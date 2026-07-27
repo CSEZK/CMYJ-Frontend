@@ -653,6 +653,11 @@ import { buildScenarioCharacterCatalog } from './character-catalog.js';
             ? state.adaptationPrinciples
             : ['身份与地域变化不得覆盖原始人设的性格核心、能力边界和人物关系。']
           ).map(normalizeUserToken),
+          personaEntries: [
+            ...new Set(
+              [...(state.personaEntries || []), ...(character.worldbookEntries || [])].map(String).filter(Boolean),
+            ),
+          ],
           nonFixedRelationships: [],
         };
       });
