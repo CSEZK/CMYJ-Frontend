@@ -6,7 +6,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 (() => {
   'use strict';
 
-  const VERSION = '1.7.10';
+  const VERSION = '1.8.0';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -1143,7 +1143,17 @@ import integratedStyles from './styles-integrated.raw?raw';
   }
 
   function compactStateForPrompt(state, currentText, autonomyFocus) {
-    const eventFields = ['id', 'title', 'location', 'actors', 'summary'];
+    const eventFields = [
+      'id',
+      'title',
+      'stage',
+      'status',
+      'location',
+      'actors',
+      'summary',
+      'nextTrigger',
+      'impactDomains',
+    ];
     const actorFields = [
       'id',
       'name',
@@ -1152,13 +1162,21 @@ import integratedStyles from './styles-integrated.raw?raw';
       'currentAction',
       'knowledge',
       'doesNotKnow',
-      'knowledgeLedger',
-      'causeType',
-      'causeId',
-      'basisIds',
+      'nextDecision',
+      'updatedReason',
     ];
-    const intelFields = ['id', 'content', 'origin', 'destination', 'knownBy', 'sourceFactIds'];
-    const hookFields = ['id', 'title', 'summary', 'visibleSigns', 'trigger'];
+    const intelFields = [
+      'id',
+      'content',
+      'origin',
+      'destination',
+      'channel',
+      'status',
+      'eta',
+      'reliability',
+      'knownBy',
+    ];
+    const hookFields = ['id', 'title', 'stage', 'summary', 'visibleSigns', 'trigger', 'failCondition'];
     const secretFields = ['id', 'title', 'content', 'holders', 'revealConditions', 'status'];
     const turnFactFields = ['id', 'alias', 'content', 'physicalResult', 'traces', 'witnesses', 'discoveredBy'];
     return {
@@ -1435,6 +1453,134 @@ import integratedStyles from './styles-integrated.raw?raw';
           },
         },
       },
+    };
+  }
+
+  function worldChangeSystemPrompt() {
+    return `你是《残明余烬》的视野外世界模拟器，不是正文审查员、事实摘录器或世界总结器。
+
+一、输入边界
+1. CURRENT_TURN 是主模型已经提交的本轮结果。直接判断它对视野外世界造成的后续影响，不要重新审核、认证或摘录玩家场景事实。
+2. 玩家输入只用于理解行动意图；主模型正文、最终 MVU 和 CURRENT_STATE 共同构成当前可用状态。
+3. RECENT_CONTEXT 只帮助理解因果，不得把旧内容再次写成新变化。
+
+二、推进规则
+1. 从 CURRENT_STATE 中选择至多两个确有行动机会的事件、人物、情报或伏线；允许本轮没有任何变化。
+2. 只提交相对于当前记录发生变化的字段。禁止复述完整记录，禁止为了显得世界在运转而提交无效变化。
+3. create 用于新增记录，merge 用于修改已有记录，delete 用于结束或移除记录。merge 和 delete 必须复用 CURRENT_STATE 中已有的稳定 ID。
+4. 人物获得新知识必须存在合理渠道；情报传播必须受地点、渠道和故事时间约束。
+5. collection 对应关系：events → activeEvents，actors → actors，intel → intelPackets，hooks → hooks。
+6. create 必须给出能构成完整记录的核心字段；merge 只提交确实改变的字段，并沿用 CURRENT_STATE 的字段命名。
+7. create 核心字段：events 需要 title、stage、location、summary、nextTrigger；actors 需要 name、currentAction、updatedReason；intel 需要 content、origin、destination、channel、status、eta、reliability；hooks 需要 title、stage、summary、trigger、failCondition。
+
+三、旁线场景
+1. scenes 最多两个，每段必须通过 based_on 引用本轮 changes 的数组下标。
+2. 场景只呈现被引用变化的过程或直接结果；没有状态变化支撑时不要生成场景。
+3. 场景必须位于玩家当前视野之外，不得重演玩家场景，不得凭空制造重大胜负、死亡、陷城或政局结果。
+4. body 不使用 <平行世界> 标签，不写“与此同时”“玩家不知道的是”“镜头转向”等元叙事。
+
+四、输出
+只返回符合 JSON Schema 的一个 JSON 对象。changes 和 scenes 都可以为空；base_revision 必须原样回传。`;
+  }
+
+  function worldChangeOutputSchema() {
+    const text = { type: 'string', minLength: 1 };
+    const target = {
+      type: 'object',
+      additionalProperties: false,
+      required: ['collection', 'id'],
+      properties: {
+        collection: { type: 'string', enum: ['events', 'actors', 'intel', 'hooks'] },
+        id: text,
+      },
+    };
+    const objectValue = { type: 'object', additionalProperties: true };
+    const changeOperation = (op, payloadKey) => ({
+      type: 'object',
+      additionalProperties: false,
+      required: ['op', 'target', payloadKey],
+      properties: {
+        op: { type: 'string', enum: [op] },
+        target,
+        [payloadKey]: objectValue,
+      },
+    });
+    return {
+      name: 'cmyj_world_changes_v3',
+      strict: false,
+      value: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['schema_version', 'base_revision', 'changes', 'scenes'],
+        properties: {
+          schema_version: { type: 'integer', enum: [3] },
+          base_revision: { type: 'integer', minimum: 0 },
+          changes: {
+            type: 'array',
+            maxItems: 24,
+            items: {
+              anyOf: [
+                changeOperation('create', 'value'),
+                changeOperation('merge', 'changes'),
+                {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['op', 'target'],
+                  properties: {
+                    op: { type: 'string', enum: ['delete'] },
+                    target,
+                  },
+                },
+              ],
+            },
+          },
+          scenes: {
+            type: 'array',
+            maxItems: 2,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['based_on', 'location', 'time', 'actors', 'action', 'body'],
+              properties: {
+                based_on: {
+                  type: 'array',
+                  minItems: 1,
+                  maxItems: 8,
+                  items: { type: 'integer', minimum: 0 },
+                },
+                location: { type: 'string' },
+                time: { type: 'string' },
+                actors: { type: 'array', maxItems: 12, items: { type: 'string' } },
+                action: { type: 'string' },
+                body: text,
+              },
+            },
+          },
+        },
+      },
+    };
+  }
+
+  function normalizeWorldChangeResult(result) {
+    if (!result || typeof result !== 'object' || Array.isArray(result)) {
+      throw new Error('副模型输出缺少可用的结构化对象。');
+    }
+    const schemaVersion = Number(result.schema_version ?? result.schemaVersion);
+    if (schemaVersion !== 3) {
+      throw new Error(`副模型输出的 schema_version=${schemaVersion || '缺失'}，当前仅接受版本 3。`);
+    }
+    if (!Array.isArray(result.changes) || !Array.isArray(result.scenes)) {
+      throw new Error('副模型输出必须包含 changes 与 scenes 数组。');
+    }
+    const baseRevision = Number(result.base_revision ?? result.baseRevision);
+    if (!Number.isInteger(baseRevision) || baseRevision < 0) {
+      throw new Error('副模型输出缺少有效的 base_revision。');
+    }
+    return {
+      schema_version: 3,
+      base_revision: baseRevision,
+      changes: result.changes.slice(0, 24),
+      scenes: result.scenes.slice(0, 2),
     };
   }
 
@@ -1804,11 +1950,13 @@ import integratedStyles from './styles-integrated.raw?raw';
     const previousStat = findPreviousStatData(messageKey.messageId);
     const currentText = current?.message || '';
     const autonomyFocus = buildAutonomyFocus(baseState, currentText);
-    const sceneEvidence = buildSceneEvidence(baseState, currentStat, currentText);
     const canonicalState = compactStateForPrompt(baseState, currentText, autonomyFocus);
+    delete canonicalState.secrets;
+    delete canonicalState.turnFacts;
+    delete canonicalState.scenePresence;
     return {
       instruction:
-        '先服从 GENERATION_LICENSE 的白名单生成，再把 CURRENT_TURN 中真正发生且会影响后续的结果登记为 turn_facts。只让具备许可知识、时间与机会的视野外人物行动；输出前完成 silentPreflight，无法通过的项目不要输出。CANONICAL_STATE 是只读工作集。',
+        'CURRENT_TURN 已经提交，不要审核、认证或摘录事实。只推进少数确有变化的视野外对象，并对 CURRENT_STATE 返回 create、merge 或 delete。',
       baseRevision: Number(baseState.revision) || 0,
       currentTurn: {
         messageId: messageKey.messageId,
@@ -1817,9 +1965,6 @@ import integratedStyles from './styles-integrated.raw?raw';
         assistantOutput: stripForContext(currentText).slice(0, 30000),
         mvuChanges: deepDiff(previousStat, currentStat).slice(0, 100),
       },
-      sceneEvidence,
-      generationLicense: buildGenerationLicense(baseState, canonicalState, sceneEvidence, autonomyFocus),
-      autonomyFocus,
       recentContextReadOnly: buildRecentContext(messageKey.messageId),
       canonicalState,
     };
@@ -1837,8 +1982,6 @@ import integratedStyles from './styles-integrated.raw?raw';
       WORLD_MODEL_BUDGET.assistantOutputChars,
     );
     compacted.currentTurn.mvuChanges = compactPromptValue(compacted.currentTurn.mvuChanges, 1);
-    compacted.sceneEvidence = compactPromptValue(compacted.sceneEvidence, 1);
-    compacted.autonomyFocus = compactPromptValue(compacted.autonomyFocus, 1);
     compacted.canonicalState = compactPromptValue(compacted.canonicalState, 1);
     if (promptSnapshot) {
       delete compacted.recentContextReadOnly;
@@ -1867,7 +2010,6 @@ import integratedStyles from './styles-integrated.raw?raw';
 
     if (JSON.stringify(compacted).length > WORLD_MODEL_BUDGET.payloadChars) {
       compacted.currentTurn.assistantOutput = promptExcerpt(compacted.currentTurn.assistantOutput, 4500);
-      compacted.autonomyFocus = compactPromptValue(compacted.autonomyFocus, 2);
       for (const key of ['activeEvents', 'actors', 'intelPackets', 'hooks', 'secrets', 'turnFacts']) {
         if (Array.isArray(compacted.canonicalState?.[key])) {
           compacted.canonicalState[key] = compacted.canonicalState[key].slice(0, 3);
@@ -2710,8 +2852,8 @@ import integratedStyles from './styles-integrated.raw?raw';
     if (typeof generateRaw !== 'function' && typeof generate !== 'function')
       throw new Error('未找到 generateRaw/generate 接口。');
     const requestPayload = compactWorldModelPayload(payload, promptSnapshot);
-    const userPrompt = `以下内容包含 GENERATION_LICENSE、可结算的 CURRENT_TURN 与只读天下档案。先按许可白名单构造候选结果，再在内部完成 silentPreflight；不合格项不要输出。请完成事实提取和世界增量。\n\n${JSON.stringify(requestPayload)}`;
-    const schema = incrementalOutputSchema();
+    const userPrompt = `以下内容包含已经提交的 CURRENT_TURN 与只读 CURRENT_STATE。不要审查正文或提取事实，只返回相对于 CURRENT_STATE 的必要变化。\n\n${JSON.stringify(requestPayload)}`;
+    const schema = worldChangeOutputSchema();
     const schemaPrompt = jsonSchemaCompatibilityPrompt(schema);
     let lastError;
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -2720,7 +2862,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       const orderedPrompts = worldModelPrompts(
         promptSnapshot,
         payload.currentTurn?.assistantOutput || '',
-        incrementalSystemPrompt(),
+        worldChangeSystemPrompt(),
         requestUserPrompt,
         worldInfoSupplement,
       );
@@ -2774,21 +2916,16 @@ import integratedStyles from './styles-integrated.raw?raw';
           clearTimeout(timeoutId);
           cancellation.dispose();
         }
-        const normalized = normalizeIncrementalResult(parseAiResult(raw), payload.baseRevision);
-        if (normalized.operations.length) {
-          const preview = buildTransitionFromOperations(
-            payload.canonicalState || {},
-            normalized,
-            {},
-            payload.currentTurn?.assistantOutput || '',
-          );
+        const normalized = normalizeWorldChangeResult(parseAiResult(raw));
+        if (normalized.changes.length) {
+          const preview = buildTransitionFromChanges(payload.canonicalState || {}, normalized, {});
           if (
             preview.operation_stats.accepted === 0 &&
             preview.operation_stats.rejected > 0 &&
-            normalized.parallel_scenes.length === 0
+            normalized.scenes.length === 0
           ) {
             throw new Error(
-              `副模型 operations 结构未通过校验：${preview.operation_stats.warnings.slice(0, 3).join('；')}`,
+              `副模型 changes 结构未通过校验：${preview.operation_stats.warnings.slice(0, 3).join('；')}`,
             );
           }
         }
@@ -4604,6 +4741,199 @@ import integratedStyles from './styles-integrated.raw?raw';
     return values;
   }
 
+  function buildTransitionFromChanges(baseState, result) {
+    const transition = {
+      upsert_events: [],
+      resolve_event_ids: [],
+      upsert_actors: [],
+      remove_actor_ids: [],
+      upsert_intel: [],
+      remove_intel_ids: [],
+      upsert_hooks: [],
+      resolve_hook_ids: [],
+      upsert_secrets: [],
+      secret_reveals: [],
+      knowledge_updates: [],
+      turn_facts: [],
+      trace_discoveries: [],
+      scene_presence: normalizeScenePresence(baseState?.scenePresence),
+      camera_history: [],
+      next_turn_packet: {},
+      parallel_scenes: [],
+      operation_stats: { accepted: 0, rejected: 0, warnings: [] },
+    };
+    const stats = transition.operation_stats;
+    const acceptedIndexes = new Set();
+    const touchedTargets = new Set();
+    const reject = (change, reason) => {
+      stats.rejected += 1;
+      stats.warnings.push(`${asText(change?.op, 'unknown')}：${reason}`.slice(0, 300));
+    };
+    const existingById = (collection, id) =>
+      asArray(collection).find(item => String(item?.id) === String(id));
+    const descriptors = {
+      events: {
+        stateKey: 'activeEvents',
+        outputKey: 'upsert_events',
+        deleteKey: 'resolve_event_ids',
+        fields: new Set([
+          'title',
+          'stage',
+          'status',
+          'location',
+          'actors',
+          'summary',
+          'nextTrigger',
+          'impactDomains',
+        ]),
+        normalize: eventInput,
+        valid: item => item.title && item.stage && item.location && item.summary && item.next_trigger,
+      },
+      actors: {
+        stateKey: 'actors',
+        outputKey: 'upsert_actors',
+        deleteKey: 'remove_actor_ids',
+        fields: new Set([
+          'name',
+          'location',
+          'goal',
+          'currentAction',
+          'knowledge',
+          'doesNotKnow',
+          'nextDecision',
+          'updatedReason',
+        ]),
+        normalize: actorInput,
+        valid: item => item.name && item.current_action && item.updated_reason,
+      },
+      intel: {
+        stateKey: 'intelPackets',
+        outputKey: 'upsert_intel',
+        deleteKey: 'remove_intel_ids',
+        fields: new Set([
+          'content',
+          'origin',
+          'destination',
+          'channel',
+          'status',
+          'eta',
+          'reliability',
+          'knownBy',
+        ]),
+        normalize: intelInput,
+        valid: item =>
+          item.content &&
+          item.origin &&
+          item.destination &&
+          item.channel &&
+          item.status &&
+          item.eta &&
+          item.reliability > 0,
+      },
+      hooks: {
+        stateKey: 'hooks',
+        outputKey: 'upsert_hooks',
+        deleteKey: 'resolve_hook_ids',
+        fields: new Set(['title', 'stage', 'summary', 'visibleSigns', 'trigger', 'failCondition']),
+        normalize: hookInput,
+        valid: item => item.title && item.stage && item.summary && item.trigger && item.fail_condition,
+      },
+    };
+
+    asArray(result?.changes).forEach((change, index) => {
+      const op = asText(change?.op);
+      try {
+        const collection = asText(change?.target?.collection);
+        const id = asText(change?.target?.id);
+        const descriptor = descriptors[collection];
+        if (!descriptor) {
+          reject(change, '未知集合');
+          return;
+        }
+        if (!id) {
+          reject(change, '缺少稳定 ID');
+          return;
+        }
+        const targetKey = `${collection}:${id}`;
+        if (touchedTargets.has(targetKey)) {
+          reject(change, `同一轮重复修改目标 ${id}`);
+          return;
+        }
+        const existing = existingById(baseState?.[descriptor.stateKey], id);
+        if (op === 'delete') {
+          if (!existing) {
+            reject(change, `目标 ${id} 不存在`);
+          } else {
+            transition[descriptor.deleteKey].push(id);
+            stats.accepted += 1;
+            acceptedIndexes.add(index);
+            touchedTargets.add(targetKey);
+          }
+          return;
+        }
+        if (!['create', 'merge'].includes(op)) {
+          reject(change, '未知操作类型');
+          return;
+        }
+        if (op === 'create' && existing) {
+          reject(change, `create 目标 ${id} 已存在`);
+          return;
+        }
+        if (op === 'merge' && !existing) {
+          reject(change, `merge 目标 ${id} 不存在`);
+          return;
+        }
+        const rawPayload = op === 'create' ? change?.value : change?.changes;
+        if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
+          reject(change, `${op} 缺少对象载荷`);
+          return;
+        }
+        const entries = Object.entries(rawPayload);
+        const invalidFields = entries.filter(([key]) => !descriptor.fields.has(key)).map(([key]) => key);
+        if (invalidFields.length) {
+          reject(change, `包含不可修改字段：${invalidFields.join('、')}`);
+          return;
+        }
+        if (!entries.length) {
+          reject(change, `${op} 没有提交任何变化字段`);
+          return;
+        }
+        const merged = descriptor.normalize({ ...(existing || {}), ...rawPayload }, id);
+        if (!descriptor.valid(merged)) {
+          reject(change, '合并后的记录缺少必填字段');
+          return;
+        }
+        if (op === 'merge' && JSON.stringify(merged) === JSON.stringify(descriptor.normalize(existing, id))) {
+          reject(change, 'merge 没有产生有效变化');
+          return;
+        }
+        transition[descriptor.outputKey].push(merged);
+        stats.accepted += 1;
+        acceptedIndexes.add(index);
+        touchedTargets.add(targetKey);
+      } catch (error) {
+        reject(change, error instanceof Error ? error.message : String(error));
+      }
+    });
+
+    const supportedScenes = asArray(result?.scenes).filter((scene, sceneIndex) => {
+      const rawReferences = asArray(scene?.based_on);
+      const references = rawReferences.filter(
+        value => typeof value === 'number' && Number.isInteger(value) && value >= 0,
+      );
+      const supported =
+        references.length > 0 &&
+        references.length === rawReferences.length &&
+        references.every(index => acceptedIndexes.has(index));
+      if (!supported) stats.warnings.push(`scene[${sceneIndex}]：based_on 未全部指向已接受的变化`);
+      return supported;
+    });
+    transition.parallel_scenes = normalizeParallelScenes(supportedScenes);
+    transition.camera_history = transition.parallel_scenes.map(cameraLabel).filter(Boolean);
+    transition.next_turn_packet = deriveNextTurnPacket(transition);
+    return transition;
+  }
+
   function applyTransition(baseState, result, messageKey, currentStat) {
     const state = clone(baseState);
     const source = result && typeof result === 'object' ? result : {};
@@ -4644,6 +4974,8 @@ import integratedStyles from './styles-integrated.raw?raw';
       };
     });
 
+    const removedActors = new Set(asArray(source.remove_actor_ids).map(String));
+    state.actors = asArray(state.actors).filter(item => !removedActors.has(String(item.id)));
     state.actors = upsertById(state.actors, source.upsert_actors, LIMITS.actors, 'NPC', raw => {
       if (!asText(raw?.name) || !asText(raw?.current_action) || !asText(raw?.updated_reason)) return null;
       return {
@@ -5115,28 +5447,28 @@ import integratedStyles from './styles-integrated.raw?raw';
       if (Number(result.base_revision) !== Number(baseState.revision)) {
         throw new Error(`副模型基线 revision ${result.base_revision} 与当前档案 ${baseState.revision} 不一致。`);
       }
-      const transition = buildTransitionFromOperations(baseState, result, currentStat || {}, messageKey.message);
+      const transition = buildTransitionFromChanges(baseState, result);
       if (transition.operation_stats.rejected > 0) {
-        console.warn('[天下演化] 部分 operations 未通过校验', {
+        console.warn('[天下演化] 部分 changes 未通过校验', {
           accepted: transition.operation_stats.accepted,
           rejected: transition.operation_stats.rejected,
           warnings: transition.operation_stats.warnings,
-          shapes: asArray(result.operations).map(operation => ({
-            type: asText(operation?.type),
-            id: asText(operation?.id),
-            keys: Object.keys(operation || {}).slice(0, 16),
-            payloadKeys: Object.keys(operation?.value || operation?.set || {}).slice(0, 24),
+          shapes: asArray(result.changes).map(change => ({
+            op: asText(change?.op),
+            collection: asText(change?.target?.collection),
+            id: asText(change?.target?.id),
+            keys: Object.keys(change || {}).slice(0, 12),
           })),
         });
       }
       if (
-        asArray(result.operations).length &&
+        asArray(result.changes).length &&
         transition.operation_stats.accepted === 0 &&
         transition.operation_stats.rejected > 0 &&
         transition.parallel_scenes.length === 0
       ) {
         throw new Error(
-          `副模型返回的 ${transition.operation_stats.rejected} 项 operations 全部无效，本轮未写入档案，请重新推演。`,
+          `副模型返回的 ${transition.operation_stats.rejected} 项 changes 全部无效，本轮未写入档案，请重新推演。`,
         );
       }
       const nextState = applyTransition(baseState, transition, messageKey, currentStat || {});
@@ -5145,7 +5477,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       runtime.pendingMessageId = null;
       const sceneCount =
         saved.parallelTurns.at(-1)?.messageId === messageId ? saved.parallelTurns.at(-1).scenes.length : 0;
-      const proposedSceneCount = asArray(result.parallel_scenes).length;
+      const proposedSceneCount = asArray(result.scenes).length;
       runtime.lastNotice = `第 ${messageId} 楼推演完成：接受 ${saved.lastRun?.acceptedOperations ?? 0} 项变化，忽略 ${saved.lastRun?.rejectedOperations ?? 0} 项；生成 ${proposedSceneCount} 段旁线，收录 ${sceneCount} 段。`;
       showEvolutionBanner('success', '天下演化完成', runtime.lastNotice, { autoHideMs: 7000 });
       console.info('[天下演化] 结算完成', { chatId, messageId, revision: saved.revision });
