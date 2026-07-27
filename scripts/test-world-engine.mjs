@@ -7,7 +7,7 @@ let source = fullSource.slice(fullSource.indexOf('(() =>'));
 const end = source.lastIndexOf('})();');
 source =
   source.slice(0, end) +
-  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, normalizeModelRequestError, cancelActiveJob, buildSceneEvidence, buildAutonomyFocus, compactStateForPrompt, buildGenerationLicense, incrementalSystemPrompt, runtime };\n' +
+  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, normalizeWorldChangeResult, buildTransitionFromChanges, worldChangeSystemPrompt, worldChangeOutputSchema, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, normalizeModelRequestError, cancelActiveJob, buildSceneEvidence, buildAutonomyFocus, compactStateForPrompt, buildGenerationLicense, incrementalSystemPrompt, runtime };\n' +
   source.slice(end);
 
 const sandbox = {
@@ -38,6 +38,10 @@ vm.runInNewContext(source, sandbox);
 const {
   normalizeIncrementalResult,
   buildTransitionFromOperations,
+  normalizeWorldChangeResult,
+  buildTransitionFromChanges,
+  worldChangeSystemPrompt,
+  worldChangeOutputSchema,
   applyTransition,
   callWorldModel,
   normalizeState,
@@ -130,6 +134,9 @@ assert.deepEqual(Array.from(generationLicense.safeAutonomyCandidates[0].received
 assert.deepEqual(Array.from(generationLicense.safeAutonomyCandidates[0].eventCauseIds), ['EV-fang-duty']);
 assert.match(incrementalSystemPrompt(), /先读取 GENERATION_LICENSE/);
 assert.match(incrementalSystemPrompt(), /silentPreflight/);
+assert.match(worldChangeSystemPrompt(), /不是正文审查员/);
+assert.doesNotMatch(worldChangeSystemPrompt(), /GENERATION_LICENSE|silentPreflight|turn_facts/);
+assert.equal(worldChangeOutputSchema().value.properties.schema_version.enum[0], 3);
 
 // 2026-07-26 酒馆实测：Gemini 忽略 value 约定，把全部实体放进 attributes。
 const liveAttributesResult = normalizeIncrementalResult(
@@ -1442,24 +1449,102 @@ assert.equal(invalidTransition.operation_stats.accepted, 0);
 assert.equal(invalidTransition.operation_stats.rejected, 1);
 assert.match(invalidTransition.operation_stats.warnings[0], /缺少人物名称/);
 
+const simpleResult = normalizeWorldChangeResult({
+  schema_version: 3,
+  base_revision: 0,
+  changes: [
+    {
+      op: 'create',
+      target: { collection: 'actors', id: 'NPC-shen-dazhu' },
+      value: {
+        name: '沈大柱',
+        location: '沈记肉铺',
+        goal: '保住铺子',
+        currentAction: '清点存货',
+        updatedReason: '天亮后重新开门',
+      },
+    },
+  ],
+  scenes: [
+    {
+      based_on: [0],
+      location: '沈记肉铺',
+      time: '清晨',
+      actors: ['沈大柱'],
+      action: '清点存货',
+      body: '沈大柱逐一查看昨夜留下的货物，把缺项记到账本上。',
+    },
+  ],
+});
+const simpleTransition = buildTransitionFromChanges(emptyState(), simpleResult);
+assert.equal(simpleTransition.operation_stats.accepted, 1);
+assert.equal(simpleTransition.upsert_actors[0].id, 'NPC-shen-dazhu');
+assert.equal(simpleTransition.parallel_scenes.length, 1);
+assert.deepEqual(
+  normalizeWorldChangeResult({ schema_version: 3, base_revision: 0, changes: [], scenes: [] }).changes,
+  [],
+);
+const mergeBase = {
+  ...emptyState(),
+  activeEvents: [
+    {
+      id: 'EV-grain',
+      title: '粮价异动',
+      stage: '发酵',
+      status: 'active',
+      location: '开封',
+      actors: ['粮商'],
+      summary: '数家粮行惜售',
+      nextTrigger: '官仓决定是否放粮',
+      impactDomains: ['民生'],
+    },
+  ],
+};
+const mergeTransition = buildTransitionFromChanges(mergeBase, {
+  changes: [
+    {
+      op: 'merge',
+      target: { collection: 'events', id: 'EV-grain' },
+      changes: { stage: '扩散', summary: '惜售已经扩散到城南粮行' },
+    },
+  ],
+  scenes: [
+    {
+      based_on: [1],
+      location: '开封',
+      time: '午后',
+      actors: ['粮商'],
+      action: '闭门',
+      body: '一间粮行落下门板。',
+    },
+  ],
+});
+assert.equal(mergeTransition.operation_stats.accepted, 1);
+assert.equal(mergeTransition.upsert_events[0].next_trigger, '官仓决定是否放粮');
+assert.equal(mergeTransition.parallel_scenes.length, 0);
+assert.match(mergeTransition.operation_stats.warnings.at(-1), /based_on/);
+
 let generationCalls = 0;
 sandbox.generateRaw = async config => {
   generationCalls += 1;
   sandbox.__lastWorldModelConfig = config;
   return {
-    schema_version: 2,
+    schema_version: 3,
     base_revision: 0,
-    operations: [
+    changes: [
       {
-        type: 'actor.upsert',
-        attributes: {
+        op: 'create',
+        target: { collection: 'actors', id: 'NPC-shen-dazhu' },
+        value: {
           name: '沈大柱',
           location: '沈记肉铺',
           goal: '保住铺子',
+          currentAction: '清点存货',
+          updatedReason: '天亮后重新开门',
         },
       },
     ],
-    parallel_scenes: [],
+    scenes: [],
   };
 };
 const generated = await callWorldModel(
@@ -1471,7 +1556,7 @@ const generated = await callWorldModel(
   'cwe-attributes-test',
 );
 assert.equal(generationCalls, 1);
-assert.equal(generated.operations[0].value.name, '沈大柱');
+assert.equal(generated.changes[0].value.name, '沈大柱');
 assert.equal(
   Object.prototype.hasOwnProperty.call(sandbox.__lastWorldModelConfig, 'json_schema'),
   false,
@@ -1554,12 +1639,12 @@ await assert.rejects(cancelledRequest, error => error?.code === 'CWE_CANCELLED')
 assert.equal(cancelledGenerationId, cancelledJob.generationId);
 assert.equal(cancelledJob.cancelled, true);
 
-assert.match(fullSource, /const VERSION = '1\.7\.10'/);
+assert.match(fullSource, /const VERSION = '1\.8\.0'/);
 assert.match(fullSource, /requestTimeoutMs: 90000/);
 assert.match(fullSource, /data-setting="requestTimeoutSeconds"/);
 assert.match(fullSource, /data-banner-action="cancel"/);
 assert.match(fullSource, /stopGenerationById/);
 assert.doesNotMatch(fullSource, /json_schema:\s*schema/);
 console.info(
-  '天下演化测试通过：请求预算、通用提示词 Schema、供应商包装、稳定 ID、事实引用修复、公共传闻、知识传播、秘密白名单、无人目击事实、痕迹发现、持续状态注入、自定义超时、主动取消、旧档迁移与本地因果校验均已覆盖。',
+  '天下演化测试通过：v3 增量协议、空结果、旁线引用、请求预算、兼容提示词、稳定 ID、主动取消、旧档迁移与本地校验均已覆盖。',
 );

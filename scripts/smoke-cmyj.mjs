@@ -193,7 +193,7 @@ assert.match(
   /remoteLoaderUrl = 'https:\/\/cmyj-frontend\.pages\.dev\/cmyj-1\.7\/loader\/index\.js'/,
 );
 assert.doesNotMatch(releaseCardPackagerSource, /remoteLoaderUrl\s*=\s*['"][^'"]+\?v=/);
-assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.7\.11'/);
+assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.8\.0'/);
 assert.match(releaseWorkshopSource, /function textCoverMarkup/);
 assert.match(releaseWorkshopSource, /class="text-cover tone-/);
 assert.match(releaseWorkshopSource, /data-text-cover-image/);
@@ -324,7 +324,7 @@ assert.doesNotMatch(releaseStatusbarSource, /rebindCharWorldbooks/);
 assert.match(releaseGeneratorSource, /STORAGE_KEY_API = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /API_SETTINGS_KEY = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /minBaseVersion: '1\.7\.0'/);
-assert.match(releaseWorldEngineSource, /VERSION = '1\.7\.10'/);
+assert.match(releaseWorldEngineSource, /VERSION = '1\.8\.0'/);
 assert.match(releaseWorldEngineSource, /settingsVersion: 4/);
 assert.match(releaseWorldEngineSource, /requestTimeoutMs: 90000/);
 assert.match(releaseWorldEngineSource, /data-setting="requestTimeoutSeconds"/);
@@ -349,7 +349,9 @@ assert.match(
 );
 assert.match(releaseWorldEngineStyle, /\.cwe-content-overview \.cwe-margin-notes footer span/);
 assert.match(releaseWorldEngineSource, /cmyj_world_engine_increment_v2/);
-assert.match(releaseWorldEngineSource, /buildTransitionFromOperations/);
+assert.match(releaseWorldEngineSource, /buildTransitionFromChanges/);
+assert.match(releaseWorldEngineSource, /cmyj_world_changes_v3/);
+assert.match(releaseWorldEngineSource, /不是正文审查员、事实摘录器或世界总结器/);
 assert.match(releaseWorldEngineSource, /SUPPORTED_OPERATION_TYPES/);
 assert.match(releaseWorldEngineSource, /operation\.operation_type/);
 assert.match(releaseWorldEngineSource, /operation\.op/);
@@ -357,7 +359,7 @@ assert.match(releaseWorldEngineSource, /operation\.operation/);
 assert.match(releaseWorldEngineSource, /existingByIdentity/);
 assert.match(releaseWorldEngineSource, /hasOperationChangeBeyondIdentity/);
 assert.match(releaseWorldEngineSource, /误用于 upsert 的 `set`、`changes`、`patch`|OPERATION_PAYLOAD_KEYS/);
-assert.match(releaseWorldEngineSource, /operations 全部无效，本轮未写入档案/);
+assert.match(releaseWorldEngineSource, /changes 全部无效，本轮未写入档案/);
 assert.match(releaseWorldEngineSource, /renderParallelWorld/);
 assert.match(releaseWorldEngineSource, /queuedProcess/);
 assert.doesNotMatch(releaseWorldEngineSource, /setChatMessages/);
