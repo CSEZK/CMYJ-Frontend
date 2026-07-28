@@ -6,9 +6,12 @@ import integratedStyles from './styles-integrated.raw?raw';
 (() => {
   'use strict';
 
-  const VERSION = '1.8.1';
+  const VERSION = '1.8.2';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
+  const BACKUP_SCRIPT_ID = 'cmyj-world-engine-backup-v1';
+  const BACKUP_STATE_KEY = 'cmyj_world_engine_backups_v1';
+  const STORAGE_INTEGRITY_INTERVAL_MS = 2000;
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
   const LAMP_ID = 'canming-world-engine-lamp';
   const FRAME_ID = 'canming-world-engine-frame';
@@ -115,6 +118,9 @@ import integratedStyles from './styles-integrated.raw?raw';
     bannerTimer: null,
     mvuReady: false,
     themeTimer: null,
+    integrityTimer: null,
+    storageRecoveryCount: 0,
+    storageWarningLogged: false,
     isOpen: false,
     activeTab: 'overview',
     lamp: null,
@@ -367,6 +373,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       version: 1,
       chatId,
       revision: 0,
+      _storageRevision: 0,
       createdAt: nowIso(),
       updatedAt: nowIso(),
       lastProcessed: null,
@@ -435,6 +442,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       return createEmptyState(chatId);
     }
     const state = { ...createEmptyState(chatId), ...clone(raw), chatId };
+    state._storageRevision = Math.max(0, Math.floor(Number(state._storageRevision) || 0));
     // 早期版本允许空字段和错误归类进入档案；读取时先做保守清理，避免脏数据继续喂给副模型。
     // 长期事实与世界摘要交给聊天记忆插件；旧档案读取时不再继续携带这些重复内容。
     delete state.facts;
@@ -541,24 +549,265 @@ import integratedStyles from './styles-integrated.raw?raw';
     return state;
   }
 
+  function isStoredState(raw, chatId = getCurrentChatId()) {
+    return Boolean(
+      raw &&
+        typeof raw === 'object' &&
+        Number(raw.version) === 1 &&
+        (!raw.chatId || String(raw.chatId) === String(chatId)),
+    );
+  }
+
+  function stateStorageRevision(state) {
+    return Math.max(0, Math.floor(Number(state?._storageRevision) || 0));
+  }
+
+  function stateFreshness(state) {
+    return [
+      stateStorageRevision(state),
+      Math.max(0, Math.floor(Number(state?.revision) || 0)),
+      Math.max(0, Date.parse(asText(state?.updatedAt)) || 0),
+    ];
+  }
+
+  function compareStateFreshness(left, right) {
+    const leftFreshness = stateFreshness(left);
+    const rightFreshness = stateFreshness(right);
+    for (let index = 0; index < leftFreshness.length; index += 1) {
+      if (leftFreshness[index] !== rightFreshness[index]) {
+        return leftFreshness[index] > rightFreshness[index] ? 1 : -1;
+      }
+    }
+    return 0;
+  }
+
+  function backupOption() {
+    return { type: 'script', script_id: BACKUP_SCRIPT_ID };
+  }
+
+  function readBackupEntries() {
+    const getter = api('getVariables');
+    if (typeof getter !== 'function') return {};
+    try {
+      const variables = getter(backupOption()) || {};
+      const entries = variables[BACKUP_STATE_KEY];
+      return entries && typeof entries === 'object' ? clone(entries) : {};
+    } catch (error) {
+      if (!runtime.storageWarningLogged) {
+        runtime.storageWarningLogged = true;
+        console.warn('[天下演化] 独立状态备份暂不可用，将继续使用聊天变量主副本。', error);
+      }
+      return {};
+    }
+  }
+
+  function readBackupEntry(chatId = getCurrentChatId()) {
+    if (!chatId) return null;
+    const entry = readBackupEntries()[chatId];
+    return entry && typeof entry === 'object' ? entry : null;
+  }
+
+  function backupEntrySequence(entry) {
+    return Math.max(
+      0,
+      Math.floor(Number(entry?.sequence) || 0),
+      stateStorageRevision(entry?.state),
+    );
+  }
+
+  function writeBackupEntry(chatId, entry) {
+    const writer = api('insertOrAssignVariables');
+    if (typeof writer !== 'function' || !chatId) return false;
+    try {
+      const entries = readBackupEntries();
+      entries[chatId] = clone(entry);
+      writer({ [BACKUP_STATE_KEY]: entries }, backupOption());
+      runtime.storageWarningLogged = false;
+      return true;
+    } catch (error) {
+      if (!runtime.storageWarningLogged) {
+        runtime.storageWarningLogged = true;
+        console.warn('[天下演化] 写入独立状态备份失败，将保留聊天变量主副本。', error);
+      }
+      return false;
+    }
+  }
+
+  function writeStateBackup(state) {
+    const chatId = asText(state?.chatId) || getCurrentChatId();
+    if (!chatId) return false;
+    return writeBackupEntry(chatId, {
+      version: 1,
+      chatId,
+      sequence: stateStorageRevision(state),
+      deleted: false,
+      updatedAt: asText(state?.updatedAt) || nowIso(),
+      state: clone(state),
+    });
+  }
+
+  function writeBackupTombstone(chatId, sequence) {
+    return writeBackupEntry(chatId, {
+      version: 1,
+      chatId,
+      sequence: Math.max(1, Math.floor(Number(sequence) || 0)),
+      deleted: true,
+      updatedAt: nowIso(),
+    });
+  }
+
+  function writePrimaryState(state) {
+    const writer = api('insertOrAssignVariables');
+    if (typeof writer !== 'function') return false;
+    writer({ [CHAT_STATE_KEY]: clone(state) }, { type: 'chat' });
+    return true;
+  }
+
+  function removePrimaryState() {
+    const deleter = api('deleteVariable');
+    if (typeof deleter !== 'function') return false;
+    deleter(CHAT_STATE_KEY, { type: 'chat' });
+    return true;
+  }
+
+  function noteStorageRecovery(message, detail) {
+    runtime.storageRecoveryCount += 1;
+    runtime.lastNotice = message;
+    console.warn(`[天下演化] ${message}`, detail);
+  }
+
+  function stampLegacyState(state, backupEntry) {
+    if (stateStorageRevision(state) > 0) return state;
+    return normalizeState(
+      {
+        ...state,
+        _storageRevision: Math.max(1, backupEntrySequence(backupEntry) + 1),
+        updatedAt: asText(state?.updatedAt) || nowIso(),
+      },
+      state.chatId,
+    );
+  }
+
   function getChatState() {
     const getter = api('getVariables');
-    if (typeof getter !== 'function') return createEmptyState();
+    const chatId = getCurrentChatId();
+    if (typeof getter !== 'function' || !chatId) return createEmptyState(chatId);
+
     const variables = getter({ type: 'chat' }) || {};
-    return normalizeState(variables[CHAT_STATE_KEY], getCurrentChatId());
+    const rawPrimary = variables[CHAT_STATE_KEY];
+    let primary = isStoredState(rawPrimary, chatId) ? normalizeState(rawPrimary, chatId) : null;
+    const backupEntry = readBackupEntry(chatId);
+    const backupState = isStoredState(backupEntry?.state, chatId)
+      ? normalizeState(backupEntry.state, chatId)
+      : null;
+    const backupSequence = backupEntrySequence(backupEntry);
+
+    if (backupEntry?.deleted && backupSequence >= stateStorageRevision(primary)) {
+      if (primary) {
+        removePrimaryState();
+        noteStorageRecovery('已拦截其他脚本恢复的清空前旧档案。', {
+          chatId,
+          staleStorageRevision: stateStorageRevision(primary),
+          tombstoneSequence: backupSequence,
+        });
+      }
+      return createEmptyState(chatId);
+    }
+
+    if (!primary && backupState) {
+      const restored = stampLegacyState(backupState, backupEntry);
+      writePrimaryState(restored);
+      if (stateStorageRevision(restored) !== backupSequence) writeStateBackup(restored);
+      noteStorageRecovery('检测到聊天变量被外部脚本覆盖，已从独立备份恢复天下档案。', {
+        chatId,
+        revision: restored.revision,
+        storageRevision: restored._storageRevision,
+      });
+      return restored;
+    }
+
+    if (!primary) return createEmptyState(chatId);
+
+    if (stateStorageRevision(primary) === 0 && backupState && backupSequence > 0) {
+      const restored = normalizeState(backupState, chatId);
+      writePrimaryState(restored);
+      noteStorageRecovery('检测到天下档案被无版本旧快照覆盖，已恢复最新独立备份。', {
+        chatId,
+        primaryRevision: primary.revision,
+        backupRevision: restored.revision,
+        storageRevision: restored._storageRevision,
+      });
+      return restored;
+    }
+
+    primary = stampLegacyState(primary, backupEntry);
+    if (!backupState || compareStateFreshness(primary, backupState) > 0) {
+      writePrimaryState(primary);
+      writeStateBackup(primary);
+      return primary;
+    }
+
+    if (compareStateFreshness(backupState, primary) > 0) {
+      const restored = stampLegacyState(backupState, backupEntry);
+      writePrimaryState(restored);
+      noteStorageRecovery('检测到天下档案被旧快照回滚，已恢复最新独立备份。', {
+        chatId,
+        primaryRevision: primary.revision,
+        backupRevision: restored.revision,
+        storageRevision: restored._storageRevision,
+      });
+      return restored;
+    }
+
+    return primary;
   }
 
   function saveChatState(state) {
     const writer = api('insertOrAssignVariables');
     if (typeof writer !== 'function') throw new Error('未找到聊天变量写入接口。');
-    const normalized = normalizeState({ ...state, updatedAt: nowIso() }, getCurrentChatId());
+    const chatId = getCurrentChatId();
+    const getter = api('getVariables');
+    const rawPrimary = typeof getter === 'function' ? getter({ type: 'chat' })?.[CHAT_STATE_KEY] : null;
+    const backupEntry = readBackupEntry(chatId);
+    const nextStorageRevision =
+      Math.max(
+        stateStorageRevision(state),
+        isStoredState(rawPrimary, chatId) ? stateStorageRevision(rawPrimary) : 0,
+        backupEntrySequence(backupEntry),
+      ) + 1;
+    const normalized = normalizeState(
+      { ...state, chatId, _storageRevision: nextStorageRevision, updatedAt: nowIso() },
+      chatId,
+    );
+    writeStateBackup(normalized);
     writer({ [CHAT_STATE_KEY]: normalized }, { type: 'chat' });
     return normalized;
   }
 
   function deleteChatState() {
-    const deleter = api('deleteVariable');
-    if (typeof deleter === 'function') deleter(CHAT_STATE_KEY, { type: 'chat' });
+    const chatId = getCurrentChatId();
+    const getter = api('getVariables');
+    const rawPrimary = typeof getter === 'function' ? getter({ type: 'chat' })?.[CHAT_STATE_KEY] : null;
+    const backupEntry = readBackupEntry(chatId);
+    const tombstoneSequence =
+      Math.max(
+        isStoredState(rawPrimary, chatId) ? stateStorageRevision(rawPrimary) : 0,
+        backupEntrySequence(backupEntry),
+      ) + 1;
+    writeBackupTombstone(chatId, tombstoneSequence);
+    removePrimaryState();
+  }
+
+  function reconcileStateStorage() {
+    const recoveryCount = runtime.storageRecoveryCount;
+    const state = getChatState();
+    const recovered = runtime.storageRecoveryCount !== recoveryCount;
+    if (recovered) {
+      if (settings.enabled) refreshInjection(state);
+      if (runtime.isOpen) renderPanel();
+      updateLampState();
+    }
+    return { state, recovered };
   }
 
   function compactSnapshot(state) {
@@ -6775,6 +7024,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     clearPendingSettlement();
     clearTimeout(runtime.bannerTimer);
     clearInterval(runtime.themeTimer);
+    clearInterval(runtime.integrityTimer);
     clearInjection();
     runtime.cleanupFns.splice(0).forEach(fn => {
       try {
@@ -6796,10 +7046,12 @@ import integratedStyles from './styles-integrated.raw?raw';
     await waitForGlobal('Mvu');
     runtime.mvuReady = Boolean(api('Mvu'));
     runtime.currentChatId = getCurrentChatId();
+    const initialState = getChatState();
     mountUi();
     runtime.themeTimer = setInterval(syncStatusbarTheme, 600);
+    runtime.integrityTimer = setInterval(reconcileStateStorage, STORAGE_INTEGRITY_INTERVAL_MS);
     registerEvents();
-    if (settings.enabled) refreshInjection();
+    if (settings.enabled) refreshInjection(initialState);
     window.addEventListener('pagehide', cleanup, { once: true });
     console.info(`[天下演化] v${VERSION} 已加载，自动推演${settings.enabled ? '已启用' : '未启用'}。`);
   }
