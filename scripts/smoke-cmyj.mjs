@@ -193,7 +193,7 @@ assert.match(
   /remoteLoaderUrl = 'https:\/\/cmyj-frontend\.pages\.dev\/cmyj-1\.7\/loader\/index\.js'/,
 );
 assert.doesNotMatch(releaseCardPackagerSource, /remoteLoaderUrl\s*=\s*['"][^'"]+\?v=/);
-assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.8\.0'/);
+assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.8\.1'/);
 assert.match(releaseWorkshopSource, /function textCoverMarkup/);
 assert.match(releaseWorkshopSource, /class="text-cover tone-/);
 assert.match(releaseWorkshopSource, /data-text-cover-image/);
@@ -324,7 +324,7 @@ assert.doesNotMatch(releaseStatusbarSource, /rebindCharWorldbooks/);
 assert.match(releaseGeneratorSource, /STORAGE_KEY_API = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /API_SETTINGS_KEY = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /minBaseVersion: '1\.7\.0'/);
-assert.match(releaseWorldEngineSource, /VERSION = '1\.8\.0'/);
+assert.match(releaseWorldEngineSource, /VERSION = '1\.8\.1'/);
 assert.match(releaseWorldEngineSource, /settingsVersion: 4/);
 assert.match(releaseWorldEngineSource, /requestTimeoutMs: 90000/);
 assert.match(releaseWorldEngineSource, /data-setting="requestTimeoutSeconds"/);
@@ -361,7 +361,9 @@ assert.match(releaseWorldEngineSource, /hasOperationChangeBeyondIdentity/);
 assert.match(releaseWorldEngineSource, /误用于 upsert 的 `set`、`changes`、`patch`|OPERATION_PAYLOAD_KEYS/);
 assert.match(releaseWorldEngineSource, /changes 全部无效，本轮未写入档案/);
 assert.match(releaseWorldEngineSource, /renderParallelWorld/);
-assert.match(releaseWorldEngineSource, /queuedProcess/);
+assert.match(releaseWorldEngineSource, /createPendingSettlement/);
+assert.match(releaseWorldEngineSource, /waitForStableMessage/);
+assert.doesNotMatch(releaseWorldEngineSource, /on\(events\.GENERATION_AFTER_COMMANDS/);
 assert.doesNotMatch(releaseWorldEngineSource, /setChatMessages/);
 assert.match(releaseWorldEngineStyle, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
 assert.match(releaseWorldEngineStyle, /\.cwe-notice-stack/);
