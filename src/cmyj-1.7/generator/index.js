@@ -1,4 +1,9 @@
-import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-compat.js';
+import {
+  deepSeekJsonSchemaPrompt,
+  isOfficialDeepSeekApi,
+  normalizeApiRequestError,
+  shouldRetryApiRequest,
+} from '../shared/api-compat.js';
 
 (() => {
   'use strict';
@@ -1688,7 +1693,8 @@ ${r.nsfwContent || '（无）'}
             });
         return parseAiResult(raw);
       } catch (e) {
-        lastError = e;
+        lastError = normalizeApiRequestError(e, { provider: usePromptJsonSchema ? 'DeepSeek' : 'AI 接口' });
+        if (!shouldRetryApiRequest(e)) break;
         if (attempt === 0) {
           config.ordered_prompts = [
             { role: 'system', content: buildSystemPromptForRetry() },
@@ -1733,7 +1739,8 @@ ${r.nsfwContent || '（无）'}
             });
         return parseAiResult(raw);
       } catch (e) {
-        lastError = e;
+        lastError = normalizeApiRequestError(e, { provider: usePromptJsonSchema ? 'DeepSeek' : 'AI 接口' });
+        if (!shouldRetryApiRequest(e)) break;
         if (attempt === 0) {
           config.ordered_prompts = [
             { role: 'system', content: buildSystemPromptForRetry() },
