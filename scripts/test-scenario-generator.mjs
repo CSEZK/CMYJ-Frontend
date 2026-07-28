@@ -3,7 +3,9 @@ import YAML from 'yaml';
 import {
   deepSeekJsonSchemaPrompt,
   isOfficialDeepSeekApi,
+  normalizeApiRequestError,
   shouldFallbackFromJsonSchema,
+  shouldRetryApiRequest,
 } from '../src/cmyj-1.7/shared/api-compat.js';
 import { buildScenarioCharacterCatalog } from '../src/cmyj-1.7/scenario-generator/character-catalog.js';
 
@@ -21,6 +23,18 @@ assert.equal(isOfficialDeepSeekApi({ apiurl: 'https://example.com/v1/chat/comple
 assert.equal(shouldFallbackFromJsonSchema(new Error('Bad Request')), true);
 assert.equal(shouldFallbackFromJsonSchema(new Error('Request failed with status 400')), true);
 assert.equal(shouldFallbackFromJsonSchema(new Error('Unauthorized')), false);
+assert.match(normalizeApiRequestError(new Error('Bad Request'), { provider: 'DeepSeek' }).message, /HTTP 400/);
+assert.match(normalizeApiRequestError(new Error('Payment Required'), { provider: 'DeepSeek' }).message, /余额不足/);
+assert.match(normalizeApiRequestError(new Error('Unauthorized'), { provider: 'DeepSeek' }).message, /API Key 无效/);
+assert.match(normalizeApiRequestError(new Error('Too Many Requests'), { provider: 'DeepSeek' }).message, /HTTP 429/);
+assert.match(
+  normalizeApiRequestError({ response: { status: 404, data: { error: { message: 'model not found' } } } }).message,
+  /接口或模型不存在/,
+);
+assert.equal(shouldRetryApiRequest(new Error('Payment Required')), false);
+assert.equal(shouldRetryApiRequest(new Error('Bad Request')), false);
+assert.equal(shouldRetryApiRequest(new Error('AI 返回内容不是合法 JSON。')), true);
+assert.equal(shouldRetryApiRequest({ response: { status: 503 } }), true);
 const deepSeekSchemaPrompt = deepSeekJsonSchemaPrompt({
   name: 'compat_test',
   value: {

@@ -1,6 +1,11 @@
 import YAML from 'yaml';
 import { Schema } from '../schema/definition.js';
-import { deepSeekJsonSchemaPrompt, isOfficialDeepSeekApi } from '../shared/api-compat.js';
+import {
+  deepSeekJsonSchemaPrompt,
+  isOfficialDeepSeekApi,
+  normalizeApiRequestError,
+  shouldRetryApiRequest,
+} from '../shared/api-compat.js';
 import { buildScenarioCharacterCatalog } from './character-catalog.js';
 
 (() => {
@@ -905,7 +910,8 @@ import { buildScenarioCharacterCatalog } from './character-catalog.js';
               });
         return normalizeGeneratedValue(parseAi(raw));
       } catch (error) {
-        lastError = error;
+        lastError = normalizeApiRequestError(error, { provider: usePromptJsonSchema ? 'DeepSeek' : 'AI 接口' });
+        if (!shouldRetryApiRequest(error)) break;
       }
     }
     throw lastError || new Error('AI 生成失败。');
@@ -968,7 +974,10 @@ import { buildScenarioCharacterCatalog } from './character-catalog.js';
         if (text.length < minimumLength) throw new Error(`AI 只返回了 ${text.length} 字符，未形成完整开场。`);
         return normalizeUserToken(text);
       } catch (error) {
-        lastError = error;
+        lastError = normalizeApiRequestError(error, {
+          provider: isOfficialDeepSeekApi(custom) ? 'DeepSeek' : 'AI 接口',
+        });
+        if (!shouldRetryApiRequest(error)) break;
       }
     }
     throw lastError || new Error('AI 没有生成开场正文。');
