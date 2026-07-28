@@ -7,7 +7,7 @@ let source = fullSource.slice(fullSource.indexOf('(() =>'));
 const end = source.lastIndexOf('})();');
 source =
   source.slice(0, end) +
-  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, normalizeWorldChangeResult, buildTransitionFromChanges, worldChangeSystemPrompt, worldChangeOutputSchema, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, normalizeModelRequestError, cancelActiveJob, buildSceneEvidence, buildAutonomyFocus, compactStateForPrompt, buildGenerationLicense, incrementalSystemPrompt, runtime };\n' +
+  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, normalizeWorldChangeResult, buildTransitionFromChanges, worldChangeSystemPrompt, worldChangeOutputSchema, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, normalizeModelRequestError, cancelActiveJob, buildSceneEvidence, buildAutonomyFocus, compactStateForPrompt, buildGenerationLicense, incrementalSystemPrompt, eligibleAssistantMessage, createPendingSettlement, releasePendingSettlementAfterMvu, clearPendingSettlement, waitForStableMessage, settlePendingTicket, registerEvents, runtime };\n' +
   source.slice(end);
 
 const sandbox = {
@@ -54,10 +54,88 @@ const {
   compactStateForPrompt,
   buildGenerationLicense,
   incrementalSystemPrompt,
+  eligibleAssistantMessage,
+  createPendingSettlement,
+  releasePendingSettlementAfterMvu,
+  clearPendingSettlement,
+  waitForStableMessage,
+  settlePendingTicket,
+  registerEvents,
   runtime,
 } = sandbox.__cweTest;
 const emptyState = () => ({ activeEvents: [], actors: [], intelPackets: [], hooks: [], secrets: [] });
 const currentStat = { 世界运转: { 当前地点: '桐城县和济堂药铺' } };
+
+// 自动触发只能来自真实聊天楼层；任何生成生命周期事件都不得直接创建结算任务。
+let triggerMessage = {
+  role: 'assistant',
+  name: '角色',
+  message: '这是一段已经完整写入聊天记录的正文。',
+  swipe_id: 0,
+  data: {},
+};
+sandbox.SillyTavern = { getCurrentChatId: () => 'trigger-test-chat' };
+sandbox.getLastMessageId = () => 7;
+sandbox.getChatMessages = messageId => {
+  if (Number(messageId) !== 7) return [];
+  return [{ ...triggerMessage }];
+};
+const triggerHandlers = new Map();
+sandbox.eventOn = (eventName, handler) => {
+  triggerHandlers.set(eventName, handler);
+};
+sandbox.tavern_events = {
+  GENERATION_STARTED: 'generation-started',
+  GENERATE_AFTER_DATA: 'generate-after-data',
+  CHAT_COMPLETION_PROMPT_READY: 'chat-completion-ready',
+  GENERATE_AFTER_COMBINE_PROMPTS: 'combine-prompts',
+  GENERATION_ENDED: 'generation-ended',
+  GENERATION_STOPPED: 'generation-stopped',
+  MESSAGE_RECEIVED: 'message-received',
+  GENERATION_AFTER_COMMANDS: 'generation-after-commands',
+  MESSAGE_SWIPED: 'message-swiped',
+  MESSAGE_EDITED: 'message-edited',
+  MESSAGE_DELETED: 'message-deleted',
+  CHAT_CHANGED: 'chat-changed',
+};
+sandbox.Mvu = { events: { VARIABLE_UPDATE_ENDED: 'mvu-ended' } };
+registerEvents();
+assert.equal(
+  triggerHandlers.has('generation-after-commands'),
+  false,
+  '插件请求和提示词查看器会触发 GENERATION_AFTER_COMMANDS，该事件不得启动天下演化',
+);
+assert.equal(triggerHandlers.has('generation-started'), false, '普通生成生命周期不得参与自动结算');
+triggerHandlers.get('generate-after-data')({ prompt: [{ role: 'user', content: '插件假请求' }] }, false);
+assert.equal(runtime.pendingTicket, null, '普通 API 生成开始不得创建结算票据');
+triggerHandlers.get('message-received')(7, 'extension');
+assert.equal(runtime.pendingTicket, null, '扩展写入不得创建结算票据');
+triggerMessage.message = '...';
+triggerHandlers.get('message-received')(7, 'normal');
+assert.equal(runtime.pendingTicket, null, '请求开始阶段的省略号占位不得创建结算票据');
+triggerMessage.message = '正文完成，MVU 随后会把变量更新写回这一楼。';
+triggerHandlers.get('message-received')(7, 'normal');
+const firstTicketId = runtime.pendingTicket?.id;
+assert.ok(firstTicketId, '真实正文必须创建结算票据');
+triggerHandlers.get('message-received')(7, 'normal');
+assert.equal(runtime.pendingTicket?.id, firstTicketId, '重复 MESSAGE_RECEIVED 必须合并为同一张票据');
+triggerMessage.message += '\n\n<UpdateVariable>_.set("时间", "夜半");</UpdateVariable>';
+triggerHandlers.get('mvu-ended')();
+triggerHandlers.get('mvu-ended')();
+assert.equal(runtime.pendingTicket?.id, firstTicketId, '重复 MVU 结束事件不得创建第二张票据');
+const stableKey = await waitForStableMessage(firstTicketId, { intervalMs: 1, stableChecks: 2, timeoutMs: 50 });
+assert.equal(stableKey?.hash, eligibleAssistantMessage(7, 'normal')?.hash);
+sandbox.getVariables = () => ({
+  cmyj_world_engine_v1: {
+    version: 1,
+    chatId: 'trigger-test-chat',
+    revision: 1,
+    lastProcessed: stableKey,
+  },
+});
+await Promise.all([settlePendingTicket(firstTicketId, 'mvu'), settlePendingTicket(firstTicketId, 'mvu-fallback')]);
+assert.equal(runtime.pendingTicket, null);
+delete sandbox.getVariables;
 
 // 目击许可必须以剔除状态栏后的正文为准：状态栏滞后不能抹掉正文明确出场者，
 // 但只在 initvar 中出现的远方人物也不能被误判为目击者。
@@ -1639,12 +1717,12 @@ await assert.rejects(cancelledRequest, error => error?.code === 'CWE_CANCELLED')
 assert.equal(cancelledGenerationId, cancelledJob.generationId);
 assert.equal(cancelledJob.cancelled, true);
 
-assert.match(fullSource, /const VERSION = '1\.8\.0'/);
+assert.match(fullSource, /const VERSION = '1\.8\.1'/);
 assert.match(fullSource, /requestTimeoutMs: 90000/);
 assert.match(fullSource, /data-setting="requestTimeoutSeconds"/);
 assert.match(fullSource, /data-banner-action="cancel"/);
 assert.match(fullSource, /stopGenerationById/);
 assert.doesNotMatch(fullSource, /json_schema:\s*schema/);
 console.info(
-  '天下演化测试通过：v3 增量协议、空结果、旁线引用、请求预算、兼容提示词、稳定 ID、主动取消、旧档迁移与本地校验均已覆盖。',
+  '天下演化测试通过：真实楼层票据、MVU 去重、假请求隔离、v3 增量协议、空结果、旁线引用、请求预算、稳定 ID、主动取消与旧档迁移均已覆盖。',
 );

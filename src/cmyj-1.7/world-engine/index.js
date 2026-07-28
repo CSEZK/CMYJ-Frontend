@@ -6,7 +6,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 (() => {
   'use strict';
 
-  const VERSION = '1.8.0';
+  const VERSION = '1.8.1';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -110,9 +110,8 @@ import integratedStyles from './styles-integrated.raw?raw';
     modelFetchError: false,
     activeJob: null,
     scheduledTimer: null,
-    pendingMessageId: null,
-    pendingForce: false,
-    queuedProcess: null,
+    pendingTicket: null,
+    ticketCounter: 0,
     bannerTimer: null,
     mvuReady: false,
     themeTimer: null,
@@ -125,7 +124,6 @@ import integratedStyles from './styles-integrated.raw?raw';
     dragMoved: false,
     dragJustEnded: false,
     currentChatId: '',
-    activeMainGeneration: null,
     promptSnapshots: new Map(),
     dryRunCapture: null,
     worldRequestActive: false,
@@ -651,10 +649,6 @@ import integratedStyles from './styles-integrated.raw?raw';
       .trim();
   }
 
-  function isMainGenerationType(value) {
-    return ['normal', 'regenerate', 'swipe', 'continue'].includes(String(value || '').toLowerCase());
-  }
-
   function rolePromptFromSendingMessage(message) {
     if (!message || !['system', 'user', 'assistant'].includes(message.role)) return null;
     if (typeof message.content === 'string') {
@@ -709,14 +703,6 @@ import integratedStyles from './styles-integrated.raw?raw';
       runtime.promptSnapshots.delete(runtime.promptSnapshots.keys().next().value);
     }
     console.info(`[天下演化] 已绑定第 ${messageId} 楼的主模型提示词快照（${snapshot.source}）。`);
-    return true;
-  }
-
-  function bindActivePromptSnapshot(messageId) {
-    const active = runtime.activeMainGeneration;
-    if (!active?.snapshot) return false;
-    if (!rememberPromptSnapshot(messageId, active.snapshot)) return false;
-    runtime.activeMainGeneration = null;
     return true;
   }
 
@@ -5396,8 +5382,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 
   async function processMessage(messageId, { force = false, source = 'auto' } = {}) {
     if (isFirstFloor(messageId) && source !== 'manual') {
-      runtime.pendingMessageId = null;
-      runtime.pendingForce = false;
+      clearPendingSettlement();
       runtime.lastNotice = '首楼是开场初始化内容，自动推演已忽略。';
       renderPanel();
       return getChatState();
@@ -5474,7 +5459,6 @@ import integratedStyles from './styles-integrated.raw?raw';
       const nextState = applyTransition(baseState, transition, messageKey, currentStat || {});
       const saved = saveChatState(nextState);
       refreshInjection(saved);
-      runtime.pendingMessageId = null;
       const sceneCount =
         saved.parallelTurns.at(-1)?.messageId === messageId ? saved.parallelTurns.at(-1).scenes.length : 0;
       const proposedSceneCount = asArray(result.scenes).length;
@@ -5483,6 +5467,35 @@ import integratedStyles from './styles-integrated.raw?raw';
       console.info('[天下演化] 结算完成', { chatId, messageId, revision: saved.revision });
       return saved;
     } catch (error) {
+      const latestKey = getCurrentChatId() === chatId ? currentMessageKey(messageId) : null;
+      if (
+        source !== 'manual' &&
+        !job.cancelled &&
+        latestKey &&
+        !sameMessageKey(latestKey, job.messageKey) &&
+        settings.enabled &&
+        settings.autoRun
+      ) {
+        runtime.lastError = '';
+        runtime.lastNotice = `第 ${messageId} 楼仍在写回变量，已等待稳定版本后重新结算。`;
+        hideEvolutionBanner();
+        const replacement = createPendingSettlement(messageId, {
+          force,
+          type: 'normal',
+          source: 'message-stabilized',
+          waitForMvu: false,
+        });
+        if (replacement) {
+          schedulePendingSettlement(replacement, { source: 'message-stabilized', delayMs: 350 });
+        }
+        console.info('[天下演化] 正文哈希在结算期间改变，旧结果已丢弃并重新排队。', {
+          chatId,
+          messageId,
+          previousHash: job.messageKey.hash,
+          nextHash: latestKey.hash,
+        });
+        return getChatState();
+      }
       if (job.cancelled || isCancellationError(error)) {
         runtime.lastError = '';
         runtime.lastNotice = job.cancelReason || '本轮天下演化已取消。';
@@ -5499,11 +5512,6 @@ import integratedStyles from './styles-integrated.raw?raw';
       runtime.busy = false;
       updateLampState();
       renderPanel();
-      const queued = runtime.queuedProcess;
-      runtime.queuedProcess = null;
-      if (queued && settings.enabled) {
-        scheduleProcess(queued.messageId, queued.options);
-      }
     }
   }
 
@@ -5527,38 +5535,159 @@ import integratedStyles from './styles-integrated.raw?raw';
     if (notify) showEvolutionBanner('cancelled', '天下演化已取消', reason, { autoHideMs: 4500 });
   }
 
-  function scheduleProcess(messageId, { force = false, source = 'auto', delayMs = settings.settleDelayMs } = {}) {
+  function clearScheduledSettlement() {
     clearTimeout(runtime.scheduledTimer);
-    if (isFirstFloor(messageId) && source !== 'manual') {
-      runtime.pendingMessageId = null;
-      runtime.pendingForce = false;
-      return;
-    }
-    runtime.pendingMessageId = Number(messageId);
-    runtime.scheduledTimer = setTimeout(() => {
-      if (!settings.enabled || (!settings.autoRun && source === 'auto')) return;
-      if (runtime.busy) {
-        runtime.queuedProcess = {
-          messageId: Number(messageId),
-          options: { force, source, delayMs: 180 },
-        };
-        return;
-      }
-      processMessage(messageId, { force, source }).catch(() => {});
-    }, delayMs);
+    runtime.scheduledTimer = null;
   }
 
-  function ensureLatestTurnSettledBeforeMainGeneration(generationType, dryRun) {
-    if (dryRun || runtime.dryRunCapture || !settings.enabled || !settings.autoRun) return;
-    if (['regenerate', 'swipe', 'continue', 'impersonate'].includes(String(generationType || '').toLowerCase())) return;
-    const messageId = findLatestAssistantMessageId();
-    if (messageId <= 0) return;
-    const key = currentMessageKey(messageId);
-    if (!key || sameMessageKey(getChatState().lastProcessed, key)) return;
-    clearTimeout(runtime.scheduledTimer);
-    if (runtime.busy) return;
-    // 天下演化不再阻塞下一轮正文。完成后刷新联动包，供之后的轮次使用。
-    processMessage(messageId, { force: false, source: 'pre-generation' }).catch(() => {});
+  function clearPendingSettlement(ticketId = null) {
+    if (ticketId != null && runtime.pendingTicket?.id !== ticketId) return false;
+    clearScheduledSettlement();
+    runtime.pendingTicket = null;
+    return true;
+  }
+
+  function eligibleAssistantMessage(messageId, type = 'normal') {
+    const normalizedType = String(type || '').toLowerCase();
+    if (['quiet', 'extension', 'command', 'impersonate', 'first_message'].includes(normalizedType)) return null;
+    if (isFirstFloor(messageId)) return null;
+    const getLast = api('getLastMessageId');
+    if (typeof getLast === 'function' && Number(getLast()) !== Number(messageId)) return null;
+    const key = currentMessageKey(Number(messageId));
+    if (!key || asText(key.message).length < 5) return null;
+    return key;
+  }
+
+  function createPendingSettlement(
+    messageId,
+    { force = false, type = 'normal', source = 'auto', waitForMvu = runtime.mvuReady } = {},
+  ) {
+    const messageKey = eligibleAssistantMessage(messageId, type);
+    if (!messageKey || !settings.enabled || !settings.autoRun) return null;
+    const existing = runtime.pendingTicket;
+    if (
+      existing &&
+      existing.chatId === getCurrentChatId() &&
+      Number(existing.messageId) === Number(messageId) &&
+      Number(existing.swipeId) === Number(messageKey.swipeId)
+    ) {
+      existing.force ||= Boolean(force);
+      existing.messageKey = messageKey;
+      existing.source = source;
+      return existing;
+    }
+    clearPendingSettlement();
+    const ticket = {
+      id: ++runtime.ticketCounter,
+      chatId: getCurrentChatId(),
+      messageId: Number(messageId),
+      swipeId: Number(messageKey.swipeId),
+      messageKey,
+      force: Boolean(force),
+      source,
+      createdAt: Date.now(),
+    };
+    runtime.pendingTicket = ticket;
+    schedulePendingSettlement(ticket, {
+      source: waitForMvu ? 'mvu-fallback' : source,
+      delayMs: waitForMvu ? Math.max(settings.settleDelayMs + 12000, 15000) : settings.settleDelayMs,
+    });
+    return ticket;
+  }
+
+  function schedulePendingSettlement(
+    ticket,
+    { source = ticket?.source || 'auto', delayMs = settings.settleDelayMs } = {},
+  ) {
+    if (!ticket || runtime.pendingTicket?.id !== ticket.id) return;
+    clearScheduledSettlement();
+    runtime.scheduledTimer = setTimeout(() => {
+      settlePendingTicket(ticket.id, source).catch(error => {
+        console.error('[天下演化] 自动结算票据处理失败', error);
+      });
+    }, Math.max(0, Number(delayMs) || 0));
+  }
+
+  async function waitForStableMessage(ticketId, { intervalMs = 250, stableChecks = 3, timeoutMs = 5000 } = {}) {
+    const startedAt = Date.now();
+    let previous = null;
+    let stableCount = 0;
+    while (Date.now() - startedAt <= timeoutMs) {
+      const ticket = runtime.pendingTicket;
+      if (!ticket || ticket.id !== ticketId || ticket.chatId !== getCurrentChatId()) return null;
+      const key = eligibleAssistantMessage(ticket.messageId, ticket.source);
+      if (!key || Number(key.swipeId) !== Number(ticket.swipeId)) return null;
+      if (previous && sameMessageKey(previous, key)) {
+        stableCount += 1;
+        if (stableCount >= stableChecks - 1) return key;
+      } else {
+        previous = key;
+        stableCount = 0;
+      }
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+    }
+    return null;
+  }
+
+  async function settlePendingTicket(ticketId, source = 'auto') {
+    if (!settings.enabled || !settings.autoRun) {
+      clearPendingSettlement(ticketId);
+      return;
+    }
+    const stableKey = await waitForStableMessage(ticketId);
+    const ticket = runtime.pendingTicket;
+    if (!ticket || ticket.id !== ticketId) return;
+    if (!stableKey) {
+      clearPendingSettlement(ticketId);
+      return;
+    }
+    if (!ticket.force && sameMessageKey(getChatState().lastProcessed, stableKey)) {
+      clearPendingSettlement(ticketId);
+      return;
+    }
+    if (runtime.busy) {
+      schedulePendingSettlement(ticket, { source, delayMs: 350 });
+      return;
+    }
+    const { messageId, force } = ticket;
+    clearPendingSettlement(ticketId);
+    try {
+      await processMessage(messageId, { force, source });
+    } catch {
+      const current = currentMessageKey(messageId);
+      if (current && !sameMessageKey(current, stableKey) && settings.enabled && settings.autoRun) {
+        const replacement = createPendingSettlement(messageId, {
+          force,
+          type: 'normal',
+          source: 'message-stabilized',
+          waitForMvu: false,
+        });
+        if (replacement) schedulePendingSettlement(replacement, { source: 'message-stabilized', delayMs: 350 });
+      }
+    }
+  }
+
+  function releasePendingSettlementAfterMvu() {
+    const ticket = runtime.pendingTicket;
+    if (!ticket) return;
+    const current = eligibleAssistantMessage(ticket.messageId, ticket.source);
+    if (!current || Number(current.swipeId) !== Number(ticket.swipeId)) {
+      clearPendingSettlement(ticket.id);
+      return;
+    }
+    ticket.messageKey = current;
+    // MVU 在 VARIABLE_UPDATE_ENDED 后仍可能继续写回聊天楼层；先留出窗口，再检查哈希稳定性。
+    schedulePendingSettlement(ticket, { source: 'mvu', delayMs: 400 });
+  }
+
+  function scheduleForcedSettlement(messageId, source) {
+    const ticket = createPendingSettlement(messageId, {
+      force: true,
+      type: 'normal',
+      source,
+      waitForMvu: false,
+    });
+    if (ticket) schedulePendingSettlement(ticket, { source, delayMs: settings.settleDelayMs });
   }
 
   function reconcileAfterHistoryChange() {
@@ -6379,10 +6508,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       </div>`;
     banner.querySelector('[data-banner-action="close"]')?.addEventListener('click', hideEvolutionBanner);
     banner.querySelector('[data-banner-action="cancel"]')?.addEventListener('click', () => {
-      clearTimeout(runtime.scheduledTimer);
-      runtime.pendingMessageId = null;
-      runtime.pendingForce = false;
-      runtime.queuedProcess = null;
+      clearPendingSettlement();
       cancelActiveJob('已由用户取消本轮天下演化。', { notify: true });
     });
     if (autoHideMs > 0) {
@@ -6573,123 +6699,63 @@ import integratedStyles from './styles-integrated.raw?raw';
     const events = globalThis.tavern_events ?? hostWindow.tavern_events;
     if (typeof on !== 'function' || !events) return;
 
-    on(events.GENERATION_STARTED, (generationType, _options, dryRun) => {
-      if (dryRun || runtime.dryRunCapture || runtime.worldRequestActive || !isMainGenerationType(generationType))
-        return;
-      runtime.activeMainGeneration = {
-        type: String(generationType),
-        startedAt: Date.now(),
-        snapshot: null,
-      };
-      try {
-        refreshInjection(getChatState(), recentConversationFocusText());
-      } catch (error) {
-        console.warn('[天下演化] 刷新人物知识权限卡失败，将沿用现有注入。', error);
-      }
-    });
     on(events.GENERATE_AFTER_DATA, (generateData, dryRun) => {
       const snapshot = chatPromptSnapshot(
         generateData?.prompt,
         dryRun ? 'dry-run/generate-after-data' : 'generate-after-data',
       );
-      if (runtime.dryRunCapture && (dryRun === true || runtime.activeMainGeneration == null)) {
+      if (runtime.dryRunCapture && dryRun !== false) {
         runtime.dryRunCapture.resolve(snapshot);
-        return;
-      }
-      if (!dryRun && runtime.activeMainGeneration && snapshot) {
-        runtime.activeMainGeneration.snapshot = snapshot;
       }
     });
     on(events.CHAT_COMPLETION_PROMPT_READY, ({ chat, dryRun } = {}) => {
       const snapshot = chatPromptSnapshot(chat, dryRun ? 'dry-run/chat-completion' : 'chat-completion');
-      if (runtime.dryRunCapture && (dryRun === true || runtime.activeMainGeneration == null)) {
+      if (runtime.dryRunCapture && dryRun !== false) {
         runtime.dryRunCapture.resolve(snapshot);
-        return;
-      }
-      if (!dryRun && runtime.activeMainGeneration && snapshot) {
-        runtime.activeMainGeneration.snapshot = snapshot;
       }
     });
     on(events.GENERATE_AFTER_COMBINE_PROMPTS, ({ prompt, dryRun } = {}) => {
       const snapshot = textPromptSnapshot(prompt, dryRun ? 'dry-run/text-completion' : 'text-completion');
-      if (runtime.dryRunCapture && (dryRun === true || runtime.activeMainGeneration == null)) {
+      if (runtime.dryRunCapture && dryRun !== false) {
         runtime.dryRunCapture.resolve(snapshot);
-        return;
       }
-      if (!dryRun && runtime.activeMainGeneration && snapshot) {
-        runtime.activeMainGeneration.snapshot = snapshot;
-      }
-    });
-    on(events.GENERATION_ENDED, messageId => {
-      bindActivePromptSnapshot(Number(messageId));
-    });
-    on(events.GENERATION_STOPPED, () => {
-      runtime.activeMainGeneration = null;
     });
     on(events.MESSAGE_RECEIVED, (messageId, type) => {
-      bindActivePromptSnapshot(Number(messageId));
-      if (!settings.enabled || !settings.autoRun) return;
-      if (isFirstFloor(messageId) || type === 'first_message' || type === 'quiet' || type === 'extension') return;
-      runtime.pendingMessageId = Number(messageId);
-      runtime.pendingForce = ['regenerate', 'swipe'].includes(type);
-      if (runtime.mvuReady) {
-        // 正常路径由 VARIABLE_UPDATE_ENDED 接手；较长兜底只防止第三方 MVU 没有发出结束事件。
-        scheduleProcess(Number(messageId), {
-          force: runtime.pendingForce,
-          source: 'mvu-fallback',
-          delayMs: Math.max(settings.settleDelayMs + 12000, 15000),
-        });
-      } else {
-        scheduleProcess(Number(messageId), { force: runtime.pendingForce, source: 'auto' });
-      }
+      createPendingSettlement(Number(messageId), {
+        force: ['regenerate', 'swipe'].includes(String(type || '').toLowerCase()),
+        type,
+        source: 'message-received',
+        waitForMvu: runtime.mvuReady,
+      });
     });
     const mvu = api('Mvu');
     if (mvu?.events?.VARIABLE_UPDATE_ENDED) {
       on(mvu.events.VARIABLE_UPDATE_ENDED, () => {
         if (!settings.enabled || !settings.autoRun) return;
-        if (runtime.pendingMessageId == null) return;
-        const messageId = currentMessageKey(runtime.pendingMessageId) ? runtime.pendingMessageId : -1;
-        if (messageId <= 0) {
-          runtime.pendingMessageId = null;
-          runtime.pendingForce = false;
-          return;
-        }
-        scheduleProcess(messageId, { force: runtime.pendingForce, source: 'mvu', delayMs: 120 });
-        runtime.pendingForce = false;
+        releasePendingSettlementAfterMvu();
       });
     }
-    on(events.GENERATION_AFTER_COMMANDS, (generationType, _options, dryRun) =>
-      ensureLatestTurnSettledBeforeMainGeneration(generationType, dryRun),
-    );
     on(events.MESSAGE_SWIPED, messageId => {
       if (!settings.enabled || !settings.autoRun) return;
       if (isFirstFloor(messageId)) return;
-      scheduleProcess(Number(messageId), { force: true, source: 'auto' });
+      scheduleForcedSettlement(Number(messageId), 'swipe');
     });
     on(events.MESSAGE_EDITED, messageId => {
       runtime.promptSnapshots.delete(Number(messageId));
       if (!settings.enabled || !settings.autoRun) return;
       if (isFirstFloor(messageId)) return;
       const key = currentMessageKey(Number(messageId));
-      if (key) scheduleProcess(Number(messageId), { force: true, source: 'auto' });
+      if (key) scheduleForcedSettlement(Number(messageId), 'edit');
     });
     on(events.MESSAGE_DELETED, () => {
-      clearTimeout(runtime.scheduledTimer);
-      runtime.pendingMessageId = null;
-      runtime.pendingForce = false;
-      runtime.queuedProcess = null;
-      runtime.activeMainGeneration = null;
+      clearPendingSettlement();
       runtime.promptSnapshots.clear();
       setTimeout(reconcileAfterHistoryChange, 250);
     });
     on(events.CHAT_CHANGED, chatId => {
       cancelActiveJob('已切换聊天，旧聊天的推演结果将被丢弃。');
       hideEvolutionBanner();
-      clearTimeout(runtime.scheduledTimer);
-      runtime.pendingMessageId = null;
-      runtime.pendingForce = false;
-      runtime.queuedProcess = null;
-      runtime.activeMainGeneration = null;
+      clearPendingSettlement();
       runtime.promptSnapshots.clear();
       runtime.dryRunCapture = null;
       clearInjection();
@@ -6706,7 +6772,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 
   function cleanup() {
     cancelActiveJob('天下演化脚本已卸载。');
-    clearTimeout(runtime.scheduledTimer);
+    clearPendingSettlement();
     clearTimeout(runtime.bannerTimer);
     clearInterval(runtime.themeTimer);
     clearInjection();
