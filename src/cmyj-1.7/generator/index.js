@@ -1532,7 +1532,10 @@ TA不想被碰触的点——不是身体部位，是心理上的。什么事会
       statusEl.className = `ccg-status ${type === 'err' ? 'ccg-error' : ''}`;
       notifyTimer = setTimeout(() => {
         const el = root?.querySelector('.ccg-status');
-        if (el) { el.textContent = ''; el.className = 'ccg-status'; }
+        if (el) {
+          el.textContent = state.error || '';
+          el.className = `ccg-status ${state.error ? 'ccg-error' : ''}`;
+        }
         notifyTimer = null;
       }, 3000);
     }

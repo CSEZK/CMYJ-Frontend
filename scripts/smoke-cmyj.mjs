@@ -207,6 +207,7 @@ assert.match(releaseGeneratorSource, /usePromptJsonSchema \? \{\} : \{ json_sche
 assert.match(releaseGeneratorSource, /customApi \? \{ custom_api: customApi \} : \{\}/);
 assert.match(releaseGeneratorSource, /normalizeApiRequestError\(e,/);
 assert.match(releaseGeneratorSource, /shouldRetryApiRequest\(e\)/);
+assert.match(releaseGeneratorSource, /el\.textContent = state\.error \|\| ''/);
 assert.match(releaseScenarioSource, /normalizeApiRequestError\(error,/);
 assert.match(releaseScenarioSource, /shouldRetryApiRequest\(error\)/);
 assert.match(releaseWorldEngineSource, /jsonSchemaCompatibilityPrompt\(schema\)/);
