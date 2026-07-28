@@ -7,7 +7,7 @@ let source = fullSource.slice(fullSource.indexOf('(() =>'));
 const end = source.lastIndexOf('})();');
 source =
   source.slice(0, end) +
-  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, normalizeWorldChangeResult, buildTransitionFromChanges, worldChangeSystemPrompt, worldChangeOutputSchema, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, normalizeModelRequestError, cancelActiveJob, buildSceneEvidence, buildAutonomyFocus, compactStateForPrompt, buildGenerationLicense, incrementalSystemPrompt, eligibleAssistantMessage, createPendingSettlement, releasePendingSettlementAfterMvu, clearPendingSettlement, waitForStableMessage, settlePendingTicket, registerEvents, runtime };\n' +
+  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, normalizeWorldChangeResult, buildTransitionFromChanges, worldChangeSystemPrompt, worldChangeOutputSchema, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, normalizeModelRequestError, cancelActiveJob, buildSceneEvidence, buildAutonomyFocus, compactStateForPrompt, buildGenerationLicense, incrementalSystemPrompt, eligibleAssistantMessage, createPendingSettlement, releasePendingSettlementAfterMvu, clearPendingSettlement, waitForStableMessage, settlePendingTicket, registerEvents, getChatState, saveChatState, deleteChatState, reconcileStateStorage, runtime };\n' +
   source.slice(end);
 
 const sandbox = {
@@ -61,6 +61,10 @@ const {
   waitForStableMessage,
   settlePendingTicket,
   registerEvents,
+  getChatState,
+  saveChatState,
+  deleteChatState,
+  reconcileStateStorage,
   runtime,
 } = sandbox.__cweTest;
 const emptyState = () => ({ activeEvents: [], actors: [], intelPackets: [], hooks: [], secrets: [] });
@@ -136,6 +140,101 @@ sandbox.getVariables = () => ({
 await Promise.all([settlePendingTicket(firstTicketId, 'mvu'), settlePendingTicket(firstTicketId, 'mvu-fallback')]);
 assert.equal(runtime.pendingTicket, null);
 delete sandbox.getVariables;
+
+// 明月秋青等脚本可能用启动时旧快照整表 replace 聊天变量。
+// 天下演化必须从独立脚本变量备份恢复，并拦截清空前旧副本被重新写回。
+const storageChatId = 'storage-conflict-chat';
+const chatVariables = {};
+const scriptVariables = {};
+sandbox.SillyTavern = { getCurrentChatId: () => storageChatId };
+sandbox.getVariables = option => {
+  if (option?.type === 'script') return scriptVariables[option.script_id] || {};
+  return chatVariables;
+};
+sandbox.insertOrAssignVariables = (patch, option) => {
+  const target =
+    option?.type === 'script'
+      ? (scriptVariables[option.script_id] ||= {})
+      : chatVariables;
+  Object.assign(target, structuredClone(patch));
+  return target;
+};
+sandbox.deleteVariable = (key, option) => {
+  const target =
+    option?.type === 'script'
+      ? (scriptVariables[option.script_id] ||= {})
+      : chatVariables;
+  delete target[key];
+};
+
+const protectedState = saveChatState(
+  normalizeState(
+    {
+      version: 1,
+      chatId: storageChatId,
+      revision: 4,
+      lastProcessed: { messageId: 12, swipeId: 0, hash: 'protected-state' },
+    },
+    storageChatId,
+  ),
+);
+assert.equal(protectedState._storageRevision, 1, '首次双写必须生成独立存储修订号');
+assert.equal(
+  scriptVariables['cmyj-world-engine-backup-v1'].cmyj_world_engine_backups_v1[storageChatId].state.revision,
+  4,
+  '保存主状态时必须同步独立脚本变量备份',
+);
+
+delete chatVariables.cmyj_world_engine_v1;
+chatVariables.mqzn_chat_data = { summaries: [{ version: 1 }] };
+const recoveredMissingState = getChatState();
+assert.equal(recoveredMissingState.revision, 4, '聊天变量主副本被整表删除后必须从备份恢复');
+assert.equal(chatVariables.cmyj_world_engine_v1.revision, 4, '恢复结果必须重新写回聊天变量');
+
+chatVariables.cmyj_world_engine_v1 = {
+  ...structuredClone(protectedState),
+  revision: 1,
+  _storageRevision: 0,
+  updatedAt: '2026-01-01T00:00:00.000Z',
+};
+const recoveredStaleState = getChatState();
+assert.equal(recoveredStaleState.revision, 4, '无存储版本的旧快照不得覆盖较新的独立备份');
+assert.equal(chatVariables.cmyj_world_engine_v1._storageRevision, 1);
+
+const advancedState = saveChatState(
+  normalizeState(
+    {
+      ...recoveredStaleState,
+      revision: 5,
+      lastProcessed: { messageId: 14, swipeId: 0, hash: 'advanced-state' },
+    },
+    storageChatId,
+  ),
+);
+assert.equal(advancedState._storageRevision, 2);
+chatVariables.cmyj_world_engine_v1 = structuredClone(protectedState);
+const recoveredVersionedSnapshot = getChatState();
+assert.equal(recoveredVersionedSnapshot.revision, 5, '带旧存储版本的快照也必须让位于最新独立备份');
+assert.equal(chatVariables.cmyj_world_engine_v1._storageRevision, 2);
+
+deleteChatState();
+assert.equal(chatVariables.cmyj_world_engine_v1, undefined, '主动清空必须删除聊天变量主副本');
+assert.equal(
+  scriptVariables['cmyj-world-engine-backup-v1'].cmyj_world_engine_backups_v1[storageChatId].deleted,
+  true,
+  '主动清空必须写入独立删除标记',
+);
+chatVariables.cmyj_world_engine_v1 = structuredClone(advancedState);
+const clearedState = getChatState();
+assert.equal(clearedState.revision, 0, '清空前旧副本被其他脚本写回时不得复活');
+assert.equal(chatVariables.cmyj_world_engine_v1, undefined, '删除标记必须再次移除外部写回的旧副本');
+
+const restartedState = saveChatState(
+  normalizeState({ version: 1, chatId: storageChatId, revision: 1 }, storageChatId),
+);
+assert.ok(restartedState._storageRevision > 3, '清空后重新演化必须越过删除标记并建立新世代');
+assert.equal(getChatState().revision, 1, '清空后的新演化状态必须正常保存');
+assert.equal(reconcileStateStorage().recovered, false, '状态一致时完整性检查不应重复写回');
 
 // 目击许可必须以剔除状态栏后的正文为准：状态栏滞后不能抹掉正文明确出场者，
 // 但只在 initvar 中出现的远方人物也不能被误判为目击者。
@@ -1717,12 +1816,12 @@ await assert.rejects(cancelledRequest, error => error?.code === 'CWE_CANCELLED')
 assert.equal(cancelledGenerationId, cancelledJob.generationId);
 assert.equal(cancelledJob.cancelled, true);
 
-assert.match(fullSource, /const VERSION = '1\.8\.1'/);
+assert.match(fullSource, /const VERSION = '1\.8\.2'/);
 assert.match(fullSource, /requestTimeoutMs: 90000/);
 assert.match(fullSource, /data-setting="requestTimeoutSeconds"/);
 assert.match(fullSource, /data-banner-action="cancel"/);
 assert.match(fullSource, /stopGenerationById/);
 assert.doesNotMatch(fullSource, /json_schema:\s*schema/);
 console.info(
-  '天下演化测试通过：真实楼层票据、MVU 去重、假请求隔离、v3 增量协议、空结果、旁线引用、请求预算、稳定 ID、主动取消与旧档迁移均已覆盖。',
+  '天下演化测试通过：真实楼层票据、MVU 去重、假请求隔离、存储自愈、主动清空、v3 增量协议、空结果、旁线引用、请求预算、稳定 ID、主动取消与旧档迁移均已覆盖。',
 );
