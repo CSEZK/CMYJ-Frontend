@@ -9,7 +9,7 @@ import {
 } from '../shared/character-adaptation.js';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.8.2';
+const STATUSBAR_VERSION = '1.8.3';
 const MAP_ASSET_REVISION = 'd697affd3ed71c09e8278cc2ac37b5d3b5dc2ded';
 const STORAGE_PREFIX = 'canming-afterglow-statusbar:';
 const CORE_REMOTE_SCRIPT_NAMES = new Set([
