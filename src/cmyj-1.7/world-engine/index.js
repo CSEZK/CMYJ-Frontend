@@ -6,7 +6,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 (() => {
   'use strict';
 
-  const VERSION = '1.8.2';
+  const VERSION = '1.8.3';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const BACKUP_SCRIPT_ID = 'cmyj-world-engine-backup-v1';
@@ -6032,11 +6032,13 @@ import integratedStyles from './styles-integrated.raw?raw';
             const influence = asArray(event.impactDomains).length
               ? event.impactDomains.join('／')
               : event.nextTrigger || '影响仍待显现';
+            const eventLocation = event.location || '地点未明';
             return `<article class="cwe-event-row ${tone}">
-              <div class="cwe-event-when"><i></i><strong>${eventLabels[index]}</strong><b>${index === 0 ? '本轮' : `第 ${Math.max(1, state.revision - index)} 次`}</b><span>${escapeHtml(event.location || '地点未明')}</span></div>
+              <div class="cwe-event-when"><i></i><strong>${eventLabels[index]}</strong><b>${index === 0 ? '本轮' : `第 ${Math.max(1, state.revision - index)} 次`}</b><span class="cwe-event-location-rail">${escapeHtml(eventLocation)}</span></div>
               <div class="cwe-event-story">
                 <header><h4>${escapeHtml(event.title || event.id || '未题名事件')}</h4>${tag(eventState, tone)}</header>
-                <p>${escapeHtml(shortText(event.summary || '值房尚未补录事件摘要。', 240))}</p>
+                <div class="cwe-event-location-full"><span aria-hidden="true">⌖</span>${escapeHtml(eventLocation)}</div>
+                <p>${escapeHtml(event.summary || '值房尚未补录事件摘要。')}</p>
               </div>
               <dl class="cwe-event-detail"><div><dt>因由</dt><dd>${escapeHtml(cause)}</dd></div><div><dt>状态</dt><dd>${escapeHtml(eventState)}</dd></div><div><dt>影响</dt><dd>${escapeHtml(influence)}</dd></div></dl>
             </article>`;
@@ -6064,7 +6066,7 @@ import integratedStyles from './styles-integrated.raw?raw';
         <div class="cwe-world-brief">
           <div class="cwe-brief-kicker"><span>视野外焦点</span><span>第 ${state.revision} 次演化</span></div>
           <h2>${escapeHtml(focusTitle)}</h2>
-          <p>${escapeHtml(shortText(focusDetail, 260))}</p>
+          <p>${escapeHtml(focusDetail)}</p>
         </div>
         <div class="cwe-overview-status">
           <div class="cwe-statline" aria-label="天下演化统计">
@@ -6085,12 +6087,12 @@ import integratedStyles from './styles-integrated.raw?raw';
         <aside class="cwe-margin-notes">
           <section>
             <header><small>正在展开的伏线</small><b>${hook ? '伏线将熟' : '尚无伏线'}</b></header>
-            ${hook ? `<h3>${escapeHtml(hook.title || hook.id)}</h3><p>${escapeHtml(shortText(hook.summary, 220))}</p><div class="cwe-hook-progress"><span>成熟度</span><i><b style="width:${hookProgress}%"></b></i></div><footer><span>${escapeHtml(statusLabel(hook.stage, '潜伏中'))}</span><span>${escapeHtml(hook.trigger ? `触发：${hook.trigger}` : '等待触发')}</span></footer>` : `<h3>伏线尚未入档</h3><p>完成一次推演后，未在玩家视角出现的因果会记录于此。</p><div class="cwe-hook-progress"><span>成熟度</span><i><b style="width:0%"></b></i></div>`}
+            ${hook ? `<h3>${escapeHtml(hook.title || hook.id)}</h3><p>${escapeHtml(hook.summary)}</p><div class="cwe-hook-progress"><span>成熟度</span><i><b style="width:${hookProgress}%"></b></i></div><footer><span>${escapeHtml(statusLabel(hook.stage, '潜伏中'))}</span><span>${escapeHtml(hook.trigger ? `触发：${hook.trigger}` : '等待触发')}</span></footer>` : `<h3>伏线尚未入档</h3><p>完成一次推演后，未在玩家视角出现的因果会记录于此。</p><div class="cwe-hook-progress"><span>成熟度</span><i><b style="width:0%"></b></i></div>`}
           </section>
           <section>
             <header><small>可能延后的后果</small><b>${delayedConsequence ? '后果待至' : '尚待积累'}</b></header>
             <h3>${delayedConsequence ? '局势仍在暗处累积' : '暂无可见压力'}</h3>
-            <p>${escapeHtml(shortText(delayedConsequence || '当前没有需要递延到后续回合的明确后果。', 220))}</p>
+            <p>${escapeHtml(delayedConsequence || '当前没有需要递延到后续回合的明确后果。')}</p>
             <footer><span>有效联动 ${packetSize} 条</span><span>不重复保存聊天摘要</span></footer>
           </section>
         </aside>
@@ -6115,7 +6117,7 @@ import integratedStyles from './styles-integrated.raw?raw';
           .map(
             item => `
       <article class="cwe-record compact">
-        <header><div><small>${escapeHtml(item.channel || '未知渠道')} · ${Math.round(Number(item.reliability || 0) * 100)}%</small><h3>${escapeHtml(shortText(item.content, 90))}</h3></div>${tag(statusLabel(item.status, '在途'))}</header>
+        <header><div><small>${escapeHtml(item.channel || '未知渠道')} · ${Math.round(Number(item.reliability || 0) * 100)}%</small><h3>${escapeHtml(item.content)}</h3></div>${tag(statusLabel(item.status, '在途'))}</header>
         <footer><span>${escapeHtml(item.origin || '未知')} → ${escapeHtml(item.destination || '未知')}</span><span>${escapeHtml(item.eta || '抵达时间未定')}</span></footer>
       </article>`,
           )
@@ -6174,7 +6176,7 @@ import integratedStyles from './styles-integrated.raw?raw';
             actor => `
       <article class="cwe-person">
         <div class="cwe-avatar">${escapeHtml((actor.name || '人').slice(0, 1))}</div>
-        <div><h3>${escapeHtml(actor.name)}</h3><small>${escapeHtml(actor.location || '去向未明')}</small><p>${escapeHtml(shortText(actor.currentAction || actor.goal, 140))}</p></div>
+        <div><h3>${escapeHtml(actor.name)}</h3><small>${escapeHtml(actor.location || '去向未明')}</small><p>${escapeHtml(actor.currentAction || actor.goal)}</p></div>
       </article>`,
           )
           .join('')
@@ -6185,7 +6187,7 @@ import integratedStyles from './styles-integrated.raw?raw';
             hook => `
       <article class="cwe-hook">
         <header><h3>${escapeHtml(hook.title || hook.id)}</h3>${tag(statusLabel(hook.stage, '潜伏中'), 'hook')}</header>
-        <p>${escapeHtml(shortText(hook.summary, 180))}</p>
+        <p>${escapeHtml(hook.summary)}</p>
         ${hook.trigger ? `<small>触发：${escapeHtml(hook.trigger)}</small>` : ''}
       </article>`,
           )
@@ -6244,7 +6246,7 @@ import integratedStyles from './styles-integrated.raw?raw';
             item => `
       <article class="cwe-fact">
         <i></i>
-        <div><p>${escapeHtml(shortText(item.value, 220))}</p><small>${escapeHtml(item.tone)}</small></div>
+        <div><p>${escapeHtml(item.value)}</p><small>${escapeHtml(item.tone)}</small></div>
       </article>`,
           )
           .join('')

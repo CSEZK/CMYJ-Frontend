@@ -3137,3 +3137,107 @@ select:focus-visible {
     padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
 }
+
+/* 长案卷内容必须可完整阅读：模板保留原文，这里只负责自然换行与滚动。 */
+.cwe-event-when .cwe-event-location-rail {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.cwe-event-location-full {
+  display: none;
+}
+
+/* Keep the overview ledger on the same left edge as the overview lead card. */
+.cwe-content-overview .cwe-ledger-layout {
+  padding-left: 0;
+}
+
+.cwe-world-brief > p,
+.cwe-event-story p,
+.cwe-margin-notes p,
+.cwe-record p,
+.cwe-record h3,
+.cwe-record footer span,
+.cwe-person small,
+.cwe-person p,
+.cwe-hook > p,
+.cwe-hook > small,
+.cwe-fact p {
+  max-height: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  -webkit-box-orient: initial;
+  -webkit-line-clamp: unset;
+}
+
+.cwe-event-story p,
+.cwe-margin-notes p {
+  display: block;
+}
+
+.cwe-margin-notes footer,
+.cwe-record footer {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 7px 14px;
+}
+
+.cwe-margin-notes footer span,
+.cwe-record footer span {
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+@media (min-width: 641px) {
+  .cwe-margin-notes > section {
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+}
+
+@media (max-width: 640px) {
+  .cwe-event-when .cwe-event-location-rail {
+    display: none;
+  }
+
+  .cwe-event-location-full {
+    display: flex;
+    min-width: 0;
+    align-items: flex-start;
+    gap: 5px;
+    margin-top: 7px;
+    color: var(--muted);
+    font-size: 9.5px;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+  }
+
+  .cwe-event-location-full > span {
+    flex: 0 0 auto;
+    color: var(--accent2);
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .cwe-event-story p {
+    margin-top: 7px;
+  }
+
+  .cwe-content-overview .cwe-margin-notes > section,
+  .cwe-content-overview .cwe-margin-notes > section:last-child {
+    overflow: visible;
+  }
+
+  .cwe-margin-notes footer span,
+  .cwe-record footer span {
+    flex-basis: 100%;
+  }
+}
