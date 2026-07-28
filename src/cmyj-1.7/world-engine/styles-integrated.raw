@@ -3241,3 +3241,50 @@ select:focus-visible {
     flex-basis: 100%;
   }
 }
+
+/* Final command placement: keep the dialog close affordance near the corner. */
+.cwe-header > .cwe-header-actions > .cwe-close-button {
+  position: absolute;
+  top: 50%;
+  right: -20px;
+  transform: translateY(-50%);
+}
+
+.cwe-header > .cwe-header-actions > .cwe-close-button:hover {
+  transform: translateY(calc(-50% - 1px));
+}
+
+@media (max-width: 640px) {
+  .cwe-header > .cwe-header-actions > .cwe-close-button {
+    right: 0;
+  }
+
+  .cwe-command-bar {
+    min-height: calc(113px + env(safe-area-inset-bottom));
+  }
+
+  .cwe-command-main {
+    min-height: 101px;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-rows: 48px 48px;
+    gap: 5px 3px;
+  }
+
+  .cwe-command-main > .cwe-tabs {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-row: 1;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 3px;
+  }
+
+  .cwe-command-main > .cwe-settings-button {
+    grid-column: 1 / 3;
+    grid-row: 2;
+  }
+
+  .cwe-command-main > .cwe-run-button {
+    grid-column: 3 / -1;
+    grid-row: 2;
+  }
+}

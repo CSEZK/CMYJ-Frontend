@@ -193,7 +193,7 @@ assert.match(
   /remoteLoaderUrl = 'https:\/\/cmyj-frontend\.pages\.dev\/cmyj-1\.7\/loader\/index\.js'/,
 );
 assert.doesNotMatch(releaseCardPackagerSource, /remoteLoaderUrl\s*=\s*['"][^'"]+\?v=/);
-assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.8\.3'/);
+assert.match(releaseStatusbarSource, /STATUSBAR_VERSION = '1\.8\.4'/);
 assert.match(releaseWorkshopSource, /function textCoverMarkup/);
 assert.match(releaseWorkshopSource, /class="text-cover tone-/);
 assert.match(releaseWorkshopSource, /data-text-cover-image/);
@@ -333,7 +333,7 @@ assert.doesNotMatch(releaseStatusbarSource, /rebindCharWorldbooks/);
 assert.match(releaseGeneratorSource, /STORAGE_KEY_API = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /API_SETTINGS_KEY = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /minBaseVersion: '1\.7\.0'/);
-assert.match(releaseWorldEngineSource, /VERSION = '1\.8\.3'/);
+assert.match(releaseWorldEngineSource, /VERSION = '1\.8\.4'/);
 assert.match(releaseWorldEngineSource, /BACKUP_SCRIPT_ID = 'cmyj-world-engine-backup-v1'/);
 assert.match(releaseWorldEngineSource, /cmyj_world_engine_backups_v1/);
 assert.match(releaseWorldEngineSource, /检测到聊天变量被外部脚本覆盖/);
@@ -346,6 +346,18 @@ assert.match(releaseWorldEngineStyle, /-webkit-line-clamp: unset/);
 assert.match(
   releaseWorldEngineStyle,
   /\.cwe-content-overview\s+\.cwe-ledger-layout\s*\{[^}]*padding-left:\s*0;/s,
+);
+assert.match(
+  releaseWorldEngineStyle,
+  /\.cwe-header\s*>\s*\.cwe-header-actions\s*>\s*\.cwe-close-button\s*\{[^}]*right:\s*-20px;/s,
+);
+assert.match(
+  releaseWorldEngineStyle,
+  /\.cwe-command-main\s*>\s*\.cwe-settings-button\s*\{[^}]*grid-column:\s*1\s*\/\s*3;[^}]*grid-row:\s*2;/s,
+);
+assert.match(
+  releaseWorldEngineStyle,
+  /\.cwe-command-main\s*>\s*\.cwe-run-button\s*\{[^}]*grid-column:\s*3\s*\/\s*-1;[^}]*grid-row:\s*2;/s,
 );
 assert.match(releaseWorldEngineSource, /settingsVersion: 4/);
 assert.match(releaseWorldEngineSource, /requestTimeoutMs: 90000/);
