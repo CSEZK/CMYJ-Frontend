@@ -33,6 +33,18 @@ const deepSeekSchemaPrompt = deepSeekJsonSchemaPrompt({
 assert.match(deepSeekSchemaPrompt, /DeepSeek JSON 兼容模式/);
 assert.match(deepSeekSchemaPrompt, /"required": \[/);
 assert.match(deepSeekSchemaPrompt, /"ok"/);
+const generatorSchemaPrompt = deepSeekJsonSchemaPrompt({
+  name: 'generator_compat_test',
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['title'],
+    properties: { title: { type: 'string' } },
+  },
+});
+assert.match(generatorSchemaPrompt, /"required": \[/);
+assert.match(generatorSchemaPrompt, /"title"/);
+assert.doesNotMatch(generatorSchemaPrompt, /generator_compat_test/);
 
 const dynamicCatalog = buildScenarioCharacterCatalog({
   officialCharacters: [{ name: '栖云', summary: '官方人物', lock: 'free' }],

@@ -21,7 +21,7 @@ export function shouldFallbackFromJsonSchema(error) {
 }
 
 export function deepSeekJsonSchemaPrompt(schema) {
-  const definition = schema?.value ?? schema;
+  const definition = schema?.value ?? schema?.schema ?? schema;
   if (!definition || typeof definition !== 'object') return '';
   return [
     '',
