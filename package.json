@@ -15,6 +15,7 @@
     "check:cmyj": "node scripts/check-cmyj.mjs",
     "smoke:cmyj": "node scripts/smoke-cmyj.mjs",
     "test:world-engine": "node scripts/test-world-engine.mjs",
+    "test:world-engine:knowledge": "node scripts/test-world-engine-knowledge.mjs",
     "optimize:map": "node scripts/optimize-map-overview.mjs",
     "test:scenario-generator": "node scripts/test-scenario-generator.mjs cmyj-1.7-beta",
     "test:scenario-generator:release": "node scripts/test-scenario-generator.mjs cmyj-1.7",
