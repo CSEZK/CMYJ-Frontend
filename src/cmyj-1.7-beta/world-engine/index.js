@@ -6,7 +6,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 (() => {
   'use strict';
 
-  const VERSION = '1.0.0-beta.4';
+  const VERSION = '1.0.0-beta.5';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const INJECTION_ID = 'cmyj-world-engine-context-v1';
@@ -135,6 +135,51 @@ import integratedStyles from './styles-integrated.raw?raw';
 
   function stableId(prefix, ...parts) {
     return `${prefix}-${hashText(parts.filter(Boolean).join('|'))}`;
+  }
+
+  const FACT_VISIBILITIES = Object.freeze(['secret', 'restricted', 'local_public', 'public']);
+  const INTEL_STATUSES = Object.freeze(['queued', 'in_transit', 'arrived', 'stalled', 'distorted']);
+  const DISTANCE_BANDS = Object.freeze([
+    'same_place',
+    'same_city',
+    'nearby_city',
+    'same_province',
+    'cross_province',
+    'remote',
+  ]);
+  const DISTANCE_MIN_DAYS = Object.freeze({
+    same_place: 0,
+    same_city: 0,
+    nearby_city: 1,
+    same_province: 2,
+    cross_province: 5,
+    remote: 10,
+  });
+  function enumValue(value, allowed, fallback) {
+    const normalized = asText(value).toLowerCase();
+    return allowed.includes(normalized) ? normalized : fallback;
+  }
+
+  function visibilityFromLegacy(value) {
+    const text = asText(value).toLowerCase();
+    if (/秘密|私密|未公开|不公开|仅.*知|private|secret/.test(text)) return 'secret';
+    if (/限定|内部|少数|restricted/.test(text)) return 'restricted';
+    if (/当地|本地|城内|local/.test(text)) return 'local_public';
+    if (/公开|天下|广泛|public/.test(text)) return 'public';
+    return 'secret';
+  }
+
+  function minimumTransitDays(distanceBand, channel) {
+    const base = DISTANCE_MIN_DAYS[enumValue(distanceBand, DISTANCE_BANDS, 'same_city')] ?? 0;
+    const text = asText(channel);
+    const multiplier = /飞鸽|快马|塘报|军驿|急递/.test(text) ? 0.65 : /商旅|流言|传闻|口耳/.test(text) ? 1.6 : 1;
+    return Math.ceil(base * multiplier);
+  }
+
+  function optionalFiniteNumber(value) {
+    if (value === '' || value == null) return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
   }
 
   function readLocal(key, fallback = '') {
@@ -284,12 +329,61 @@ import integratedStyles from './styles-integrated.raw?raw';
             .map(value => asText(value))
             .filter(Boolean)
             .slice(0, 12),
+          basisFactIds: cleanStringList(item?.basisFactIds || item?.basis_fact_ids, 20),
+          basisIntelIds: cleanStringList(item?.basisIntelIds || item?.basis_intel_ids, 20),
         }))
         .filter(item => item.name)
         .slice(0, 20),
       activePressures: stringList('activePressures'),
       cameraCandidates: stringList('cameraCandidates'),
       constraints: stringList('constraints'),
+    };
+  }
+
+  function cleanStringList(value, limit = 24) {
+    return asArray(value)
+      .map(item => asText(item))
+      .filter(Boolean)
+      .slice(0, limit);
+  }
+
+  function normalizeFactRecord(item) {
+    const publicity = asText(item?.publicity);
+    return {
+      ...item,
+      id: asText(item?.id),
+      content: asText(item?.content),
+      status: asText(item?.status, 'occurred'),
+      scope: asText(item?.scope, 'player_scene'),
+      location: asText(item?.location),
+      actors: cleanStringList(item?.actors, 20),
+      witnesses: cleanStringList(item?.witnesses, 24),
+      publicity,
+      visibility: enumValue(item?.visibility, FACT_VISIBILITIES, visibilityFromLegacy(publicity)),
+      occurredAt: asText(item?.occurredAt || item?.occurred_at),
+      audiences: cleanStringList(item?.audiences, 16),
+      channels: cleanStringList(item?.channels, 12),
+    };
+  }
+
+  function normalizeIntelRecord(item) {
+    return {
+      ...item,
+      id: asText(item?.id),
+      content: asText(item?.content),
+      origin: asText(item?.origin),
+      destination: asText(item?.destination),
+      channel: asText(item?.channel),
+      status: enumValue(item?.status, INTEL_STATUSES, asText(item?.status, 'in_transit')),
+      eta: asText(item?.eta),
+      reliability: clamp(item?.reliability, 0, 1),
+      knownBy: cleanStringList(item?.knownBy || item?.known_by, 30),
+      factIds: cleanStringList(item?.factIds || item?.fact_ids, 20),
+      targetGroups: cleanStringList(item?.targetGroups || item?.target_groups, 16),
+      departedAt: asText(item?.departedAt || item?.departed_at),
+      distanceBand: enumValue(item?.distanceBand || item?.distance_band, DISTANCE_BANDS, 'same_city'),
+      departedWorldDays: optionalFiniteNumber(item?.departedWorldDays ?? item?.departed_world_days),
+      availableAfterWorldDays: optionalFiniteNumber(item?.availableAfterWorldDays ?? item?.available_after_world_days),
     };
   }
 
@@ -300,6 +394,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     const state = { ...createEmptyState(chatId), ...clone(raw), chatId };
     // 早期版本允许空字段和错误归类进入档案；读取时先做保守清理，避免脏数据继续喂给副模型。
     state.facts = asArray(state.facts)
+      .map(normalizeFactRecord)
       .filter(item => asText(item?.content) && item?.status === 'occurred' && Number(item?.confidence) >= 0.6)
       .slice(-LIMITS.facts);
     state.activeEvents = asArray(state.activeEvents)
@@ -313,6 +408,12 @@ import integratedStyles from './styles-integrated.raw?raw';
       )
       .slice(-LIMITS.activeEvents);
     state.actors = asArray(state.actors)
+      .map(item => ({
+        ...item,
+        groups: cleanStringList(item?.groups, 16),
+        knowledgeSourceFactIds: cleanStringList(item?.knowledgeSourceFactIds || item?.knowledge_source_fact_ids, 20),
+        knowledgeSourceIntelIds: cleanStringList(item?.knowledgeSourceIntelIds || item?.knowledge_source_intel_ids, 20),
+      }))
       .filter(
         item =>
           asText(item?.name) &&
@@ -320,6 +421,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       )
       .slice(-LIMITS.actors);
     state.intelPackets = asArray(state.intelPackets)
+      .map(normalizeIntelRecord)
       .filter(
         item =>
           asText(item?.content) &&
@@ -487,12 +589,15 @@ import integratedStyles from './styles-integrated.raw?raw';
       output.push({ path: path || '/', before: compact(oldValue), after: compact(newValue) });
       return output;
     }
-    const keys = new Set([
-      ...Object.keys(oldObject ? oldValue : {}),
-      ...Object.keys(newObject ? newValue : {}),
-    ]);
+    const keys = new Set([...Object.keys(oldObject ? oldValue : {}), ...Object.keys(newObject ? newValue : {})]);
     for (const key of keys) {
-      deepDiff(oldObject ? oldValue[key] : undefined, newObject ? newValue[key] : undefined, `${path}/${key}`, output, limit);
+      deepDiff(
+        oldObject ? oldValue[key] : undefined,
+        newObject ? newValue[key] : undefined,
+        `${path}/${key}`,
+        output,
+        limit,
+      );
       if (output.length >= limit) break;
     }
     return output;
@@ -600,12 +705,12 @@ import integratedStyles from './styles-integrated.raw?raw';
   }
 
   function systemPrompt() {
-    return `你是《残明余烬》的“天下演化史官”。主模型已写完玩家视角正文；你负责核账、推进视野外因果，并亲自写出本轮平行世界正文。脚本会把 parallel_world 直接追加到这一楼主模型消息末尾，主模型不会代写。
+    return `你是《残明余烬》的“有限信息世界因果模拟器”。主模型已写完玩家视角正文；你负责核账、推进视野外因果，并亲自写出本轮平行世界正文。你可以读取客观真相，但任何角色都不能直接读取真相；角色只能依据亲历、目击或已经抵达的信息行动。脚本会把 parallel_world 直接追加到这一楼主模型消息末尾，主模型不会代写。
 
 一、输入权限
 1. CURRENT_TURN.assistantOutput 与本轮 currentClock、mvuChanges 是唯一主要新增证据。玩家输入只是意图，不能当作成功结果。
 2. RECENT_CONTEXT 只用于承接称谓、动作和时间，严禁把旧内容当成本轮新事实重复入档。
-3. CANONICAL_STATE 是只读旧档案：同一事件、人物、驿报、伏线必须沿用稳定 ID 推进或结案，不得换名重建。
+3. CANONICAL_STATE 是只读旧档案：同一事件、人物、消息流转、伏线必须沿用稳定 ID 推进或结案，不得换名重建。
 4. currentKnowledgeReference 是角色资料和玩家认知参考，不是客观事实清单；不得把名册照抄进人物行动，也不得把秘密自动变成全员已知。
 
 二、事实与知识铁律
@@ -613,17 +718,24 @@ import integratedStyles from './styles-integrated.raw?raw';
 2. 对话只证明某人说过这句话，不证明话中内容真实。人物获知信息必须有目击、告知、公文、书信、驿传、商旅或流言渠道。
 3. 回合不等于日期推进。时间未推进时只能发展同一时刻可完成的细小行动，不得让军队瞬移、工程骤成或城池无因易手。
 4. 历史只是未受干预时的惯性，不是强制剧本；重大结果必须有已入档前因。
+5. “公开”只表示消息可以进入传播网络，不表示所有地点、群体和人物立即知道。跨地点或跨群体的信息必须经过 upsert_intel，抵达之前接收者不得行动。
+6. 本轮玩家场景中新产生的事实实行同轮隔离：只有正文明确参与、目击或当场被告知的人能够本轮获知；其他人本轮最多开始调查、发现明确写出的痕迹或让消息上路，不得准确反应。
+7. 不得凭空补造目击者、告密者、密探、传信或发现痕迹来绕过知识边界。发现“有人潜入”不等于知道潜入者身份，怀疑不等于确认。
+8. 生成顺序必须是：提取客观事实 → 判定可见性与现场知情者 → 推进旧消息传播 → 更新人物行动 → 写旁线。禁止先构思旁线再倒填传播依据。
+9. 消息传播按“发生地→距离档→渠道速度→目标地区→目标群体→预计抵达时间”计算。参考下限：同地可当场，同城最快数个时辰，邻近州县至少一日，省内通常二至五日，跨省通常五至十五日，远途更久；快马、塘报快于普通书信，商旅和流言更慢且更易失真。正文时点未达到 eta 时不得抵达。
+10. target_groups 只授予对应群体，不自动扩散给目的地所有人。官府获知不等于百姓获知，军中获知不等于商旅获知；若要继续扩散，必须建立新的消息流转。
 
 三、各字段只能填写以下内容
 - world_summary：70—140 字的“当前天下态势快照”。只写已确认且仍有效的局势，不复述本楼玩家场景，不写未经证据支持的宏大推测；天下态势没有实质变化时沿用旧摘要并只做最小修订。
-- new_facts：仅写本轮新发生且可举证的客观事实。每条 evidence 指明来自“主模型正文”“MVU 变化”或“本轮平行世界”的哪一项结果。
+- new_facts：仅写本轮新发生且可举证的客观事实。visibility 采用最保守判断：未明确公开一律 secret；公开事件也必须填写发生时间、可直接覆盖的群体和传播渠道。每条 evidence 指明来自“主模型正文”“MVU 变化”或“本轮平行世界”的哪一项结果。
 - upsert_events：仅写需要跨回合追踪的持续因果过程；普通对话和一次性动作不是事件。必须有阶段、地点、摘要和下一触发条件。完成后用 resolve_event_ids 结案。
-- upsert_actors：仅写本轮确有行动、位置、目标、知识或下一决策变化的重要 NPC。current_action 与 updated_reason 必须具体；严禁仅因角色出现在资料或名册中就建档。
-- upsert_intel：仅写“正在传播”的信息包，必须同时有起点、终点、传播渠道、状态、预计到达时间、可靠度和当前知情者。静态秘密、人物背景、债务关系、私人心意不是驿报；已到达者从队列移除并写入 next_turn_packet.arrivedIntel。
+- upsert_actors：仅写本轮确有行动、位置、目标、知识或下一决策变化的重要 NPC。groups 填写此人实际所属的官府、军队、商旅、乡民等群体；knowledge_source_fact_ids 与 knowledge_source_intel_ids 必须列出其知识来源。没有合法来源时不得新增知识或据此决策。
+- upsert_intel：仅写跨地点或跨群体的“消息流转”，必须引用 fact_ids，并填写起点、终点、目标群体、渠道、出发时间、出发世界天数、距离档、最早可用世界天数、状态、预计抵达时间、可靠度和当前知情者。available_after_world_days 不得早于 departed_world_days 加距离与渠道所需时间；新建消息本轮只能 queued 或 in_transit，不能同轮抵达。静态秘密、人物背景、债务关系、私人心意不是传播任务；旧消息达到最早可用世界天数后才可用 remove_intel_ids 移出队列并写入 next_turn_packet.arrivedIntel。
 - upsert_hooks：仅写尚未显化但具备具体触发条件与失效条件的潜在因果线；氛围描写和泛泛风险不是伏线。
 - camera_history：只写本轮两个平行场景的简短“地点—人物—行动”标签，用于下轮避免重复，不写正文。
-- next_turn_packet：只给下一轮主模型提供可用信息。hardFacts 是已发生且与下一轮有关的事实；arrivedIntel 是本轮实际到达的信息；localConsequences 是玩家所在地可观察后果；npcKnowledge 严格区分知道与不知道；activePressures 是眼前压力；constraints 是不能违背的事实边界；cameraCandidates 是可继续观察的视野外线索。没有内容就输出空数组，禁止拿其他字段凑数。
-- parallel_world：写 2 个玩家当前视角之外、可以直接展示的电影式场景。每段以【地名·地点·时辰】单独起行，场景之间空一行；优先推进旧事件、人物行动和真实的信息传播。素材不足时只写低风险日常切片，不能重演玩家场景，也不能凭空制造重大胜负、死亡或政局结果。
+- next_turn_packet：只给下一轮主模型提供可用信息。arrivedIntel 只能逐字沿用本轮 remove_intel_ids 中确实存在于旧档案的消息 content，不得改写或概括；npcKnowledge 的每项必须填写 basisFactIds 与 basisIntelIds。没有合法来源就输出空数组，禁止拿其他字段凑数。
+- scene_permissions：为每个平行场景登记人物与可使用的事实、已经抵达的消息、既有事件。reaction 场景只能使用人物依法获知的内容；propagation 场景只能写消息在路上及当前知情者行动，不能让目的地提前反应；independent 场景应推进与本轮玩家秘密无关的旧事件，或写不消费本轮事实的低风险日常切片。
+- parallel_world：写 1—2 个玩家当前视角之外、可以直接展示的电影式场景，并与 scene_permissions 一一对应。每段以【地名·地点·时辰】单独起行；优先推进旧事件、人物独立行动和真实的信息传播。没有合法反应素材时，推进旧线或写低风险日常切片，绝不能消费本轮秘密。
 
 四、输出纪律
 1. 顶层字段必须原样使用 snake_case，并严格符合 JSON Schema。
@@ -652,6 +764,7 @@ import integratedStyles from './styles-integrated.raw?raw';
           'upsert_hooks',
           'resolve_hook_ids',
           'camera_history',
+          'scene_permissions',
           'next_turn_packet',
           'parallel_world',
         ],
@@ -676,6 +789,10 @@ import integratedStyles from './styles-integrated.raw?raw';
                 'actors',
                 'witnesses',
                 'publicity',
+                'visibility',
+                'occurred_at',
+                'audiences',
+                'channels',
                 'confidence',
                 'importance',
                 'evidence',
@@ -686,13 +803,21 @@ import integratedStyles from './styles-integrated.raw?raw';
                 status: {
                   type: 'string',
                   enum: ['occurred'],
-                  description: '硬事实字段只接受已经发生的结果；其他状态应进入事件、驿报或不提交。',
+                  description: '硬事实字段只接受已经发生的结果；其他状态应进入事件、消息流转或不提交。',
                 },
                 scope: { type: 'string', enum: ['player_scene', 'parallel_world', 'variable_update'] },
                 location: nonEmptyString,
                 actors: stringArray,
                 witnesses: stringArray,
                 publicity: nonEmptyString,
+                visibility: {
+                  type: 'string',
+                  enum: FACT_VISIBILITIES,
+                  description: '事实本身的可见范围；无法确认公开时必须使用 secret。',
+                },
+                occurred_at: nonEmptyString,
+                audiences: stringArray,
+                channels: stringArray,
                 confidence: { type: 'number', minimum: 0, maximum: 1 },
                 importance: { type: 'number', minimum: 0, maximum: 100 },
                 evidence: {
@@ -742,9 +867,12 @@ import integratedStyles from './styles-integrated.raw?raw';
                 'id',
                 'name',
                 'location',
+                'groups',
                 'goal',
                 'current_action',
                 'knowledge',
+                'knowledge_source_fact_ids',
+                'knowledge_source_intel_ids',
                 'next_decision',
                 'updated_reason',
               ],
@@ -752,6 +880,7 @@ import integratedStyles from './styles-integrated.raw?raw';
                 id: nonEmptyString,
                 name: nonEmptyString,
                 location: nonEmptyString,
+                groups: stringArray,
                 goal: nonEmptyString,
                 current_action: {
                   type: 'string',
@@ -759,6 +888,8 @@ import integratedStyles from './styles-integrated.raw?raw';
                   description: '此人物此刻正在做的具体行动；没有行动变化就不要提交该人物。',
                 },
                 knowledge: stringArray,
+                knowledge_source_fact_ids: stringArray,
+                knowledge_source_intel_ids: stringArray,
                 next_decision: nonEmptyString,
                 updated_reason: {
                   type: 'string',
@@ -783,6 +914,12 @@ import integratedStyles from './styles-integrated.raw?raw';
                 'eta',
                 'reliability',
                 'known_by',
+                'fact_ids',
+                'target_groups',
+                'departed_at',
+                'distance_band',
+                'departed_world_days',
+                'available_after_world_days',
               ],
               properties: {
                 id: nonEmptyString,
@@ -790,10 +927,20 @@ import integratedStyles from './styles-integrated.raw?raw';
                 origin: nonEmptyString,
                 destination: nonEmptyString,
                 channel: nonEmptyString,
-                status: nonEmptyString,
+                status: {
+                  type: 'string',
+                  enum: ['queued', 'in_transit', 'stalled', 'distorted'],
+                  description: '队列只保存尚未抵达的消息；本轮新建消息不得标记为 arrived。',
+                },
                 eta: nonEmptyString,
                 reliability: { type: 'number', minimum: 0.01, maximum: 1 },
                 known_by: stringArray,
+                fact_ids: stringArray,
+                target_groups: stringArray,
+                departed_at: nonEmptyString,
+                distance_band: { type: 'string', enum: DISTANCE_BANDS },
+                departed_world_days: { type: 'number', minimum: 0 },
+                available_after_world_days: { type: 'number', minimum: 0 },
               },
             },
           },
@@ -832,6 +979,27 @@ import integratedStyles from './styles-integrated.raw?raw';
             items: nonEmptyString,
             description: '本轮两个平行场景的短标签，不是场景正文。',
           },
+          scene_permissions: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 2,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['scene_index', 'scene_type', 'actors', 'usable_fact_ids', 'usable_intel_ids', 'event_ids'],
+              properties: {
+                scene_index: { type: 'integer', minimum: 0, maximum: 1 },
+                scene_type: {
+                  type: 'string',
+                  enum: ['reaction', 'propagation', 'independent'],
+                },
+                actors: stringArray,
+                usable_fact_ids: stringArray,
+                usable_intel_ids: stringArray,
+                event_ids: stringArray,
+              },
+            },
+          },
           parallel_world: {
             type: 'string',
             minLength: 80,
@@ -859,8 +1027,14 @@ import integratedStyles from './styles-integrated.raw?raw';
                 items: {
                   type: 'object',
                   additionalProperties: false,
-                  required: ['name', 'knows', 'doesNotKnow'],
-                  properties: { name: nonEmptyString, knows: stringArray, doesNotKnow: stringArray },
+                  required: ['name', 'knows', 'doesNotKnow', 'basisFactIds', 'basisIntelIds'],
+                  properties: {
+                    name: nonEmptyString,
+                    knows: stringArray,
+                    doesNotKnow: stringArray,
+                    basisFactIds: stringArray,
+                    basisIntelIds: stringArray,
+                  },
                 },
               },
               activePressures: stringArray,
@@ -879,7 +1053,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     const previousStat = findPreviousStatData(messageKey.messageId);
     return {
       instruction:
-        '先判定 CURRENT_TURN 中真正发生了什么，再按字段职责提交最小必要增量。RECENT_CONTEXT、CANONICAL_STATE 与角色资料均为只读参考，禁止照抄名册、旧事实或静态秘密凑数。',
+        '严格按“事实→可见性→旧消息抵达→人物行动→旁线”顺序提交最小必要增量。本轮玩家场景新事实不得驱动异地人物反应；只能让正文明确参与或目击者知情，或创建尚未抵达的消息流转。RECENT_CONTEXT、CANONICAL_STATE 与角色资料均为只读参考。',
       currentTurn: {
         messageId: messageKey.messageId,
         swipeId: messageKey.swipeId,
@@ -955,13 +1129,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 
     // 部分兼容 OpenAI 的服务会忽略 json_schema，但仍返回语义完整的常见 camelCase 结构。
     // 在本地归一化它，避免请求成功却被误判成“新增 0 条”。
-    const incrementCandidates = [
-      result.worldStateIncrement,
-      result.transition,
-      result.data,
-      result.result,
-      result,
-    ];
+    const incrementCandidates = [result.worldStateIncrement, result.transition, result.data, result.result, result];
     const increment = incrementCandidates.find(
       item =>
         item &&
@@ -996,6 +1164,10 @@ import integratedStyles from './styles-integrated.raw?raw';
         actors: asArray(item?.actors),
         witnesses: asArray(item?.witnesses),
         publicity: asText(item?.publicity),
+        visibility: enumValue(item?.visibility, FACT_VISIBILITIES, visibilityFromLegacy(item?.publicity)),
+        occurred_at: asText(item?.occurred_at || item?.occurredAt || increment?.clock?.date),
+        audiences: asArray(item?.audiences),
+        channels: asArray(item?.channels),
         confidence: Number(item?.confidence ?? 0.8),
         importance: Number(item?.importance ?? 60),
         evidence: asText(item?.evidence || item?.source),
@@ -1016,9 +1188,12 @@ import integratedStyles from './styles-integrated.raw?raw';
         id: asText(item?.id || item?.actorId),
         name: asText(item?.name || item?.actorName),
         location: asText(item?.location),
+        groups: asArray(item?.groups || item?.affiliations),
         goal: asText(item?.goal || asArray(item?.knownMotivations).join('；')),
         current_action: asText(item?.current_action || item?.currentAction || item?.currentStatus),
         knowledge: asArray(item?.knowledge),
+        knowledge_source_fact_ids: asArray(item?.knowledge_source_fact_ids || item?.knowledgeSourceFactIds),
+        knowledge_source_intel_ids: asArray(item?.knowledge_source_intel_ids || item?.knowledgeSourceIntelIds),
         next_decision: asText(item?.next_decision || item?.nextDecision),
         updated_reason: asText(item?.updated_reason || item?.updatedReason || item?.currentStatus),
       })),
@@ -1032,11 +1207,22 @@ import integratedStyles from './styles-integrated.raw?raw';
         eta: asText(item?.eta),
         reliability: Number(item?.reliability ?? 0.65),
         known_by: asArray(item?.known_by || item?.knownBy),
+        fact_ids: asArray(item?.fact_ids || item?.factIds),
+        target_groups: asArray(item?.target_groups || item?.targetGroups),
+        departed_at: asText(item?.departed_at || item?.departedAt),
+        distance_band: enumValue(item?.distance_band || item?.distanceBand, DISTANCE_BANDS, 'same_city'),
+        departed_world_days: Number(item?.departed_world_days ?? item?.departedWorldDays ?? 0),
+        available_after_world_days: Number(
+          item?.available_after_world_days ??
+            item?.availableAfterWorldDays ??
+            minimumTransitDays(item?.distance_band || item?.distanceBand, item?.channel),
+        ),
       })),
       remove_intel_ids: asArray(increment.removeIntelIds),
       upsert_hooks: asArray(increment.newOrUpdatedHooks),
       resolve_hook_ids: asArray(increment.resolveHookIds),
       camera_history: camera ? [camera] : [],
+      scene_permissions: asArray(increment.scene_permissions || increment.scenePermissions),
       parallel_world: asText(
         result.parallelWorld ||
           result.parallelWorldText ||
@@ -1047,13 +1233,15 @@ import integratedStyles from './styles-integrated.raw?raw';
       ),
       next_turn_packet: {
         hardFacts: facts.map(item => asText(item?.content || item?.fact)).filter(Boolean),
-        arrivedIntel: intel.map(item => asText(item?.content)).filter(Boolean),
+        arrivedIntel: [],
         localConsequences: events.map(item => asText(item?.impact)).filter(Boolean),
         npcKnowledge: actors
           .map(item => ({
             name: asText(item?.name || item?.actorName),
             knows: asArray(item?.knowledge),
             doesNotKnow: [],
+            basisFactIds: asArray(item?.knowledge_source_fact_ids || item?.knowledgeSourceFactIds),
+            basisIntelIds: asArray(item?.knowledge_source_intel_ids || item?.knowledgeSourceIntelIds),
           }))
           .filter(item => item.name),
         activePressures: events
@@ -1066,7 +1254,282 @@ import integratedStyles from './styles-integrated.raw?raw';
     });
   }
 
-  async function callWorldModel(payload, generationId) {
+  function comparableName(value) {
+    return asText(value).replace(/\s+/g, '').toLowerCase();
+  }
+
+  function sameNamedActor(value, candidates) {
+    const name = comparableName(value);
+    return Boolean(name) && cleanStringList(candidates, 40).some(candidate => comparableName(candidate) === name);
+  }
+
+  function nearbyLocation(left, right) {
+    const a = comparableName(left);
+    const b = comparableName(right);
+    return Boolean(a && b && (a.includes(b) || b.includes(a)));
+  }
+
+  function splitParallelWorldScenes(value) {
+    const text = asText(value);
+    const headings = [...text.matchAll(/^\s*(?:[#>*-]\s*)?【[^】]+】/gm)];
+    return headings.map((match, index) => text.slice(match.index, headings[index + 1]?.index ?? text.length).trim());
+  }
+
+  function validateEpistemicResult(baseState, result, currentClock = baseState.clock || {}) {
+    const newFacts = asArray(result?.new_facts);
+    const allFacts = new Map(
+      [...asArray(baseState.facts), ...newFacts].filter(item => asText(item?.id)).map(item => [String(item.id), item]),
+    );
+    const baseIntel = new Map(
+      asArray(baseState.intelPackets)
+        .filter(item => asText(item?.id))
+        .map(item => [String(item.id), item]),
+    );
+    const newIntel = new Map(
+      asArray(result?.upsert_intel)
+        .filter(item => asText(item?.id))
+        .map(item => [String(item.id), item]),
+    );
+    const currentWorldDays = Math.max(0, Number(currentClock?.worldDays) || 0);
+    const requestedArrivals = cleanStringList(result?.remove_intel_ids, LIMITS.intelPackets).filter(id =>
+      baseIntel.has(id),
+    );
+    const intelHasReachedEta = packet => {
+      const availableAfter = optionalFiniteNumber(
+        packet?.availableAfterWorldDays ?? packet?.available_after_world_days,
+      );
+      return availableAfter == null || currentWorldDays >= availableAfter;
+    };
+    const prematureArrival = requestedArrivals.find(id => !intelHasReachedEta(baseIntel.get(id)));
+    if (prematureArrival) {
+      throw new Error(`知识边界校验失败：消息 ${prematureArrival} 尚未达到最早可用世界天数。`);
+    }
+    const arrivedIntelIds = new Set(requestedArrivals);
+    const allEvents = new Set([
+      ...asArray(baseState.activeEvents).map(item => String(item?.id || '')),
+      ...asArray(result?.upsert_events).map(item => String(item?.id || '')),
+    ]);
+
+    for (const item of newIntel.values()) {
+      const factIds = cleanStringList(item?.fact_ids || item?.factIds, 20);
+      if (!factIds.length || factIds.some(id => !allFacts.has(id))) {
+        throw new Error('知识边界校验失败：消息流转必须引用已经存在或本轮新增的事实 ID。');
+      }
+      if (!cleanStringList(item?.target_groups || item?.targetGroups, 16).length) {
+        throw new Error('知识边界校验失败：消息流转缺少明确的接收群体。');
+      }
+      if (enumValue(item?.status, INTEL_STATUSES, 'in_transit') === 'arrived') {
+        throw new Error('知识边界校验失败：本轮新建消息不能同轮抵达。');
+      }
+      const departedWorldDays = Math.max(
+        currentWorldDays,
+        Number(item?.departed_world_days ?? item?.departedWorldDays) || 0,
+      );
+      const minimumAvailable =
+        departedWorldDays + minimumTransitDays(item?.distance_band || item?.distanceBand, item?.channel);
+      item.departed_world_days = departedWorldDays;
+      item.available_after_world_days = Math.max(
+        minimumAvailable,
+        Number(item?.available_after_world_days ?? item?.availableAfterWorldDays) || 0,
+      );
+    }
+
+    const arrivedPackets = [...arrivedIntelIds].map(id => baseIntel.get(id)).filter(Boolean);
+    const arrivedTexts = cleanStringList(result?.next_turn_packet?.arrivedIntel, 24);
+    if (
+      arrivedTexts.some(
+        text =>
+          !arrivedPackets.some(packet => {
+            const content = asText(packet?.content);
+            return content && (content.includes(text) || text.includes(content));
+          }),
+      )
+    ) {
+      throw new Error('知识边界校验失败：arrivedIntel 只能来自本轮实际移出队列的旧消息。');
+    }
+
+    const actorRecord = name =>
+      asArray(result?.upsert_actors).find(item => comparableName(item?.name) === comparableName(name)) ||
+      asArray(baseState.actors).find(item => comparableName(item?.name) === comparableName(name));
+    const previousActorRecord = name =>
+      asArray(baseState.actors).find(item => comparableName(item?.name) === comparableName(name));
+    const intelAllowsActor = (intelId, actorName) => {
+      if (!arrivedIntelIds.has(String(intelId))) return false;
+      const packet = baseIntel.get(String(intelId));
+      const targets = cleanStringList(packet?.targetGroups || packet?.target_groups, 16);
+      const knownBy = cleanStringList(packet?.knownBy || packet?.known_by, 30);
+      const actor = actorRecord(actorName);
+      const groups = cleanStringList(actor?.groups, 16).map(comparableName);
+      const targetMatch = !targets.length || targets.some(group => groups.includes(comparableName(group)));
+      const destinationMatch = !asText(packet?.destination) || nearbyLocation(actor?.location, packet?.destination);
+      return sameNamedActor(actorName, knownBy) || (targetMatch && destinationMatch);
+    };
+    const actorCanUseFact = (actorName, factId, sourceIntelIds = []) => {
+      const fact = allFacts.get(String(factId));
+      if (!fact) return false;
+      if (sameNamedActor(actorName, [...cleanStringList(fact?.actors), ...cleanStringList(fact?.witnesses)])) {
+        return true;
+      }
+      if (cleanStringList(previousActorRecord(actorName)?.knowledgeSourceFactIds, 20).includes(String(factId))) {
+        return true;
+      }
+      if (
+        cleanStringList(sourceIntelIds, 20).some(intelId => {
+          const packet = baseIntel.get(String(intelId));
+          return (
+            intelAllowsActor(intelId, actorName) &&
+            cleanStringList(packet?.factIds || packet?.fact_ids, 20).includes(String(factId))
+          );
+        })
+      ) {
+        return true;
+      }
+      const visibility = enumValue(fact?.visibility, FACT_VISIBILITIES, visibilityFromLegacy(fact?.publicity));
+      const actor = actorRecord(actorName);
+      return (
+        ['local_public', 'public'].includes(visibility) &&
+        nearbyLocation(actor?.location, fact?.location) &&
+        !newFacts.includes(fact)
+      );
+    };
+
+    for (const item of newIntel.values()) {
+      const factIds = cleanStringList(item?.fact_ids || item?.factIds, 20);
+      for (const holder of cleanStringList(item?.known_by || item?.knownBy, 30)) {
+        if (factIds.some(factId => !actorCanUseFact(holder, factId))) {
+          throw new Error(`知识边界校验失败：新消息把尚未知情的 ${holder} 凭空列为当前知情者。`);
+        }
+      }
+    }
+
+    for (const actor of asArray(result?.upsert_actors)) {
+      const factIds = cleanStringList(actor?.knowledge_source_fact_ids || actor?.knowledgeSourceFactIds, 20);
+      const intelIds = cleanStringList(actor?.knowledge_source_intel_ids || actor?.knowledgeSourceIntelIds, 20);
+      if (intelIds.some(id => !intelAllowsActor(id, actor?.name))) {
+        throw new Error(`知识边界校验失败：${asText(actor?.name, '人物')}引用了尚未抵达或不属于其群体的消息。`);
+      }
+      if (factIds.some(id => !actorCanUseFact(actor?.name, id, intelIds))) {
+        throw new Error(`知识边界校验失败：${asText(actor?.name, '人物')}不能使用尚未依法获知的事实。`);
+      }
+      const previous = asArray(baseState.actors).find(
+        item =>
+          String(item?.id || '') === String(actor?.id || '') ||
+          comparableName(item?.name) === comparableName(actor?.name),
+      );
+      const knowledgeChanged =
+        JSON.stringify(cleanStringList(actor?.knowledge, 30)) !==
+        JSON.stringify(cleanStringList(previous?.knowledge, 30));
+      if (knowledgeChanged && cleanStringList(actor?.knowledge, 30).length && !factIds.length && !intelIds.length) {
+        throw new Error(`知识边界校验失败：${asText(actor?.name, '人物')}新增知识但没有填写来源 ID。`);
+      }
+    }
+
+    for (const item of asArray(result?.next_turn_packet?.npcKnowledge)) {
+      const factIds = cleanStringList(item?.basisFactIds || item?.basis_fact_ids, 20);
+      const intelIds = cleanStringList(item?.basisIntelIds || item?.basis_intel_ids, 20);
+      if (cleanStringList(item?.knows, 12).length && !factIds.length && !intelIds.length) {
+        throw new Error(`知识边界校验失败：${asText(item?.name, '人物')}的联动知识没有来源 ID。`);
+      }
+      if (intelIds.some(id => !intelAllowsActor(id, item?.name))) {
+        throw new Error(`知识边界校验失败：${asText(item?.name, '人物')}的联动知识引用了未抵达消息。`);
+      }
+      if (factIds.some(id => !actorCanUseFact(item?.name, id, intelIds))) {
+        throw new Error(`知识边界校验失败：${asText(item?.name, '人物')}的联动知识越过了事实可见范围。`);
+      }
+    }
+
+    const permissions = asArray(result?.scene_permissions);
+    if (!permissions.length || permissions.length > 2) {
+      throw new Error('知识边界校验失败：必须为 1—2 个平行场景提供 scene_permissions。');
+    }
+    const sceneIndexes = permissions.map(item => Number(item?.scene_index));
+    if (new Set(sceneIndexes).size !== permissions.length || sceneIndexes.some((value, index) => value !== index)) {
+      throw new Error('知识边界校验失败：scene_permissions 的场景序号必须从 0 连续排列。');
+    }
+    const sceneTexts = splitParallelWorldScenes(result?.parallel_world);
+    if (sceneTexts.length !== permissions.length) {
+      throw new Error('知识边界校验失败：parallel_world 场景数与 scene_permissions 不一致。');
+    }
+    const protectedNewFacts = newFacts.filter(
+      fact =>
+        asText(fact?.scope, 'player_scene') === 'player_scene' &&
+        ['secret', 'restricted'].includes(
+          enumValue(fact?.visibility, FACT_VISIBILITIES, visibilityFromLegacy(fact?.publicity)),
+        ),
+    );
+    for (const [permissionIndex, permission] of permissions.entries()) {
+      const type = asText(permission?.scene_type);
+      const actors = cleanStringList(permission?.actors, 20);
+      const factIds = cleanStringList(permission?.usable_fact_ids, 20);
+      const intelIds = cleanStringList(permission?.usable_intel_ids, 20);
+      const eventIds = cleanStringList(permission?.event_ids, 20);
+      if (!actors.length) {
+        throw new Error('知识边界校验失败：平行场景必须声明实际出场人物或群体。');
+      }
+      if (eventIds.some(id => !allEvents.has(id))) {
+        throw new Error('知识边界校验失败：平行场景引用了不存在的事件。');
+      }
+      const sceneText = sceneTexts[permissionIndex] || '';
+      const undeclaredSecret = protectedNewFacts.find(fact => {
+        if (factIds.includes(String(fact?.id))) return false;
+        const content = asText(fact?.content);
+        const location = asText(fact?.location);
+        const namedActorAppears = cleanStringList(fact?.actors, 20).some(
+          actor => actor.length >= 2 && sceneText.includes(actor),
+        );
+        return (
+          (content.length >= 6 && sceneText.includes(content)) ||
+          (namedActorAppears && location.length >= 2 && sceneText.includes(location))
+        );
+      });
+      if (undeclaredSecret) {
+        throw new Error(
+          `知识边界校验失败：第 ${permissionIndex + 1} 个平行场景疑似消费了未声明的本轮秘密事实 ${asText(undeclaredSecret?.id)}。`,
+        );
+      }
+      if (type === 'reaction') {
+        if (!factIds.length && !intelIds.length) {
+          throw new Error('知识边界校验失败：人物反应场景必须声明事实或已抵达消息依据。');
+        }
+        if (intelIds.some(id => !arrivedIntelIds.has(id))) {
+          throw new Error('知识边界校验失败：人物反应场景使用了尚未抵达的消息。');
+        }
+        if (actors.some(actor => intelIds.some(id => !intelAllowsActor(id, actor)))) {
+          throw new Error('知识边界校验失败：人物反应场景使用了不属于其地区或群体的消息。');
+        }
+        if (actors.some(actor => factIds.some(id => !actorCanUseFact(actor, id, intelIds)))) {
+          throw new Error('知识边界校验失败：人物反应场景消费了角色尚未知晓的事实。');
+        }
+      } else if (type === 'propagation') {
+        if (!intelIds.length || intelIds.some(id => !baseIntel.has(id) && !newIntel.has(id))) {
+          throw new Error('知识边界校验失败：传播场景必须引用正在流转的消息。');
+        }
+        const packets = intelIds.map(id => baseIntel.get(id) || newIntel.get(id)).filter(Boolean);
+        if (
+          actors.some(
+            actor =>
+              !packets.some(packet => sameNamedActor(actor, cleanStringList(packet?.knownBy || packet?.known_by, 30))),
+          )
+        ) {
+          throw new Error('知识边界校验失败：传播场景出现了尚未接触该消息的人物。');
+        }
+      } else if (type === 'independent') {
+        if (
+          factIds.some(id => {
+            const fact = newFacts.find(item => String(item?.id) === id);
+            return fact && asText(fact?.scope, 'player_scene') === 'player_scene';
+          })
+        ) {
+          throw new Error('知识边界校验失败：独立场景不得消费本轮玩家场景的新事实。');
+        }
+      } else {
+        throw new Error('知识边界校验失败：scene_type 不合法。');
+      }
+    }
+    return result;
+  }
+
+  async function callWorldModel(payload, generationId, validateResult) {
     const generateRaw = api('generateRaw');
     const generate = api('generate');
     if (typeof generateRaw !== 'function' && typeof generate !== 'function')
@@ -1075,7 +1538,9 @@ import integratedStyles from './styles-integrated.raw?raw';
     const customApi = customApiConfig();
     let lastError;
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const retryHint = attempt ? '\n\n上次输出未通过解析。此次必须严格只返回符合 Schema 的 JSON。' : '';
+      const retryHint = attempt
+        ? `\n\n上次输出未通过解析或知识边界校验：${lastError instanceof Error ? lastError.message : String(lastError || '')}。此次必须严格只返回符合 Schema 且不越权的 JSON。`
+        : '';
       const config = {
         generation_id: generationId,
         should_silence: true,
@@ -1110,11 +1575,12 @@ import integratedStyles from './styles-integrated.raw?raw';
             }, 90000),
           ),
         ]);
-        return normalizeModelResult(parseAiResult(raw));
+        const normalized = normalizeModelResult(parseAiResult(raw));
+        return typeof validateResult === 'function' ? validateResult(normalized) : normalized;
       } catch (error) {
         lastError = error;
         const message = error instanceof Error ? error.message : String(error);
-        const canRetry = /JSON|Schema|结构|工具调用|解析/i.test(message);
+        const canRetry = /JSON|Schema|结构|工具调用|解析|知识边界/i.test(message);
         if (!canRetry) break;
       }
     }
@@ -1126,6 +1592,10 @@ import integratedStyles from './styles-integrated.raw?raw';
       .replace(/[^\p{L}\p{N}_.·-]+/gu, '-')
       .slice(0, 80);
     return text || stableId(prefix, ...parts);
+  }
+
+  function cleanReferenceIds(value, prefix, limit = 20) {
+    return cleanStringList(value, limit).map(id => cleanId(id, prefix, id));
   }
 
   function upsertById(current, updates, limit, prefix, normalizer) {
@@ -1148,33 +1618,40 @@ import integratedStyles from './styles-integrated.raw?raw';
     const source = result && typeof result === 'object' ? result : {};
     state.revision = Number(state.revision || 0) + 1;
     state.clock = clockFromStatData(currentStat || {});
-    state.worldSummary = asText(source.world_summary, state.worldSummary)
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 600);
+    state.worldSummary = asText(source.world_summary, state.worldSummary).replace(/\s+/g, ' ').trim().slice(0, 600);
 
     const newFacts = asArray(source.new_facts)
-      .map(raw => ({
-        id: cleanId(raw?.id, 'F', raw?.content, messageKey.messageId),
-        content: asText(raw?.content),
-        status: asText(raw?.status, 'descriptive'),
-        scope: asText(raw?.scope, 'player_scene'),
-        location: asText(raw?.location),
-        actors: asArray(raw?.actors)
-          .map(value => asText(value))
-          .filter(Boolean)
-          .slice(0, 20),
-        witnesses: asArray(raw?.witnesses)
-          .map(value => asText(value))
-          .filter(Boolean)
-          .slice(0, 24),
-        publicity: asText(raw?.publicity),
-        confidence: clamp(raw?.confidence, 0, 1),
-        importance: Math.round(clamp(raw?.importance, 0, 100)),
-        evidence: asText(raw?.evidence).slice(0, 500),
-        source: { messageId: messageKey.messageId, swipeId: messageKey.swipeId, hash: messageKey.hash },
-        createdAt: nowIso(),
-      }))
+      .map(raw => {
+        const visibility = enumValue(raw?.visibility, FACT_VISIBILITIES, visibilityFromLegacy(raw?.publicity));
+        return {
+          id: cleanId(raw?.id, 'F', raw?.content, messageKey.messageId),
+          content: asText(raw?.content),
+          status: asText(raw?.status, 'descriptive'),
+          scope: asText(raw?.scope, 'player_scene'),
+          location: asText(raw?.location),
+          actors: cleanStringList(raw?.actors, 20),
+          witnesses: cleanStringList(raw?.witnesses, 24),
+          publicity:
+            asText(raw?.publicity) ||
+            {
+              secret: '仅参与者与明确目击者知情',
+              restricted: '仅指定群体内部知情',
+              local_public: '发生地附近公开',
+              public: '可进入跨地区传播',
+            }[visibility],
+          visibility,
+          occurredAt:
+            asText(raw?.occurred_at || raw?.occurredAt) ||
+            [state.clock.date, state.clock.time].filter(Boolean).join(' '),
+          audiences: cleanStringList(raw?.audiences, 16),
+          channels: cleanStringList(raw?.channels, 12),
+          confidence: clamp(raw?.confidence, 0, 1),
+          importance: Math.round(clamp(raw?.importance, 0, 100)),
+          evidence: asText(raw?.evidence).slice(0, 500),
+          source: { messageId: messageKey.messageId, swipeId: messageKey.swipeId, hash: messageKey.hash },
+          createdAt: nowIso(),
+        };
+      })
       .filter(
         fact =>
           fact.content &&
@@ -1219,22 +1696,45 @@ import integratedStyles from './styles-integrated.raw?raw';
 
     state.actors = upsertById(state.actors, source.upsert_actors, LIMITS.actors, 'NPC', raw => {
       if (!asText(raw?.name) || !asText(raw?.current_action) || !asText(raw?.updated_reason)) return null;
+      const previous = asArray(state.actors).find(
+        item =>
+          String(item?.id || '') === String(raw?.id || '') || comparableName(item?.name) === comparableName(raw?.name),
+      );
       return {
         id: raw?.id,
         name: asText(raw?.name),
         location: asText(raw?.location),
+        groups: [...new Set([...cleanStringList(previous?.groups, 16), ...cleanStringList(raw?.groups, 16)])].slice(
+          0,
+          16,
+        ),
         goal: asText(raw?.goal),
         currentAction: asText(raw?.current_action),
         knowledge: asArray(raw?.knowledge)
           .map(value => asText(value))
           .filter(Boolean)
           .slice(0, 30),
+        knowledgeSourceFactIds: [
+          ...new Set([
+            ...cleanStringList(previous?.knowledgeSourceFactIds, 20),
+            ...cleanReferenceIds(raw?.knowledge_source_fact_ids || raw?.knowledgeSourceFactIds, 'F', 20),
+          ]),
+        ].slice(0, 20),
+        knowledgeSourceIntelIds: [
+          ...new Set([
+            ...cleanStringList(previous?.knowledgeSourceIntelIds, 20),
+            ...cleanReferenceIds(raw?.knowledge_source_intel_ids || raw?.knowledgeSourceIntelIds, 'INTEL', 20),
+          ]),
+        ].slice(0, 20),
         nextDecision: asText(raw?.next_decision),
         updatedReason: asText(raw?.updated_reason).slice(0, 600),
       };
     });
 
-    const removedIntel = new Set(asArray(source.remove_intel_ids).map(String));
+    const currentIntelIds = new Set(asArray(state.intelPackets).map(item => String(item?.id || '')));
+    const removedIntel = new Set(
+      cleanStringList(source.remove_intel_ids, LIMITS.intelPackets).filter(id => currentIntelIds.has(id)),
+    );
     state.intelPackets = asArray(state.intelPackets).filter(item => !removedIntel.has(String(item.id)));
     state.intelPackets = upsertById(state.intelPackets, source.upsert_intel, LIMITS.intelPackets, 'INTEL', raw => {
       if (
@@ -1248,19 +1748,32 @@ import integratedStyles from './styles-integrated.raw?raw';
       ) {
         return null;
       }
+      const distanceBand = enumValue(raw?.distance_band || raw?.distanceBand, DISTANCE_BANDS, 'same_city');
+      const departedWorldDays = Math.max(
+        Number(state.clock.worldDays) || 0,
+        Number(raw?.departed_world_days ?? raw?.departedWorldDays) || 0,
+      );
+      const availableAfterWorldDays = Math.max(
+        departedWorldDays + minimumTransitDays(distanceBand, raw?.channel),
+        Number(raw?.available_after_world_days ?? raw?.availableAfterWorldDays) || 0,
+      );
       return {
         id: raw?.id,
         content: asText(raw?.content),
         origin: asText(raw?.origin),
         destination: asText(raw?.destination),
         channel: asText(raw?.channel),
-        status: asText(raw?.status),
+        status: enumValue(raw?.status, INTEL_STATUSES, 'in_transit'),
         eta: asText(raw?.eta),
         reliability: clamp(raw?.reliability, 0, 1),
-        knownBy: asArray(raw?.known_by)
-          .map(value => asText(value))
-          .filter(Boolean)
-          .slice(0, 30),
+        knownBy: cleanStringList(raw?.known_by || raw?.knownBy, 30),
+        factIds: cleanReferenceIds(raw?.fact_ids || raw?.factIds, 'F', 20),
+        targetGroups: cleanStringList(raw?.target_groups || raw?.targetGroups, 16),
+        departedAt:
+          asText(raw?.departed_at || raw?.departedAt) || [state.clock.date, state.clock.time].filter(Boolean).join(' '),
+        distanceBand,
+        departedWorldDays,
+        availableAfterWorldDays,
       };
     });
 
@@ -1301,12 +1814,19 @@ import integratedStyles from './styles-integrated.raw?raw';
         .filter(Boolean),
     ].slice(-LIMITS.cameraHistory);
     state.nextTurnPacket = normalizePacket(source.next_turn_packet);
+    const protectedFactContents = newFacts
+      .filter(fact => fact.scope === 'player_scene' && ['secret', 'restricted'].includes(fact.visibility))
+      .map(fact => fact.content);
+    state.nextTurnPacket.hardFacts = state.nextTurnPacket.hardFacts.filter(
+      text => !protectedFactContents.some(content => content && (content.includes(text) || text.includes(content))),
+    );
     state.lastProcessed = { messageId: messageKey.messageId, swipeId: messageKey.swipeId, hash: messageKey.hash };
     state.lastRun = {
       at: nowIso(),
       newFactCount: newFacts.length,
       sourceMessageId: messageKey.messageId,
       sourceSwipeId: messageKey.swipeId,
+      scenePermissions: asArray(source.scene_permissions).slice(0, 2),
     };
     const checkpoint = {
       messageId: messageKey.messageId,
@@ -1335,6 +1855,7 @@ import integratedStyles from './styles-integrated.raw?raw';
   function buildMainModelInjection(state) {
     const packet = normalizePacket(state.nextTurnPacket);
     const knowledge = packet.npcKnowledge
+      .filter(item => item.basisFactIds.length || item.basisIntelIds.length || !item.knows.length)
       .map(item => {
         const knows = item.knows.length ? `已知：${item.knows.join('；')}` : '已知：无新增信息';
         const doesNotKnow = item.doesNotKnow.length ? `未知：${item.doesNotKnow.join('；')}` : '';
@@ -1487,7 +2008,10 @@ import integratedStyles from './styles-integrated.raw?raw';
       const currentStat = await waitForMessageVariables(messageId, job);
       if (!jobStillValid(job)) throw new Error('聊天或回复版本已经改变，本次推演结果已作废。');
       const payload = buildRequestPayload(baseState, messageKey, currentStat || {});
-      const result = await callWorldModel(payload, generationId);
+      const currentClock = clockFromStatData(currentStat || {});
+      const result = await callWorldModel(payload, generationId, candidate =>
+        validateEpistemicResult(baseState, candidate, currentClock),
+      );
       if (!jobStillValid(job)) throw new Error('聊天或回复版本已经改变，本次推演结果已作废。');
       const updatedMessageKey = await writeParallelWorldToMessage(messageKey, result);
       const nextState = applyTransition(baseState, result, updatedMessageKey, currentStat || {});
@@ -1637,11 +2161,14 @@ import integratedStyles from './styles-integrated.raw?raw';
           .join('')
       : [
           ['待启', '首次推演尚未执行', '副模型完成第一轮结算后，天下世事会从这里开始入档。'],
-          ['待报', '驿报与人物行动尚未成卷', '主模型正文仍可正常进行；天下档案会按聊天独立保存。'],
+          ['待传', '消息流转与人物行动尚未成卷', '主模型正文仍可正常进行；天下档案会按聊天独立保存。'],
           ['待察', '伏线与后果仍在暗处', '启用值房后，玩家视角之外的因果会逐回合积累。'],
         ]
           .map(
-            ([label, title, summary], index) => `<article class="cwe-event-row is-empty ${index === 1 ? 'busy' : 'safe'}">
+            (
+              [label, title, summary],
+              index,
+            ) => `<article class="cwe-event-row is-empty ${index === 1 ? 'busy' : 'safe'}">
               <div class="cwe-event-when"><i></i><strong>${label}</strong><b>未定</b><span>尚未入档</span></div>
               <div class="cwe-event-story"><header><h4>${title}</h4>${tag('待命')}</header><p>${summary}</p></div>
               <dl class="cwe-event-detail"><div><dt>因由</dt><dd>天下档案尚未结算</dd></div><div><dt>状态</dt><dd>等待首次推演</dd></div><div><dt>影响</dt><dd>不影响当前正文</dd></div></dl>
@@ -1659,7 +2186,7 @@ import integratedStyles from './styles-integrated.raw?raw';
         <div class="cwe-overview-status">
           <div class="cwe-statline" aria-label="天下演化统计">
             <span><i class="danger"></i>重大世事 <b>${state.activeEvents.length}</b></span>
-            <span><i class="busy"></i>关联驿报 <b>${state.intelPackets.length}</b></span>
+            <span><i class="busy"></i>消息流转 <b>${state.intelPackets.length}</b></span>
             <span><i class="safe"></i>人物行动 <b>${state.actors.length}</b></span>
             <span><i></i>未决伏线 <b>${state.hooks.length}</b></span>
           </div>
@@ -1700,21 +2227,35 @@ import integratedStyles from './styles-integrated.raw?raw';
           )
           .join('')
       : emptyBlock('天下暂无线索正在推进');
+    const distanceLabels = {
+      same_place: '同地',
+      same_city: '同城',
+      nearby_city: '邻近州县',
+      same_province: '省内',
+      cross_province: '跨省',
+      remote: '远途',
+    };
+    const statusLabels = {
+      queued: '待发',
+      in_transit: '流转中',
+      stalled: '受阻',
+      distorted: '有失真',
+    };
     const intel = state.intelPackets.length
       ? state.intelPackets
           .map(
             item => `
       <article class="cwe-record compact">
-        <header><div><small>${escapeHtml(item.channel || '未知渠道')} · ${Math.round(Number(item.reliability || 0) * 100)}%</small><h3>${escapeHtml(shortText(item.content, 90))}</h3></div>${tag(item.status || '在途')}</header>
-        <footer><span>${escapeHtml(item.origin || '未知')} → ${escapeHtml(item.destination || '未知')}</span><span>${escapeHtml(item.eta || '抵达时间未定')}</span></footer>
+        <header><div><small>${escapeHtml(item.channel || '未知渠道')} · ${escapeHtml(distanceLabels[item.distanceBand] || '距离未定')} · ${Math.round(Number(item.reliability || 0) * 100)}%</small><h3>${escapeHtml(shortText(item.content, 90))}</h3></div>${tag(statusLabels[item.status] || item.status || '流转中')}</header>
+        <footer><span>${escapeHtml(item.origin || '未知')} → ${escapeHtml(item.destination || '未知')}${item.targetGroups?.length ? ` · ${escapeHtml(item.targetGroups.join('、'))}` : ''}</span><span>${escapeHtml(item.eta || '抵达时间未定')}</span></footer>
       </article>`,
           )
           .join('')
-      : emptyBlock('暂无在途情报');
-    return `<section class="cwe-section-head"><div><p>天下案牍</p><h2>世事与驿报</h2></div><span>客观事件与消息传播分别记账</span></section>
+      : emptyBlock('暂无需要跨地区或跨群体追踪的消息');
+    return `<section class="cwe-section-head"><div><p>天下案牍</p><h2>世事与消息</h2></div><span>消息流转只记录传播过程，不代表目的地已经知情</span></section>
       <section class="cwe-events-ledger">
         <div class="cwe-ledger-column"><header><h3>活跃世事</h3><span>${state.activeEvents.length} 件</span></header><div class="cwe-stack">${events}</div></div>
-        <div class="cwe-ledger-column"><header><h3>在途驿报</h3><span>${state.intelPackets.length} 封</span></header><div class="cwe-stack">${intel}</div></div>
+        <div class="cwe-ledger-column"><header><h3>消息流转</h3><span>${state.intelPackets.length} 条</span></header><div class="cwe-stack">${intel}</div></div>
       </section>`;
   }
 

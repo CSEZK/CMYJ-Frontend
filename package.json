@@ -13,7 +13,8 @@
     "sync": "node tavern_sync.mjs",
     "check:cmyj": "node scripts/check-cmyj.mjs",
     "smoke:cmyj": "node scripts/smoke-cmyj.mjs",
-    "test:scenario-generator": "node scripts/test-scenario-generator.mjs"
+    "test:scenario-generator": "node scripts/test-scenario-generator.mjs",
+    "test:world-engine": "node scripts/test-world-engine-knowledge.mjs"
   },
   "browserslist": [
     "defaults and partially supports es6-module"
