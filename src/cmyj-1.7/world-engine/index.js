@@ -6,7 +6,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 (() => {
   'use strict';
 
-  const VERSION = '1.8.4';
+  const VERSION = '1.8.5';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const BACKUP_SCRIPT_ID = 'cmyj-world-engine-backup-v1';
@@ -41,6 +41,31 @@ import integratedStyles from './styles-integrated.raw?raw';
     'trace.discover',
   ]);
   const RETIRED_OPERATION_TYPES = new Set(['summary.replace', 'fact.add']);
+  const INTEL_STATUSES = Object.freeze(['queued', 'in_transit', 'arrived', 'stalled', 'distorted']);
+  const INTEL_VISIBILITIES = Object.freeze(['secret', 'restricted', 'local_public', 'public']);
+  const INTEL_SOURCE_TYPES = Object.freeze([
+    'current_turn_witness',
+    'actor_knowledge',
+    'received_intel',
+    'event',
+    'public_information',
+  ]);
+  const DISTANCE_BANDS = Object.freeze([
+    'same_place',
+    'same_city',
+    'nearby_city',
+    'same_province',
+    'cross_province',
+    'remote',
+  ]);
+  const DISTANCE_MIN_DAYS = Object.freeze({
+    same_place: 0,
+    same_city: 0,
+    nearby_city: 1,
+    same_province: 2,
+    cross_province: 5,
+    remote: 10,
+  });
   const hostWindow = (() => {
     try {
       return window.parent && window.parent !== window ? window.parent : window;
@@ -177,6 +202,70 @@ import integratedStyles from './styles-integrated.raw?raw';
         return true;
       })
       .slice(0, limit);
+  }
+
+  function enumValue(value, allowed, fallback) {
+    const normalized = asText(value).toLowerCase();
+    return allowed.includes(normalized) ? normalized : fallback;
+  }
+
+  function optionalFiniteNumber(value) {
+    if (value === '' || value == null) return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function normalizeIntelStatus(value, fallback = 'in_transit') {
+    const text = asText(value).toLowerCase();
+    if (/抵达|已达|送达|arrived|delivered/.test(text)) return 'arrived';
+    if (/排队|待发|queued/.test(text)) return 'queued';
+    if (/停滞|中断|stalled/.test(text)) return 'stalled';
+    if (/失真|讹传|歪曲|distorted/.test(text)) return 'distorted';
+    if (/传播|在途|递送|路上|in[_ -]?transit|spreading|propagating/.test(text)) return 'in_transit';
+    return enumValue(text, INTEL_STATUSES, fallback);
+  }
+
+  function normalizeIntelVisibility(value, fallback = 'restricted') {
+    const text = asText(value).toLowerCase();
+    if (/秘密|私密|未公开|不公开|private|secret/.test(text)) return 'secret';
+    if (/限定|内部|少数|restricted/.test(text)) return 'restricted';
+    if (/当地|本地|城内|local/.test(text)) return 'local_public';
+    if (/公开|天下|广泛|public/.test(text)) return 'public';
+    return enumValue(text, INTEL_VISIBILITIES, fallback);
+  }
+
+  function minimumTransitDays(distanceBand, channel) {
+    const base = DISTANCE_MIN_DAYS[enumValue(distanceBand, DISTANCE_BANDS, 'same_city')] ?? 0;
+    const text = asText(channel);
+    const multiplier = /飞鸽|快马|塘报|军驿|急递/.test(text) ? 0.65 : /商旅|流言|传闻|口耳/.test(text) ? 1.6 : 1;
+    return Math.ceil(base * multiplier);
+  }
+
+  function clockFromStatData(statData) {
+    const world = statData?.世界运转 || {};
+    const hour = world?.二十四时?.小时;
+    const minute = world?.二十四时?.分钟;
+    return {
+      date: asText(world.当前日期),
+      time: Number.isFinite(Number(hour))
+        ? `${String(hour).padStart(2, '0')}:${String(Number(minute) || 0).padStart(2, '0')}`
+        : '',
+      location: asText(world.当前地点),
+      worldDays: Math.max(0, Number(world.世界运转天数) || 0),
+    };
+  }
+
+  function comparableLocation(value) {
+    return asText(value)
+      .normalize('NFKC')
+      .replace(/[\s·，。；、：:（）()[\]{}<>《》【】]+/gu, '')
+      .toLowerCase();
+  }
+
+  function locationsOverlap(left, right) {
+    const a = comparableLocation(left);
+    const b = comparableLocation(right);
+    return Boolean(a && b && (a.includes(b) || b.includes(a)));
   }
 
   const STATUS_LABELS = Object.freeze({
@@ -373,6 +462,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       version: 1,
       chatId,
       revision: 0,
+      currentWorldDays: 0,
       _storageRevision: 0,
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -443,6 +533,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     }
     const state = { ...createEmptyState(chatId), ...clone(raw), chatId };
     state._storageRevision = Math.max(0, Math.floor(Number(state._storageRevision) || 0));
+    state.currentWorldDays = Math.max(0, Number(state.currentWorldDays) || 0);
     // 早期版本允许空字段和错误归类进入档案；读取时先做保守清理，避免脏数据继续喂给副模型。
     // 长期事实与世界摘要交给聊天记忆插件；旧档案读取时不再继续携带这些重复内容。
     delete state.facts;
@@ -478,6 +569,7 @@ import integratedStyles from './styles-integrated.raw?raw';
         return {
           ...item,
           id,
+          groups: uniqueTextList(item?.groups || item?.affiliations || item?.factions, 16, 100),
           knowledge,
           doesNotKnow: uniqueTextList(item?.doesNotKnow || item?.does_not_know, 20, 240),
           knowledgeLedger: normalizeKnowledgeLedger([...legacyLedger, ...asArray(item?.knowledgeLedger)], id),
@@ -495,7 +587,23 @@ import integratedStyles from './styles-integrated.raw?raw';
           asText(item?.eta) &&
           Number(item?.reliability) > 0,
       )
-      .map(item => ({ ...item, id: cleanId(item?.id, 'IN', item?.content, item?.origin) }))
+      .map(item => ({
+        ...item,
+        id: cleanId(item?.id, 'IN', item?.content, item?.origin),
+        status: normalizeIntelStatus(item?.status),
+        visibility: normalizeIntelVisibility(item?.visibility || item?.publicity),
+        knownBy: uniqueTextList(item?.knownBy || item?.known_by, 30, 100),
+        targetGroups: uniqueTextList(item?.targetGroups || item?.target_groups, 16, 100),
+        sourceFactIds: uniqueTextList(item?.sourceFactIds || item?.source_fact_ids, 20, 100),
+        sourceType: enumValue(item?.sourceType || item?.source_type, INTEL_SOURCE_TYPES, ''),
+        sourceId: asText(item?.sourceId || item?.source_id),
+        sourceActor: asText(item?.sourceActor || item?.source_actor),
+        distanceBand: enumValue(item?.distanceBand || item?.distance_band, DISTANCE_BANDS, 'same_city'),
+        departedWorldDays: optionalFiniteNumber(item?.departedWorldDays ?? item?.departed_world_days),
+        availableAfterWorldDays: optionalFiniteNumber(
+          item?.availableAfterWorldDays ?? item?.available_after_world_days,
+        ),
+      }))
       .slice(-LIMITS.intelPackets);
     state.hooks = asArray(state.hooks)
       .filter(
@@ -552,9 +660,9 @@ import integratedStyles from './styles-integrated.raw?raw';
   function isStoredState(raw, chatId = getCurrentChatId()) {
     return Boolean(
       raw &&
-        typeof raw === 'object' &&
-        Number(raw.version) === 1 &&
-        (!raw.chatId || String(raw.chatId) === String(chatId)),
+      typeof raw === 'object' &&
+      Number(raw.version) === 1 &&
+      (!raw.chatId || String(raw.chatId) === String(chatId)),
     );
   }
 
@@ -608,11 +716,7 @@ import integratedStyles from './styles-integrated.raw?raw';
   }
 
   function backupEntrySequence(entry) {
-    return Math.max(
-      0,
-      Math.floor(Number(entry?.sequence) || 0),
-      stateStorageRevision(entry?.state),
-    );
+    return Math.max(0, Math.floor(Number(entry?.sequence) || 0), stateStorageRevision(entry?.state));
   }
 
   function writeBackupEntry(chatId, entry) {
@@ -697,9 +801,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     const rawPrimary = variables[CHAT_STATE_KEY];
     let primary = isStoredState(rawPrimary, chatId) ? normalizeState(rawPrimary, chatId) : null;
     const backupEntry = readBackupEntry(chatId);
-    const backupState = isStoredState(backupEntry?.state, chatId)
-      ? normalizeState(backupEntry.state, chatId)
-      : null;
+    const backupState = isStoredState(backupEntry?.state, chatId) ? normalizeState(backupEntry.state, chatId) : null;
     const backupSequence = backupEntrySequence(backupEntry);
 
     if (backupEntry?.deleted && backupSequence >= stateStorageRevision(primary)) {
@@ -1300,7 +1402,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       .map(fact => asText(fact?.id))
       .filter(Boolean);
     const arrivedIntelIds = asArray(state?.intelPackets)
-      .filter(intelHasArrived)
+      .filter(item => intelHasArrived(item, state?.currentWorldDays))
       .filter(
         item =>
           actorListed(operationTextArray(item?.known_by || item?.knownBy), actor) ||
@@ -1393,12 +1495,16 @@ import integratedStyles from './styles-integrated.raw?raw';
       'id',
       'name',
       'location',
+      'groups',
       'goal',
       'currentAction',
       'knowledge',
       'doesNotKnow',
       'nextDecision',
       'updatedReason',
+      'causeType',
+      'causeId',
+      'basisIds',
     ];
     const intelFields = [
       'id',
@@ -1410,6 +1516,15 @@ import integratedStyles from './styles-integrated.raw?raw';
       'eta',
       'reliability',
       'knownBy',
+      'targetGroups',
+      'visibility',
+      'sourceType',
+      'sourceId',
+      'sourceActor',
+      'sourceFactIds',
+      'distanceBand',
+      'departedWorldDays',
+      'availableAfterWorldDays',
     ];
     const hookFields = ['id', 'title', 'stage', 'summary', 'visibleSigns', 'trigger', 'failCondition'];
     const secretFields = ['id', 'title', 'content', 'holders', 'revealConditions', 'status'];
@@ -1703,18 +1818,28 @@ import integratedStyles from './styles-integrated.raw?raw';
 1. 从 CURRENT_STATE 中选择至多两个确有行动机会的事件、人物、情报或伏线；允许本轮没有任何变化。
 2. 只提交相对于当前记录发生变化的字段。禁止复述完整记录，禁止为了显得世界在运转而提交无效变化。
 3. create 用于新增记录，merge 用于修改已有记录，delete 用于结束或移除记录。merge 和 delete 必须复用 CURRENT_STATE 中已有的稳定 ID。
-4. 人物获得新知识必须存在合理渠道；情报传播必须受地点、渠道和故事时间约束。
+4. 人物获得新知识必须存在可核对来源；世界书、CURRENT_STATE 和 CURRENT_TURN 中出现的真相都不自动等于人物知道。
 5. collection 对应关系：events → activeEvents，actors → actors，intel → intelPackets，hooks → hooks。
 6. create 必须给出能构成完整记录的核心字段；merge 只提交确实改变的字段，并沿用 CURRENT_STATE 的字段命名。
 7. create 核心字段：events 需要 title、stage、location、summary、nextTrigger；actors 需要 name、currentAction、updatedReason；intel 需要 content、origin、destination、channel、status、eta、reliability；hooks 需要 title、stage、summary、trigger、failCondition。
 
-三、旁线场景
+三、知识与传播边界
+1. 先读取 knowledgeBoundary。verifiedCurrentTurnWitnesses 是本轮正文事实的唯一现场知情白名单；forbiddenCurrentTurnKnowers 中的人物即使出现在世界书或旧档案中也不得立刻反应。
+2. 每个 actor create/merge 都应提交 causeType、causeId、basisIds。因本轮亲眼观察而行动时使用 observation/CURRENT_TURN，且人物必须在 verifiedCurrentTurnWitnesses；依赖旧情报时使用 received_intel/情报稳定 ID；参与旧事件时使用 event/事件稳定 ID；无关自主行动使用 autonomous/人物稳定 ID，新建独立人物使用 elapsed_time/ELAPSED_TIME。
+3. actor 的 knowledge 发生增加时，只能以 observation、received_intel 或 event 为依据；不得用 autonomous、直觉、巧合或世界书真相增加知识。
+4. 新建 intel 必须额外提交：visibility（secret、restricted、local_public、public）、targetGroups、distanceBand（same_place、same_city、nearby_city、same_province、cross_province、remote）、sourceType、sourceId、sourceActor、sourceFactIds。status 必须是 in_transit，不能同轮 arrived。
+5. sourceType=current_turn_witness 时，sourceId 必须为 CURRENT_TURN，sourceActor 必须逐字来自 verifiedCurrentTurnWitnesses；actor_knowledge 必须引用确实已知该内容的人物；received_intel 与 event 必须引用已有稳定 ID。
+6. local_public 只表示起点当地公开，不会自动跨城、跨省或传给所有群体。人物只有在情报达到 availableAfterWorldDays、地点匹配且属于 targetGroups 后才能据此行动。
+7. events 或 hooks 若直接承接 CURRENT_TURN，必须在 sourceFactIds 中写 CURRENT_TURN；事件 actors 只能包含本轮白名单中的现场知情者。秘密行动留下的客观痕迹可以登记，但不能借此让未发现痕迹的人物立刻知情。
+
+四、旁线场景
 1. scenes 最多两个，每段必须通过 based_on 引用本轮 changes 的数组下标。
 2. 场景只呈现被引用变化的过程或直接结果；没有状态变化支撑时不要生成场景。
 3. 场景必须位于玩家当前视野之外，不得重演玩家场景，不得凭空制造重大胜负、死亡、陷城或政局结果。
 4. body 不使用 <平行世界> 标签，不写“与此同时”“玩家不知道的是”“镜头转向”等元叙事。
+5. 若场景内容与 CURRENT_TURN 相关，出场人物必须是 verifiedCurrentTurnWitnesses，或已经通过本轮抵达且地点、群体匹配的情报获得消息。新建的在途情报只能展示发送与传递，不能展示终点人物已经收到或作出反应。
 
-四、输出
+五、输出
 只返回符合 JSON Schema 的一个 JSON 对象。changes 和 scenes 都可以为空；base_revision 必须原样回传。`;
   }
 
@@ -2186,6 +2311,8 @@ import integratedStyles from './styles-integrated.raw?raw';
     const currentText = current?.message || '';
     const autonomyFocus = buildAutonomyFocus(baseState, currentText);
     const canonicalState = compactStateForPrompt(baseState, currentText, autonomyFocus);
+    const sceneEvidence = buildSceneEvidence(baseState, currentStat, currentText);
+    const clock = clockFromStatData(currentStat);
     delete canonicalState.secrets;
     delete canonicalState.turnFacts;
     delete canonicalState.scenePresence;
@@ -2202,6 +2329,21 @@ import integratedStyles from './styles-integrated.raw?raw';
       },
       recentContextReadOnly: buildRecentContext(messageKey.messageId),
       canonicalState,
+      knowledgeBoundary: {
+        currentLocation: sceneEvidence.currentLocation,
+        currentWorldDays:
+          optionalFiniteNumber(currentStat?.世界运转?.世界运转天数) ??
+          Math.max(0, Number(baseState?.currentWorldDays) || clock.worldDays),
+        verifiedCurrentTurnWitnesses: sceneEvidence.reliableWitnesses,
+        forbiddenCurrentTurnKnowers: sceneEvidence.excludedKnownActors,
+        rules: [
+          'CURRENT_TURN 中出现的客观真相不自动等于任何人物知道。',
+          '人物因本轮正文行动时，causeType 必须为 observation，causeId 必须为 CURRENT_TURN，且人物必须在 verifiedCurrentTurnWitnesses。',
+          '远方人物只能依赖自己的旧档案、已抵达且属于其地点与群体的情报，或完全无关的自主行动。',
+          '新建情报只能处于 in_transit，必须声明 targetGroups、distanceBand、sourceType、sourceId；不得同轮抵达。',
+          'local_public 只在起点当地公开；跨地点仍必须经过情报传播和抵达时间。',
+        ],
+      },
     };
   }
 
@@ -3345,6 +3487,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       id,
       name,
       location: firstOperationText(raw?.location, raw?.place, raw?.where),
+      groups: operationTextArray(raw?.groups || raw?.affiliations || raw?.factions),
       goal: firstOperationText(raw?.goal, raw?.objective, raw?.intent),
       current_action: firstOperationText(
         raw?.current_action,
@@ -3376,14 +3519,14 @@ import integratedStyles from './styles-integrated.raw?raw';
     const reliability = Number(raw?.reliability ?? raw?.confidence ?? raw?.certainty);
     const content = firstOperationText(raw?.content, raw?.message, raw?.summary, raw?.description, raw?.text);
     const receivers = operationTextArray(
-      raw?.receivers ||
+      raw?.known_by ||
+        raw?.knownBy ||
+        raw?.receivers ||
         raw?.recipients ||
         raw?.receiver ||
         raw?.recipient ||
-        raw?.destination ||
         raw?.targets ||
-        raw?.known_by ||
-        raw?.knownBy,
+        raw?.destination,
     );
     return {
       id,
@@ -3415,6 +3558,14 @@ import integratedStyles from './styles-integrated.raw?raw';
         Number.isFinite(reliability) && reliability > 0 ? (reliability > 1 ? reliability / 100 : reliability) : 0.7,
       known_by: receivers,
       source_fact_ids: operationTextArray(raw?.source_fact_ids || raw?.sourceFactIds),
+      target_groups: operationTextArray(raw?.target_groups || raw?.targetGroups),
+      visibility: normalizeIntelVisibility(raw?.visibility || raw?.publicity),
+      source_type: enumValue(raw?.source_type || raw?.sourceType, INTEL_SOURCE_TYPES, ''),
+      source_id: firstOperationText(raw?.source_id, raw?.sourceId),
+      source_actor: firstOperationText(raw?.source_actor, raw?.sourceActor),
+      distance_band: enumValue(raw?.distance_band || raw?.distanceBand, DISTANCE_BANDS, 'same_city'),
+      departed_world_days: optionalFiniteNumber(raw?.departed_world_days ?? raw?.departedWorldDays),
+      available_after_world_days: optionalFiniteNumber(raw?.available_after_world_days ?? raw?.availableAfterWorldDays),
     };
   }
 
@@ -3536,18 +3687,42 @@ import integratedStyles from './styles-integrated.raw?raw';
     };
   }
 
-  function intelHasArrived(item) {
-    return /抵达|已达|公开|送达|arrived|delivered/i.test(asText(item?.status));
+  function intelHasArrived(item, currentWorldDays = null) {
+    if (normalizeIntelStatus(item?.status) !== 'arrived') return false;
+    const availableAfter = optionalFiniteNumber(item?.availableAfterWorldDays ?? item?.available_after_world_days);
+    const current = optionalFiniteNumber(currentWorldDays);
+    return availableAfter == null || current == null || current >= availableAfter;
   }
 
   function intelIsPublic(item) {
-    return /公开|公示|张榜|众人|全城|全县|public|broadcast/i.test(
-      [
-        asText(item?.status),
-        asText(item?.destination),
-        ...asArray(item?.known_by || item?.knownBy).map(value => asText(value)),
-      ].join(' '),
+    return normalizeIntelVisibility(item?.visibility || item?.publicity) === 'public';
+  }
+
+  function actorMatchesName(actor, value) {
+    const expected = comparableIdentity(value);
+    return Boolean(
+      expected &&
+      [actor?.id, actorDisplayName(actor)]
+        .map(comparableIdentity)
+        .filter(Boolean)
+        .some(candidate => candidate === expected),
     );
+  }
+
+  function intelAllowsActor(item, actor, currentWorldDays = null) {
+    if (!item || !actor || !intelHasArrived(item, currentWorldDays)) return false;
+    const knownBy = uniqueTextList(item?.knownBy || item?.known_by, 30, 100);
+    if (knownBy.some(value => actorMatchesName(actor, value))) return true;
+    const destination = asText(item?.destination);
+    const destinationMatches =
+      destination.includes(actorDisplayName(actor)) || locationsOverlap(destination, actor?.location);
+    if (!destinationMatches) return false;
+    const targets = uniqueTextList(item?.targetGroups || item?.target_groups, 16, 100).map(comparableIdentity);
+    if (!targets.length) return true;
+    const groups = uniqueTextList(actor?.groups || actor?.affiliations || actor?.factions, 16, 100).map(
+      comparableIdentity,
+    );
+    return targets.some(target => groups.includes(target));
   }
 
   function recordRecency(item, index) {
@@ -3619,7 +3794,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     const intelInTransit = selectRecentPersistentRecords(
       state?.intelPackets,
       MAIN_MODEL_CONTEXT_LIMITS.persistentItems,
-      item => !intelHasArrived(item) && !packetMentionsIdentity(latestIntel, [item?.content]),
+      item => !intelHasArrived(item, state?.currentWorldDays) && !packetMentionsIdentity(latestIntel, [item?.content]),
     );
     const uncertainties = selectRecentPersistentRecords(
       state?.intelPackets,
@@ -3647,9 +3822,9 @@ import integratedStyles from './styles-integrated.raw?raw';
     });
   }
 
-  function deriveNextTurnPacket(legacy) {
+  function deriveNextTurnPacket(legacy, currentWorldDays = null) {
     const intel = asArray(legacy.upsert_intel);
-    const arrived = intel.filter(intelHasArrived);
+    const arrived = intel.filter(item => intelHasArrived(item, currentWorldDays));
     const inTransit = intel.filter(item => !arrived.includes(item));
     const changedEvents = asArray(legacy.upsert_events);
     const changedActors = asArray(legacy.upsert_actors);
@@ -3972,7 +4147,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     );
   }
 
-  function validateActorCause(baseState, transition, actor, existing, currentTurnText) {
+  function validateActorCause(baseState, transition, actor, existing, currentTurnText, context = {}) {
     const causeType = asText(actor?.cause_type || actor?.causeType).toLowerCase();
     const causeId = asText(actor?.cause_id || actor?.causeId);
     const actionText = [actor?.current_action, actor?.updated_reason, actor?.next_decision].map(asText).join(' ');
@@ -3980,6 +4155,9 @@ import integratedStyles from './styles-integrated.raw?raw';
       knowledgeTextsRelated(turnFactText(fact), actionText),
     );
     if (!causeType || !causeId) {
+      if (context?.requireExplicitCause && textsStronglyRelated(actionText, currentTurnText)) {
+        return '人物行动与本轮正文直接相关，但缺少可核对的 causeType/causeId';
+      }
       if (relatedTurnFacts.length) {
         return `人物行动涉及本轮事实 ${relatedTurnFacts.map(fact => fact.alias || fact.id).join('、')}，但缺少 cause_type/cause_id`;
       }
@@ -4001,6 +4179,18 @@ import integratedStyles from './styles-integrated.raw?raw';
     if (!ACTOR_CAUSE_TYPES.has(causeType)) return `不支持的人物行动原因 ${causeType}`;
 
     if (causeType === 'observation') {
+      if (causeId.toUpperCase() === 'CURRENT_TURN') {
+        const allowedWitnesses = uniqueTextList(context?.sceneEvidence?.reliableWitnesses, 24, 100);
+        if (!allowedWitnesses.some(name => actorMatchesName(actor, name))) {
+          return `人物 ${actorDisplayName(actor)} 不在本轮现场知情白名单中`;
+        }
+        actor.cause_id = 'CURRENT_TURN';
+        actor.basis_ids = uniqueTextList([...asArray(actor?.basis_ids), 'CURRENT_TURN'], 16, 100);
+        return textsStronglyRelated(actionText, currentTurnText) ||
+          asText(currentTurnText).includes(actorDisplayName(actor))
+          ? ''
+          : '人物行动与本轮现场观察不一致';
+      }
       const fact = findTurnFact(baseState, transition, causeId);
       if (!fact) return `人物观察来源 ${causeId} 不存在`;
       if (!actorAuthorizedForTurnFact(actor, fact)) {
@@ -4031,9 +4221,8 @@ import integratedStyles from './styles-integrated.raw?raw';
     if (causeType === 'received_intel') {
       const intel = stagedRecordById(baseState, transition, causeId, 'intelPackets', 'upsert_intel');
       if (!intel) return `人物情报依据 ${causeId} 不存在`;
-      if (!intelHasArrived(intel)) return `人物情报依据 ${causeId} 尚未抵达`;
-      const recipients = operationTextArray(intel?.known_by || intel?.knownBy);
-      if (!actorListed(recipients, actor) && !asText(intel?.destination).includes(actorDisplayName(actor))) {
+      if (!intelHasArrived(intel, context?.currentWorldDays)) return `人物情报依据 ${causeId} 尚未抵达`;
+      if (!intelAllowsActor(intel, actor, context?.currentWorldDays)) {
         return `情报 ${causeId} 未送达 ${actorDisplayName(actor)}`;
       }
       return knowledgeTextsRelated(intel?.content, actionText) ? '' : '人物行动与收到的情报不一致';
@@ -4055,6 +4244,13 @@ import integratedStyles from './styles-integrated.raw?raw';
     }
     if (!existing && causeType === 'autonomous' && textsStronglyRelated(actionText, currentTurnText)) {
       return '新增人物不能用 autonomous 绕过本轮正文的知识边界';
+    }
+    if (
+      context?.requireExplicitCause &&
+      ['autonomous', 'elapsed_time'].includes(causeType) &&
+      textsStronglyRelated(actionText, currentTurnText)
+    ) {
+      return `${causeType} 不能用于回应本轮正文；必须提供现场观察或已抵达消息`;
     }
     return '';
   }
@@ -4976,7 +5172,164 @@ import integratedStyles from './styles-integrated.raw?raw';
     return values;
   }
 
-  function buildTransitionFromChanges(baseState, result) {
+  function findActorByReference(records, value) {
+    return asArray(records).find(actor => actorMatchesName(actor, value));
+  }
+
+  function validateV3IntelChange(baseState, transition, intel, existing, context) {
+    const currentWorldDays = Math.max(0, Number(context?.currentWorldDays) || 0);
+    const sourceType = enumValue(intel?.source_type || intel?.sourceType, INTEL_SOURCE_TYPES, '');
+    const sourceId = asText(intel?.source_id || intel?.sourceId);
+    const sourceActor = asText(intel?.source_actor || intel?.sourceActor);
+    const status = normalizeIntelStatus(intel?.status);
+    const distanceBand = enumValue(intel?.distance_band || intel?.distanceBand, DISTANCE_BANDS, 'same_city');
+    const targetGroups = uniqueTextList(intel?.target_groups || intel?.targetGroups, 16, 100);
+    const requestedDeparture = optionalFiniteNumber(intel?.departed_world_days ?? intel?.departedWorldDays);
+    const existingDeparture = optionalFiniteNumber(existing?.departedWorldDays ?? existing?.departed_world_days);
+    const departedWorldDays = existing
+      ? Math.max(0, existingDeparture ?? requestedDeparture ?? currentWorldDays)
+      : Math.max(currentWorldDays, requestedDeparture ?? currentWorldDays);
+    const minimumAvailable = departedWorldDays + minimumTransitDays(distanceBand, intel?.channel);
+    const requestedAvailable = optionalFiniteNumber(
+      intel?.available_after_world_days ?? intel?.availableAfterWorldDays,
+    );
+    const availableAfterWorldDays = Math.max(minimumAvailable, requestedAvailable ?? minimumAvailable);
+
+    intel.status = status;
+    intel.visibility = normalizeIntelVisibility(intel?.visibility || intel?.publicity);
+    intel.target_groups = targetGroups;
+    intel.source_type = sourceType;
+    intel.source_id = sourceId;
+    intel.source_actor = sourceActor;
+    intel.distance_band = distanceBand;
+    intel.departed_world_days = departedWorldDays;
+    intel.available_after_world_days = availableAfterWorldDays;
+
+    if (!existing) {
+      if (status === 'arrived') return '新建消息不能在同一轮直接抵达';
+      if (!targetGroups.length) return '新建消息缺少明确的 targetGroups 接收群体';
+      if (!sourceType || !sourceId) return '新建消息缺少 sourceType/sourceId 来源';
+      if (
+        !uniqueTextList(intel?.source_fact_ids || intel?.sourceFactIds, 20, 100).some(
+          id => comparableIdentity(id) === comparableIdentity(sourceId),
+        )
+      ) {
+        return '新建消息的 sourceFactIds 必须包含 sourceId';
+      }
+    } else if (status === 'arrived' && currentWorldDays < availableAfterWorldDays) {
+      return `消息最早在世界天数 ${availableAfterWorldDays} 抵达，当前仅为 ${currentWorldDays}`;
+    }
+
+    const sourceChanged =
+      !existing ||
+      sourceType !== enumValue(existing?.sourceType || existing?.source_type, INTEL_SOURCE_TYPES, '') ||
+      sourceId !== asText(existing?.sourceId || existing?.source_id) ||
+      sourceActor !== asText(existing?.sourceActor || existing?.source_actor) ||
+      asText(intel?.content) !== asText(existing?.content);
+    if (sourceChanged && sourceType === 'current_turn_witness') {
+      if (sourceId.toUpperCase() !== 'CURRENT_TURN') return '本轮现场来源的 sourceId 必须为 CURRENT_TURN';
+      const witness = findActorByReference(
+        uniqueTextList(context?.sceneEvidence?.reliableWitnesses, 24, 100).map(name => ({ name })),
+        sourceActor,
+      );
+      if (!witness) return `消息发送者 ${sourceActor || '未填写'} 不在本轮现场知情白名单中`;
+      if (!knowledgeTextsRelated(context?.currentTurnText, intel?.content)) {
+        return '消息内容与本轮正文没有可核对关系';
+      }
+    } else if (sourceChanged && sourceType === 'actor_knowledge') {
+      const actor = findActorByReference(
+        [...asArray(baseState?.actors), ...asArray(transition?.upsert_actors)],
+        sourceId || sourceActor,
+      );
+      if (!actor) return `消息知识来源人物 ${sourceId || sourceActor || '未填写'} 不存在`;
+      if (!actorKnowsContent(actor, intel?.content, asArray(baseState?.secrets))) {
+        return `消息发送者 ${actorDisplayName(actor)} 没有登记过该知识`;
+      }
+    } else if (sourceChanged && (sourceType === 'received_intel' || sourceType === 'public_information')) {
+      const sourceIntel = asArray(baseState?.intelPackets).find(item => String(item?.id) === sourceId);
+      if (!sourceIntel) return `上游消息 ${sourceId || '未填写'} 不存在`;
+      if (!intelHasArrived(sourceIntel, currentWorldDays)) return `上游消息 ${sourceId} 尚未抵达`;
+      if (sourceType === 'public_information' && !intelIsPublic(sourceIntel)) {
+        return `上游消息 ${sourceId} 尚未成为公开信息`;
+      }
+      if (!knowledgeTextsRelated(sourceIntel?.content, intel?.content)) return `消息内容与上游消息 ${sourceId} 不一致`;
+    } else if (sourceChanged && sourceType === 'event') {
+      const event = asArray(baseState?.activeEvents).find(item => String(item?.id) === sourceId);
+      if (!event) return `消息来源事件 ${sourceId || '未填写'} 不存在`;
+      if (!knowledgeTextsRelated(`${event?.title} ${event?.summary}`, intel?.content)) {
+        return `消息内容与来源事件 ${sourceId} 不一致`;
+      }
+    } else if (sourceChanged && !existing) {
+      return `不支持的消息来源 ${sourceType || '空'}`;
+    }
+
+    const previousKnownBy = uniqueTextList(existing?.knownBy || existing?.known_by, 30, 100);
+    const addedKnownBy = uniqueTextList(intel?.known_by || intel?.knownBy, 30, 100).filter(
+      value => !previousKnownBy.some(previous => comparableIdentity(previous) === comparableIdentity(value)),
+    );
+    for (const holder of addedKnownBy) {
+      if (sourceActor && comparableIdentity(holder) === comparableIdentity(sourceActor)) continue;
+      const actor = findActorByReference(
+        [...asArray(baseState?.actors), ...asArray(transition?.upsert_actors)],
+        holder,
+      );
+      if (!actor) return `knownBy 中的 ${holder} 不是已登记人物；群体应写入 targetGroups`;
+      if (!intelAllowsActor(intel, actor, currentWorldDays)) {
+        return `${actorDisplayName(actor)} 尚未处于该消息的抵达地点或目标群体`;
+      }
+    }
+    return '';
+  }
+
+  function validateV3RecordBasis(baseState, record, collection, context) {
+    const currentTurnText = asText(context?.currentTurnText);
+    if (!currentTurnText) return '';
+    const recordText =
+      collection === 'events'
+        ? `${record?.title} ${record?.summary} ${record?.next_trigger || record?.nextTrigger}`
+        : `${record?.title} ${record?.summary} ${record?.trigger}`;
+    if (!textsStronglyRelated(recordText, currentTurnText)) return '';
+    const basisIds = uniqueTextList(record?.source_fact_ids || record?.sourceFactIds, 20, 100);
+    const currentTurnBasis = basisIds.some(id => id.toUpperCase() === 'CURRENT_TURN');
+    const arrivedIntelBasis = basisIds.some(id => {
+      const intel = asArray(baseState?.intelPackets).find(item => String(item?.id) === String(id));
+      return intelHasArrived(intel, context?.currentWorldDays);
+    });
+    if (!currentTurnBasis && !arrivedIntelBasis) {
+      return '记录直接承接本轮正文，但没有 CURRENT_TURN 或已抵达消息作为 sourceFactIds';
+    }
+    if (collection === 'events' && currentTurnBasis) {
+      const allowed = uniqueTextList(context?.sceneEvidence?.reliableWitnesses, 24, 100);
+      const unauthorized = uniqueTextList(record?.actors, 20, 100).find(
+        actor => !allowed.some(name => comparableIdentity(name) === comparableIdentity(actor)),
+      );
+      if (unauthorized) return `事件把未在现场知情白名单中的 ${unauthorized} 写成了本轮参与者`;
+    }
+    return '';
+  }
+
+  function actorKnowledgeChanged(existing, actor) {
+    const before = uniqueTextList(existing?.knowledge, 30, 240).map(normalizedKnowledgeText);
+    const after = uniqueTextList(actor?.knowledge, 30, 240).map(normalizedKnowledgeText);
+    return after.some(item => item && !before.includes(item));
+  }
+
+  function buildTransitionFromChanges(baseState, result, context = {}) {
+    const currentStat = context?.currentStat || {};
+    const currentTurnText = asText(context?.currentTurnText);
+    const currentWorldDays =
+      optionalFiniteNumber(currentStat?.世界运转?.世界运转天数) ??
+      Math.max(0, Number(baseState?.currentWorldDays) || 0);
+    const sceneEvidence = context?.sceneEvidence || buildSceneEvidence(baseState, currentStat, currentTurnText);
+    const enforceKnowledgeBoundary = context?.enforceKnowledgeBoundary === true;
+    const knowledgeContext = {
+      ...context,
+      currentStat,
+      currentTurnText,
+      currentWorldDays,
+      sceneEvidence,
+      requireExplicitCause: enforceKnowledgeBoundary,
+    };
     const transition = {
       upsert_events: [],
       resolve_event_ids: [],
@@ -4995,17 +5348,22 @@ import integratedStyles from './styles-integrated.raw?raw';
       camera_history: [],
       next_turn_packet: {},
       parallel_scenes: [],
-      operation_stats: { accepted: 0, rejected: 0, warnings: [] },
+      current_world_days: currentWorldDays,
+      operation_stats: { accepted: 0, rejected: 0, knowledgeRejected: 0, warnings: [] },
     };
     const stats = transition.operation_stats;
     const acceptedIndexes = new Set();
+    const acceptedChanges = new Map();
     const touchedTargets = new Set();
     const reject = (change, reason) => {
       stats.rejected += 1;
       stats.warnings.push(`${asText(change?.op, 'unknown')}：${reason}`.slice(0, 300));
     };
-    const existingById = (collection, id) =>
-      asArray(collection).find(item => String(item?.id) === String(id));
+    const rejectKnowledge = (change, reason) => {
+      stats.knowledgeRejected += 1;
+      reject(change, `知识边界：${reason}`);
+    };
+    const existingById = (collection, id) => asArray(collection).find(item => String(item?.id) === String(id));
     const descriptors = {
       events: {
         stateKey: 'activeEvents',
@@ -5020,6 +5378,7 @@ import integratedStyles from './styles-integrated.raw?raw';
           'summary',
           'nextTrigger',
           'impactDomains',
+          'sourceFactIds',
         ]),
         normalize: eventInput,
         valid: item => item.title && item.stage && item.location && item.summary && item.next_trigger,
@@ -5031,12 +5390,16 @@ import integratedStyles from './styles-integrated.raw?raw';
         fields: new Set([
           'name',
           'location',
+          'groups',
           'goal',
           'currentAction',
           'knowledge',
           'doesNotKnow',
           'nextDecision',
           'updatedReason',
+          'causeType',
+          'causeId',
+          'basisIds',
         ]),
         normalize: actorInput,
         valid: item => item.name && item.current_action && item.updated_reason,
@@ -5054,6 +5417,15 @@ import integratedStyles from './styles-integrated.raw?raw';
           'eta',
           'reliability',
           'knownBy',
+          'targetGroups',
+          'visibility',
+          'sourceType',
+          'sourceId',
+          'sourceActor',
+          'sourceFactIds',
+          'distanceBand',
+          'departedWorldDays',
+          'availableAfterWorldDays',
         ]),
         normalize: intelInput,
         valid: item =>
@@ -5069,7 +5441,7 @@ import integratedStyles from './styles-integrated.raw?raw';
         stateKey: 'hooks',
         outputKey: 'upsert_hooks',
         deleteKey: 'resolve_hook_ids',
-        fields: new Set(['title', 'stage', 'summary', 'visibleSigns', 'trigger', 'failCondition']),
+        fields: new Set(['title', 'stage', 'summary', 'visibleSigns', 'trigger', 'failCondition', 'sourceFactIds']),
         normalize: hookInput,
         valid: item => item.title && item.stage && item.summary && item.trigger && item.fail_condition,
       },
@@ -5142,9 +5514,45 @@ import integratedStyles from './styles-integrated.raw?raw';
           reject(change, 'merge 没有产生有效变化');
           return;
         }
+        if (enforceKnowledgeBoundary && collection === 'actors') {
+          const causeError = validateActorCause(
+            baseState,
+            transition,
+            merged,
+            existing,
+            currentTurnText,
+            knowledgeContext,
+          );
+          if (causeError) {
+            rejectKnowledge(change, causeError);
+            return;
+          }
+          if (
+            actorKnowledgeChanged(existing, merged) &&
+            !['observation', 'received_intel', 'event'].includes(asText(merged?.cause_type).toLowerCase())
+          ) {
+            rejectKnowledge(change, '人物新增知识必须来自现场观察、已抵达消息或亲历事件');
+            return;
+          }
+        }
+        if (enforceKnowledgeBoundary && collection === 'intel') {
+          const intelError = validateV3IntelChange(baseState, transition, merged, existing, knowledgeContext);
+          if (intelError) {
+            rejectKnowledge(change, intelError);
+            return;
+          }
+        }
+        if (enforceKnowledgeBoundary && ['events', 'hooks'].includes(collection)) {
+          const basisError = validateV3RecordBasis(baseState, merged, collection, knowledgeContext);
+          if (basisError) {
+            rejectKnowledge(change, basisError);
+            return;
+          }
+        }
         transition[descriptor.outputKey].push(merged);
         stats.accepted += 1;
         acceptedIndexes.add(index);
+        acceptedChanges.set(index, { collection, record: merged, existing, op });
         touchedTargets.add(targetKey);
       } catch (error) {
         reject(change, error instanceof Error ? error.message : String(error));
@@ -5160,12 +5568,64 @@ import integratedStyles from './styles-integrated.raw?raw';
         references.length > 0 &&
         references.length === rawReferences.length &&
         references.every(index => acceptedIndexes.has(index));
-      if (!supported) stats.warnings.push(`scene[${sceneIndex}]：based_on 未全部指向已接受的变化`);
-      return supported;
+      if (!supported) {
+        stats.warnings.push(`scene[${sceneIndex}]：based_on 未全部指向已接受的变化`);
+        return false;
+      }
+      if (!enforceKnowledgeBoundary) return true;
+
+      const referencedChanges = references.map(index => acceptedChanges.get(index)).filter(Boolean);
+      const sceneActors = uniqueTextList(scene?.actors, 20, 100);
+      const sceneText = `${asText(scene?.action)} ${asText(scene?.body)}`;
+      const newInTransitIntel = referencedChanges.filter(
+        item =>
+          item?.collection === 'intel' &&
+          item?.op === 'create' &&
+          normalizeIntelStatus(item?.record?.status) !== 'arrived',
+      );
+      if (newInTransitIntel.length) {
+        const currentHolders = newInTransitIntel.flatMap(item => [
+          asText(item?.record?.source_actor || item?.record?.sourceActor),
+          ...uniqueTextList(item?.record?.known_by || item?.record?.knownBy, 30, 100),
+        ]);
+        const prematureRecipient = sceneActors.find(
+          actor => !currentHolders.some(holder => comparableIdentity(holder) === comparableIdentity(actor)),
+        );
+        if (prematureRecipient) {
+          stats.warnings.push(`scene[${sceneIndex}]：${prematureRecipient} 尚未收到本轮新建的在途消息`);
+          stats.rejected += 1;
+          stats.knowledgeRejected += 1;
+          return false;
+        }
+      }
+
+      if (currentTurnText && textsStronglyRelated(sceneText, currentTurnText)) {
+        const allowedWitnesses = uniqueTextList(sceneEvidence?.reliableWitnesses, 24, 100);
+        const unauthorized = sceneActors.find(actorName => {
+          if (allowedWitnesses.some(name => comparableIdentity(name) === comparableIdentity(actorName))) return false;
+          const actor = findActorByReference(transition.upsert_actors, actorName) ||
+            findActorByReference(baseState?.actors, actorName) || { name: actorName };
+          return !referencedChanges.some(item => {
+            if (item?.collection === 'actors' && actorMatchesName(item.record, actorName)) {
+              return (
+                asText(item?.record?.cause_type).toLowerCase() === 'received_intel' && asText(item?.record?.cause_id)
+              );
+            }
+            return item?.collection === 'intel' && intelAllowsActor(item.record, actor, currentWorldDays);
+          });
+        });
+        if (unauthorized) {
+          stats.warnings.push(`scene[${sceneIndex}]：${unauthorized} 未获知本轮正文信息，旁线已拒绝`);
+          stats.rejected += 1;
+          stats.knowledgeRejected += 1;
+          return false;
+        }
+      }
+      return true;
     });
     transition.parallel_scenes = normalizeParallelScenes(supportedScenes);
     transition.camera_history = transition.parallel_scenes.map(cameraLabel).filter(Boolean);
-    transition.next_turn_packet = deriveNextTurnPacket(transition);
+    transition.next_turn_packet = deriveNextTurnPacket(transition, currentWorldDays);
     return transition;
   }
 
@@ -5173,6 +5633,9 @@ import integratedStyles from './styles-integrated.raw?raw';
     const state = clone(baseState);
     const source = result && typeof result === 'object' ? result : {};
     state.revision = Number(state.revision || 0) + 1;
+    state.currentWorldDays =
+      optionalFiniteNumber(currentStat?.世界运转?.世界运转天数) ??
+      Math.max(0, Number(baseState?.currentWorldDays) || 0);
 
     const resolvedEvents = new Set(asArray(source.resolve_event_ids).map(String));
     state.activeEvents = asArray(state.activeEvents).filter(item => !resolvedEvents.has(String(item.id)));
@@ -5202,10 +5665,7 @@ import integratedStyles from './styles-integrated.raw?raw';
           .map(value => asText(value))
           .filter(Boolean)
           .slice(0, 12),
-        sourceFactIds: asArray(raw?.source_fact_ids)
-          .map(value => asText(value))
-          .filter(Boolean)
-          .slice(0, 20),
+        sourceFactIds: uniqueTextList(raw?.source_fact_ids || raw?.sourceFactIds, 20, 100),
       };
     });
 
@@ -5217,6 +5677,7 @@ import integratedStyles from './styles-integrated.raw?raw';
         id: raw?.id,
         name: asText(raw?.name),
         location: asText(raw?.location),
+        groups: uniqueTextList(raw?.groups, 16, 100),
         goal: asText(raw?.goal).slice(0, 280),
         currentAction: asText(raw?.current_action).slice(0, 360),
         knowledge: asArray(raw?.knowledge)
@@ -5256,14 +5717,19 @@ import integratedStyles from './styles-integrated.raw?raw';
         origin: asText(raw?.origin),
         destination: asText(raw?.destination),
         channel: asText(raw?.channel),
-        status: asText(raw?.status),
+        status: normalizeIntelStatus(raw?.status),
         eta: asText(raw?.eta),
         reliability: clamp(raw?.reliability, 0, 1),
-        knownBy: asArray(raw?.known_by)
-          .map(value => asText(value))
-          .filter(Boolean)
-          .slice(0, 30),
+        knownBy: uniqueTextList(raw?.known_by || raw?.knownBy, 30, 100),
         sourceFactIds: uniqueTextList(raw?.source_fact_ids || raw?.sourceFactIds, 16, 100),
+        targetGroups: uniqueTextList(raw?.target_groups || raw?.targetGroups, 16, 100),
+        visibility: normalizeIntelVisibility(raw?.visibility || raw?.publicity),
+        sourceType: enumValue(raw?.source_type || raw?.sourceType, INTEL_SOURCE_TYPES, ''),
+        sourceId: asText(raw?.source_id || raw?.sourceId),
+        sourceActor: asText(raw?.source_actor || raw?.sourceActor),
+        distanceBand: enumValue(raw?.distance_band || raw?.distanceBand, DISTANCE_BANDS, 'same_city'),
+        departedWorldDays: optionalFiniteNumber(raw?.departed_world_days ?? raw?.departedWorldDays),
+        availableAfterWorldDays: optionalFiniteNumber(raw?.available_after_world_days ?? raw?.availableAfterWorldDays),
       };
     });
 
@@ -5290,10 +5756,7 @@ import integratedStyles from './styles-integrated.raw?raw';
           .slice(0, 16),
         trigger: asText(raw?.trigger).slice(0, 280),
         failCondition: asText(raw?.fail_condition).slice(0, 280),
-        sourceFactIds: asArray(raw?.source_fact_ids)
-          .map(value => asText(value))
-          .filter(Boolean)
-          .slice(0, 20),
+        sourceFactIds: uniqueTextList(raw?.source_fact_ids || raw?.sourceFactIds, 20, 100),
       };
     });
 
@@ -5681,7 +6144,12 @@ import integratedStyles from './styles-integrated.raw?raw';
       if (Number(result.base_revision) !== Number(baseState.revision)) {
         throw new Error(`副模型基线 revision ${result.base_revision} 与当前档案 ${baseState.revision} 不一致。`);
       }
-      const transition = buildTransitionFromChanges(baseState, result);
+      const currentTurnText = api('getChatMessages')?.(messageKey.messageId)?.[0]?.message || '';
+      const transition = buildTransitionFromChanges(baseState, result, {
+        currentStat: currentStat || {},
+        currentTurnText,
+        enforceKnowledgeBoundary: true,
+      });
       if (transition.operation_stats.rejected > 0) {
         console.warn('[天下演化] 部分 changes 未通过校验', {
           accepted: transition.operation_stats.accepted,
@@ -5698,7 +6166,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       if (
         asArray(result.changes).length &&
         transition.operation_stats.accepted === 0 &&
-        transition.operation_stats.rejected > 0 &&
+        transition.operation_stats.rejected - Number(transition.operation_stats.knowledgeRejected || 0) > 0 &&
         transition.parallel_scenes.length === 0
       ) {
         throw new Error(
@@ -5850,11 +6318,14 @@ import integratedStyles from './styles-integrated.raw?raw';
   ) {
     if (!ticket || runtime.pendingTicket?.id !== ticket.id) return;
     clearScheduledSettlement();
-    runtime.scheduledTimer = setTimeout(() => {
-      settlePendingTicket(ticket.id, source).catch(error => {
-        console.error('[天下演化] 自动结算票据处理失败', error);
-      });
-    }, Math.max(0, Number(delayMs) || 0));
+    runtime.scheduledTimer = setTimeout(
+      () => {
+        settlePendingTicket(ticket.id, source).catch(error => {
+          console.error('[天下演化] 自动结算票据处理失败', error);
+        });
+      },
+      Math.max(0, Number(delayMs) || 0),
+    );
   }
 
   async function waitForStableMessage(ticketId, { intervalMs = 250, stableChecks = 3, timeoutMs = 5000 } = {}) {
@@ -6227,7 +6698,7 @@ import integratedStyles from './styles-integrated.raw?raw';
           .map(item => ({ tone: `${actorDisplayName(actor)}·误信/相信`, value: item.content })),
       ]),
       ...asArray(state.intelPackets)
-        .filter(item => !intelHasArrived(item))
+        .filter(item => !intelHasArrived(item, state.currentWorldDays))
         .map(item => ({ tone: '在途', value: intelPacketLabel(item) })),
       ...packet.uncertainties.map(value => ({ tone: '未证', value })),
     ];

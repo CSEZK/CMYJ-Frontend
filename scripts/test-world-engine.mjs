@@ -152,18 +152,12 @@ sandbox.getVariables = option => {
   return chatVariables;
 };
 sandbox.insertOrAssignVariables = (patch, option) => {
-  const target =
-    option?.type === 'script'
-      ? (scriptVariables[option.script_id] ||= {})
-      : chatVariables;
+  const target = option?.type === 'script' ? (scriptVariables[option.script_id] ||= {}) : chatVariables;
   Object.assign(target, structuredClone(patch));
   return target;
 };
 sandbox.deleteVariable = (key, option) => {
-  const target =
-    option?.type === 'script'
-      ? (scriptVariables[option.script_id] ||= {})
-      : chatVariables;
+  const target = option?.type === 'script' ? (scriptVariables[option.script_id] ||= {}) : chatVariables;
   delete target[key];
 };
 
@@ -229,9 +223,7 @@ const clearedState = getChatState();
 assert.equal(clearedState.revision, 0, '清空前旧副本被其他脚本写回时不得复活');
 assert.equal(chatVariables.cmyj_world_engine_v1, undefined, '删除标记必须再次移除外部写回的旧副本');
 
-const restartedState = saveChatState(
-  normalizeState({ version: 1, chatId: storageChatId, revision: 1 }, storageChatId),
-);
+const restartedState = saveChatState(normalizeState({ version: 1, chatId: storageChatId, revision: 1 }, storageChatId));
 assert.ok(restartedState._storageRevision > 3, '清空后重新演化必须越过删除标记并建立新世代');
 assert.equal(getChatState().revision, 1, '清空后的新演化状态必须正常保存');
 assert.equal(reconcileStateStorage().recovered, false, '状态一致时完整性检查不应重复写回');
@@ -1701,6 +1693,284 @@ assert.equal(mergeTransition.upsert_events[0].next_trigger, '官仓决定是否�
 assert.equal(mergeTransition.parallel_scenes.length, 0);
 assert.match(mergeTransition.operation_stats.warnings.at(-1), /based_on/);
 
+const secretTurnText = '主角趁夜秘密潜入荒院，没有惊动任何人，并从暗门进入地窖。';
+const knowledgeBoundaryContext = {
+  currentStat: {
+    世界运转: {
+      当前地点: '荒院',
+      世界运转天数: 20,
+      二十四时: { 小时: 23, 分钟: 10 },
+    },
+  },
+  currentTurnText: secretTurnText,
+  enforceKnowledgeBoundary: true,
+};
+const remoteReactionBase = {
+  ...emptyState(),
+  actors: [
+    {
+      id: 'AC-fang',
+      name: '方应乾',
+      location: '北京',
+      groups: ['朝廷'],
+      goal: '维持京城局势',
+      currentAction: '整理昨日公文',
+      updatedReason: '继续既定事务',
+      knowledge: [],
+      doesNotKnow: ['主角秘密潜入荒院'],
+    },
+  ],
+};
+const remoteReaction = buildTransitionFromChanges(
+  remoteReactionBase,
+  {
+    changes: [
+      {
+        op: 'merge',
+        target: { collection: 'actors', id: 'AC-fang' },
+        changes: {
+          currentAction: '方应乾得知主角秘密潜入荒院，立即命人封锁地窖',
+          updatedReason: '主角已经从暗门进入地窖',
+          causeType: 'autonomous',
+          causeId: 'AC-fang',
+          basisIds: ['AC-fang'],
+        },
+      },
+    ],
+    scenes: [],
+  },
+  knowledgeBoundaryContext,
+);
+assert.equal(remoteReaction.operation_stats.accepted, 0);
+assert.equal(remoteReaction.operation_stats.rejected, 1);
+assert.equal(remoteReaction.operation_stats.knowledgeRejected, 1);
+assert.match(remoteReaction.operation_stats.warnings[0], /autonomous|本轮正文/);
+
+const undeclaredSecretScene = buildTransitionFromChanges(
+  remoteReactionBase,
+  {
+    changes: [
+      {
+        op: 'merge',
+        target: { collection: 'actors', id: 'AC-fang' },
+        changes: {
+          currentAction: '召集属官核对昨日旧账',
+          updatedReason: '按既定计划复核公文',
+          causeType: 'autonomous',
+          causeId: 'AC-fang',
+          basisIds: ['AC-fang'],
+        },
+      },
+    ],
+    scenes: [
+      {
+        based_on: [0],
+        location: '北京',
+        time: '当夜',
+        actors: ['方应乾'],
+        action: '封锁荒院地窖',
+        body: '方应乾已经得知主角秘密潜入荒院，并立即命人封锁暗门。',
+      },
+    ],
+  },
+  knowledgeBoundaryContext,
+);
+assert.equal(undeclaredSecretScene.operation_stats.accepted, 1);
+assert.equal(undeclaredSecretScene.parallel_scenes.length, 0);
+assert.match(undeclaredSecretScene.operation_stats.warnings.at(-1), /未获知本轮正文信息/);
+
+const forgedCurrentTurnIntel = buildTransitionFromChanges(
+  emptyState(),
+  {
+    changes: [
+      {
+        op: 'create',
+        target: { collection: 'intel', id: 'IN-forged-secret' },
+        value: {
+          content: '主角已经秘密潜入荒院并进入地窖',
+          origin: '荒院',
+          destination: '北京',
+          channel: '快马急递',
+          status: 'in_transit',
+          eta: '五日后',
+          reliability: 0.9,
+          knownBy: ['不存在的目击者'],
+          targetGroups: ['朝廷'],
+          visibility: 'restricted',
+          sourceType: 'current_turn_witness',
+          sourceId: 'CURRENT_TURN',
+          sourceActor: '不存在的目击者',
+          sourceFactIds: ['CURRENT_TURN'],
+          distanceBand: 'cross_province',
+        },
+      },
+    ],
+    scenes: [],
+  },
+  knowledgeBoundaryContext,
+);
+assert.equal(forgedCurrentTurnIntel.operation_stats.accepted, 0);
+assert.match(forgedCurrentTurnIntel.operation_stats.warnings[0], /现场知情白名单/);
+
+const witnessedStat = {
+  世界运转: {
+    当前地点: '荒院',
+    世界运转天数: 20,
+    二十四时: { 小时: 23, 分钟: 10 },
+  },
+  在场人物: {
+    探子: { 姓名: '探子', 是否在场: true },
+  },
+};
+const witnessedIntelContext = {
+  currentStat: witnessedStat,
+  currentTurnText: '探子亲眼看见主角进入荒院，随后悄悄离开现场。',
+  enforceKnowledgeBoundary: true,
+};
+const witnessedIntel = buildTransitionFromChanges(
+  emptyState(),
+  {
+    changes: [
+      {
+        op: 'create',
+        target: { collection: 'intel', id: 'IN-witnessed' },
+        value: {
+          content: '主角已经进入荒院',
+          origin: '荒院',
+          destination: '北京',
+          channel: '快马急递',
+          status: 'in_transit',
+          eta: '五日后',
+          reliability: 0.9,
+          knownBy: ['探子'],
+          targetGroups: ['朝廷'],
+          visibility: 'restricted',
+          sourceType: 'current_turn_witness',
+          sourceId: 'CURRENT_TURN',
+          sourceActor: '探子',
+          sourceFactIds: ['CURRENT_TURN'],
+          distanceBand: 'cross_province',
+        },
+      },
+    ],
+    scenes: [],
+  },
+  witnessedIntelContext,
+);
+assert.equal(witnessedIntel.operation_stats.accepted, 1);
+assert.equal(witnessedIntel.upsert_intel[0].status, 'in_transit');
+assert.equal(witnessedIntel.upsert_intel[0].departed_world_days, 20);
+assert.equal(witnessedIntel.upsert_intel[0].available_after_world_days, 24);
+const witnessedIntelApplied = applyTransition(
+  normalizeState({ version: 1, chatId: 'knowledge-boundary-test', ...emptyState() }, 'knowledge-boundary-test'),
+  witnessedIntel,
+  { messageId: 20, swipeId: 0, hash: 'witnessed-intel' },
+  witnessedStat,
+);
+assert.equal(witnessedIntelApplied.currentWorldDays, 20);
+assert.deepEqual(Array.from(witnessedIntelApplied.intelPackets[0].targetGroups), ['朝廷']);
+assert.equal(witnessedIntelApplied.intelPackets[0].sourceType, 'current_turn_witness');
+assert.equal(witnessedIntelApplied.intelPackets[0].availableAfterWorldDays, 24);
+
+const sameTurnArrival = buildTransitionFromChanges(
+  emptyState(),
+  {
+    changes: [
+      {
+        op: 'create',
+        target: { collection: 'intel', id: 'IN-immediate' },
+        value: {
+          content: '主角已经进入荒院',
+          origin: '荒院',
+          destination: '北京',
+          channel: '快马急递',
+          status: 'arrived',
+          eta: '立即',
+          reliability: 0.9,
+          knownBy: ['探子'],
+          targetGroups: ['朝廷'],
+          visibility: 'restricted',
+          sourceType: 'current_turn_witness',
+          sourceId: 'CURRENT_TURN',
+          sourceActor: '探子',
+          sourceFactIds: ['CURRENT_TURN'],
+          distanceBand: 'cross_province',
+        },
+      },
+    ],
+    scenes: [],
+  },
+  witnessedIntelContext,
+);
+assert.equal(sameTurnArrival.operation_stats.accepted, 0);
+assert.match(sameTurnArrival.operation_stats.warnings[0], /同一轮直接抵达/);
+
+const etaBase = {
+  ...remoteReactionBase,
+  intelPackets: [
+    {
+      id: 'IN-delayed',
+      content: '主角已经进入荒院',
+      origin: '荒院',
+      destination: '北京',
+      channel: '快马急递',
+      status: 'in_transit',
+      eta: '第五日',
+      reliability: 0.9,
+      knownBy: ['探子'],
+      targetGroups: ['朝廷'],
+      visibility: 'restricted',
+      sourceType: 'current_turn_witness',
+      sourceId: 'CURRENT_TURN',
+      sourceActor: '探子',
+      sourceFactIds: ['CURRENT_TURN'],
+      distanceBand: 'cross_province',
+      departedWorldDays: 20,
+      availableAfterWorldDays: 24,
+    },
+  ],
+};
+const prematureArrival = buildTransitionFromChanges(
+  etaBase,
+  {
+    changes: [
+      {
+        op: 'merge',
+        target: { collection: 'intel', id: 'IN-delayed' },
+        changes: { status: 'arrived', knownBy: ['探子', '方应乾'] },
+      },
+    ],
+    scenes: [],
+  },
+  {
+    currentStat: { 世界运转: { 当前地点: '北京', 世界运转天数: 23 } },
+    currentTurnText: '京城仍按旧例处置日常公文。',
+    enforceKnowledgeBoundary: true,
+  },
+);
+assert.equal(prematureArrival.operation_stats.accepted, 0);
+assert.match(prematureArrival.operation_stats.warnings[0], /最早在世界天数 24/);
+
+const arrivedAtEta = buildTransitionFromChanges(
+  etaBase,
+  {
+    changes: [
+      {
+        op: 'merge',
+        target: { collection: 'intel', id: 'IN-delayed' },
+        changes: { status: 'arrived', knownBy: ['探子', '方应乾'] },
+      },
+    ],
+    scenes: [],
+  },
+  {
+    currentStat: { 世界运转: { 当前地点: '北京', 世界运转天数: 24 } },
+    currentTurnText: '京城仍按旧例处置日常公文。',
+    enforceKnowledgeBoundary: true,
+  },
+);
+assert.equal(arrivedAtEta.operation_stats.accepted, 1, JSON.stringify(arrivedAtEta.operation_stats.warnings));
+
 let generationCalls = 0;
 sandbox.generateRaw = async config => {
   generationCalls += 1;
@@ -1816,12 +2086,12 @@ await assert.rejects(cancelledRequest, error => error?.code === 'CWE_CANCELLED')
 assert.equal(cancelledGenerationId, cancelledJob.generationId);
 assert.equal(cancelledJob.cancelled, true);
 
-assert.match(fullSource, /const VERSION = '1\.8\.4'/);
+assert.match(fullSource, /const VERSION = '1\.8\.5'/);
 assert.match(fullSource, /requestTimeoutMs: 90000/);
 assert.match(fullSource, /data-setting="requestTimeoutSeconds"/);
 assert.match(fullSource, /data-banner-action="cancel"/);
 assert.match(fullSource, /stopGenerationById/);
 assert.doesNotMatch(fullSource, /json_schema:\s*schema/);
 console.info(
-  '天下演化测试通过：真实楼层票据、MVU 去重、假请求隔离、存储自愈、主动清空、v3 增量协议、空结果、旁线引用、请求预算、稳定 ID、主动取消与旧档迁移均已覆盖。',
+  '天下演化测试通过：真实楼层票据、MVU 去重、假请求隔离、存储自愈、主动清空、v3 增量协议、知识来源、传播时限、群体匹配、旁线越权拦截、空结果、请求预算、稳定 ID、主动取消与旧档迁移均已覆盖。',
 );
