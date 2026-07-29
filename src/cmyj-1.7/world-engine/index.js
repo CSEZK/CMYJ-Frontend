@@ -6,7 +6,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 (() => {
   'use strict';
 
-  const VERSION = '1.8.5';
+  const VERSION = '1.8.6';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const BACKUP_SCRIPT_ID = 'cmyj-world-engine-backup-v1';
@@ -286,7 +286,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     arrived: '已抵达',
     spreading: '传播中',
     propagating: '传播中',
-    in_transit: '在途',
+    in_transit: '流转中',
     descriptive: '已记录',
     social_dispute: '纷争中',
     hidden: '潜伏中',
@@ -307,7 +307,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       .replaceAll('event.upsert', '世事登记')
       .replaceAll('event.resolve', '世事结案')
       .replaceAll('actor.upsert', '人物行动')
-      .replaceAll('intel.upsert', '驿报登记')
+      .replaceAll('intel.upsert', '消息登记')
       .replaceAll('hook.upsert', '伏线登记')
       .replaceAll('hook.resolve', '伏线结案')
       .replaceAll('knowledge.grant', '知识授予')
@@ -6517,7 +6517,7 @@ import integratedStyles from './styles-integrated.raw?raw';
           .join('')
       : [
           ['待启', '首次推演尚未执行', '副模型完成第一轮结算后，天下世事会从这里开始入档。'],
-          ['待报', '驿报与人物行动尚未成卷', '主模型正文仍可正常进行；天下档案会按聊天独立保存。'],
+          ['待录', '消息与人物行动尚未成卷', '主模型正文仍可正常进行；天下档案会按聊天独立保存。'],
           ['待察', '伏线与后果仍在暗处', '启用值房后，玩家视角之外的因果会逐回合积累。'],
         ]
           .map(
@@ -6542,7 +6542,7 @@ import integratedStyles from './styles-integrated.raw?raw';
         <div class="cwe-overview-status">
           <div class="cwe-statline" aria-label="天下演化统计">
             <span><i class="danger"></i>重大世事 <b>${state.activeEvents.length}</b></span>
-            <span><i class="busy"></i>关联驿报 <b>${state.intelPackets.length}</b></span>
+            <span><i class="busy"></i>流转消息 <b>${state.intelPackets.length}</b></span>
             <span><i class="safe"></i>人物行动 <b>${state.actors.length}</b></span>
             <span><i></i>未决伏线 <b>${state.hooks.length}</b></span>
           </div>
@@ -6588,16 +6588,16 @@ import integratedStyles from './styles-integrated.raw?raw';
           .map(
             item => `
       <article class="cwe-record compact">
-        <header><div><small>${escapeHtml(item.channel || '未知渠道')} · ${Math.round(Number(item.reliability || 0) * 100)}%</small><h3>${escapeHtml(item.content)}</h3></div>${tag(statusLabel(item.status, '在途'))}</header>
+        <header><div><small>${escapeHtml(item.channel || '未知渠道')} · ${Math.round(Number(item.reliability || 0) * 100)}%</small><h3>${escapeHtml(item.content)}</h3></div>${tag(statusLabel(item.status, '流转中'))}</header>
         <footer><span>${escapeHtml(item.origin || '未知')} → ${escapeHtml(item.destination || '未知')}</span><span>${escapeHtml(item.eta || '抵达时间未定')}</span></footer>
       </article>`,
           )
           .join('')
-      : emptyBlock('暂无在途情报');
-    return `<section class="cwe-section-head"><div><p>天下案牍</p><h2>世事与驿报</h2></div><span>客观事件与消息传播分别记账</span></section>
+      : emptyBlock('暂无流转中的消息');
+    return `<section class="cwe-section-head"><div><p>天下案牍</p><h2>世事与消息流转</h2></div><span>客观事件与消息传播分别记账</span></section>
       <section class="cwe-events-ledger">
         <div class="cwe-ledger-column"><header><h3>活跃世事</h3><span>${state.activeEvents.length} 件</span></header><div class="cwe-stack">${events}</div></div>
-        <div class="cwe-ledger-column"><header><h3>在途驿报</h3><span>${state.intelPackets.length} 封</span></header><div class="cwe-stack">${intel}</div></div>
+        <div class="cwe-ledger-column"><header><h3>消息流转</h3><span>${state.intelPackets.length} 条</span></header><div class="cwe-stack">${intel}</div></div>
       </section>`;
   }
 
@@ -6699,7 +6699,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       ]),
       ...asArray(state.intelPackets)
         .filter(item => !intelHasArrived(item, state.currentWorldDays))
-        .map(item => ({ tone: '在途', value: intelPacketLabel(item) })),
+        .map(item => ({ tone: '流转中', value: intelPacketLabel(item) })),
       ...packet.uncertainties.map(value => ({ tone: '未证', value })),
     ];
     const blindSpotKeys = new Set();
@@ -6721,7 +6721,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       </article>`,
           )
           .join('')
-      : emptyBlock('暂无在途、未证或认知受限的信息');
+      : emptyBlock('暂无流转中、未证或认知受限的信息');
     return `<section class="cwe-section-head"><div><p>天下案牍</p><h2>人物、后果与盲区</h2></div><span>只保存记忆插件和状态变量通常无法表达的世界约束</span></section>
       <section class="cwe-archive-grid">
         <div class="cwe-archive-column"><header><div><small>人物行动</small><h3>名籍</h3></div>${tag(`${state.actors.length} 人`)}</header><div class="cwe-scroll-list">${actors}</div></div>
