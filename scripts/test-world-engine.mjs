@@ -7,7 +7,7 @@ let source = fullSource.slice(fullSource.indexOf('(() =>'));
 const end = source.lastIndexOf('})();');
 source =
   source.slice(0, end) +
-  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, normalizeWorldChangeResult, buildTransitionFromChanges, worldChangeSystemPrompt, worldChangeOutputSchema, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, normalizeModelRequestError, cancelActiveJob, buildSceneEvidence, buildAutonomyFocus, compactStateForPrompt, buildGenerationLicense, incrementalSystemPrompt, eligibleAssistantMessage, createPendingSettlement, releasePendingSettlementAfterMvu, clearPendingSettlement, waitForStableMessage, settlePendingTicket, registerEvents, getChatState, saveChatState, deleteChatState, reconcileStateStorage, runtime };\n' +
+  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, normalizeWorldChangeResult, buildTransitionFromChanges, worldChangeSystemPrompt, worldChangeOutputSchema, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, normalizeModelRequestError, cancelActiveJob, buildSceneEvidence, buildAutonomyFocus, compactStateForPrompt, buildGenerationLicense, incrementalSystemPrompt, eligibleAssistantMessage, createPendingSettlement, releasePendingSettlementAfterMvu, clearPendingSettlement, waitForStableMessage, settlePendingTicket, registerEvents, getChatState, saveChatState, deleteChatState, reconcileStateStorage, normalizeFactRoutingResult, buildFactRoutingTransition, previewTransitionState, selectIsolationJob, buildIsolatedPayload, sanitizeIsolatedResult, factRoutingSystemPrompt, isolatedSystemPrompt, runtime };\n' +
   source.slice(end);
 
 const sandbox = {
@@ -65,6 +65,14 @@ const {
   saveChatState,
   deleteChatState,
   reconcileStateStorage,
+  normalizeFactRoutingResult,
+  buildFactRoutingTransition,
+  previewTransitionState,
+  selectIsolationJob,
+  buildIsolatedPayload,
+  sanitizeIsolatedResult,
+  factRoutingSystemPrompt,
+  isolatedSystemPrompt,
   runtime,
 } = sandbox.__cweTest;
 const emptyState = () => ({ activeEvents: [], actors: [], intelPackets: [], hooks: [], secrets: [] });
@@ -2053,12 +2061,420 @@ const budgetedPromptChars = sandbox.__lastWorldModelConfig.ordered_prompts.reduc
   (total, prompt) => total + String(prompt.content || '').length,
   0,
 );
-assert.ok(budgetedPromptChars <= 42000, `提示词预算失效：${budgetedPromptChars}`);
+assert.ok(budgetedPromptChars <= 24000, `提示词预算失效：${budgetedPromptChars}`);
 assert.ok(sandbox.__lastWorldModelConfig.custom_api.max_tokens <= 8000);
 assert.match(
   sandbox.__lastWorldModelConfig.ordered_prompts.map(prompt => prompt.content).join('\n'),
   /已按天下演化请求预算省略中段/,
 );
+
+// 1.9 两段式隔离：第一次调用只分流正文事实，第二次调用看不到未授权秘密。
+const secretChatId = 'two-stage-secret-chat';
+const secretBase = normalizeState(
+  {
+    version: 1,
+    chatId: secretChatId,
+    revision: 6,
+    currentWorldDays: 12,
+    actors: [
+      {
+        id: 'AC-remote-magistrate',
+        name: '远方知县',
+        location: '邻县县衙',
+        groups: ['官府'],
+        goal: '整顿本县巡防',
+        currentAction: '核对明日巡防名册',
+        nextDecision: '等待本县巡防回报',
+        updatedReason: '既有独立行动',
+      },
+    ],
+  },
+  secretChatId,
+);
+const secretText = '夜深后，沈砚独自翻过粮仓后窗，拨开锁扣潜入暗室。城中官府仍在筹备明日巡防。';
+const secretStat = {
+  世界运转: { 当前地点: '城南粮仓', 世界运转天数: 12 },
+  人物: { 沈砚: { 姓名: '沈砚', 是否在场: true } },
+};
+const secretRouting = normalizeFactRoutingResult({
+  schema_version: 1,
+  facts: [
+    {
+      local_id: 'F1',
+      content: '沈砚已经秘密潜入粮仓暗室',
+      evidence: '夜深后，沈砚独自翻过粮仓后窗，拨开锁扣潜入暗室。',
+      physical_result: '粮仓后窗锁扣已经被拨开',
+      location: '城南粮仓',
+      visibility: 'private',
+      witnesses: [],
+      witness_evidence: [],
+      target_groups: [],
+      traces: ['粮仓后窗锁扣被拨开'],
+      discovery_conditions: ['有人检查粮仓后窗'],
+    },
+  ],
+  scene_entities: [
+    {
+      name: '沈砚',
+      location: '城南粮仓',
+      public_role: '身份未明',
+      apparent_goal: '进入暗室',
+      current_action: '潜入暗室',
+      evidence: '夜深后，沈砚独自翻过粮仓后窗，拨开锁扣潜入暗室。',
+    },
+  ],
+  communications: [],
+});
+const secretRoutingTransition = buildFactRoutingTransition(secretBase, secretRouting, secretStat, secretText);
+assert.equal(secretRoutingTransition.turn_facts.length, 1, '有正文原句的秘密事实必须进入客观事实账');
+assert.equal(secretRoutingTransition.turn_facts[0].visibility, 'private');
+assert.equal(secretRoutingTransition.turn_facts[0].witnesses.length, 0);
+assert.equal(secretRoutingTransition.knowledge_updates.length, 0, '私密事实不得自动授予任何 NPC');
+const secretRoutedState = previewTransitionState(
+  secretBase,
+  secretRoutingTransition,
+  { messageId: 31, swipeId: 0, hash: 'secret-turn' },
+  secretStat,
+);
+const remoteJob = selectIsolationJob(
+  secretRoutedState,
+  secretRoutingTransition.turn_facts.map(fact => fact.id),
+);
+assert.equal(remoteJob?.label, '远方知县');
+const remotePayloadText = JSON.stringify(buildIsolatedPayload(secretRoutedState, remoteJob));
+assert.doesNotMatch(remotePayloadText, /秘密潜入|粮仓后窗|沈砚/, '远方人物的第二次调用不得接触私密正文事实');
+assert.doesNotMatch(remotePayloadText, /assistantOutput|CURRENT_TURN|promptSnapshot|worldInfo/i);
+
+// 首次调用是事实编译器：常见同义改写应自动回贴正文原句，不应把有效私密事实当作候选再淘汰。
+const ledgerText =
+  '我回房把门掩上，门闩也落了。借着灯火，我翻开账册，看到一行小字：“鹿茸三对，另走水路，未入铺册。”夹页里还有一封信笺，上写：“货已分批抵桐，暂存老地方。”看完后，我把账册和信笺一并藏进枕头下面。';
+const ledgerRoutingTransition = buildFactRoutingTransition(
+  secretBase,
+  normalizeFactRoutingResult({
+    schema_version: 1,
+    facts: [
+      {
+        local_id: 'FACT_DOC_EXAMINATION',
+        content: '视角人物已经在落闩的房内翻开账册查看',
+        evidence: '回房关门上闩后，我借灯查看账册。',
+        physical_result: '账册已经被打开并阅读',
+        location: '房内',
+        visibility: 'private',
+        witnesses: [],
+        witness_evidence: [],
+        target_groups: [],
+        traces: [],
+        discovery_conditions: [],
+      },
+      {
+        local_id: 'FACT_SECRET_ACCOUNT_DISCOVERY',
+        content: '账册记载鹿茸三对另走水路且未入铺册',
+        evidence: '账册里写着鹿茸三对另走水路，没有记入铺册。',
+        physical_result: '视角人物已经读到账册中的隐秘货运记录',
+        location: '房内',
+        visibility: 'private',
+        witnesses: [],
+        witness_evidence: [],
+        target_groups: [],
+        traces: [],
+        discovery_conditions: [],
+      },
+      {
+        local_id: 'FACT_SECRET_LETTERS_CONTENT',
+        content: '夹页信笺说明货物已经分批抵桐并暂存老地方',
+        evidence: '夹着的信写明货分批到了桐城，存在老地方。',
+        physical_result: '视角人物已经读到信笺内容',
+        location: '房内',
+        visibility: 'private',
+        witnesses: [],
+        witness_evidence: [],
+        target_groups: [],
+        traces: [],
+        discovery_conditions: [],
+      },
+      {
+        local_id: 'FACT_DOCUMENT_CONCEALMENT',
+        content: '账册和信笺已经被藏到枕头下面',
+        evidence: '看完以后，我把两份东西藏在枕下。',
+        physical_result: '账册和信笺现位于枕头下面',
+        location: '房内',
+        visibility: 'private',
+        witnesses: [],
+        witness_evidence: [],
+        target_groups: [],
+        traces: ['枕头下面藏有账册和信笺'],
+        discovery_conditions: ['有人翻查枕头下面'],
+      },
+    ],
+    scene_entities: [],
+    communications: [],
+  }),
+  secretStat,
+  ledgerText,
+);
+assert.equal(ledgerRoutingTransition.turn_facts.length, 4, '有正文依据的私密发现不得因证据改写而被淘汰');
+assert.equal(ledgerRoutingTransition.operation_stats.rejected, 0, '自动对齐证据不应计为拒绝');
+assert.ok(
+  ledgerRoutingTransition.turn_facts.every(fact => ledgerText.includes(fact.evidence)),
+  '自动对齐后的事实证据必须是正文中的连续原句',
+);
+assert.ok(
+  ledgerRoutingTransition.turn_facts.every(fact => fact.visibility === 'private' && fact.witnesses.length === 0),
+  '保留私密事实不应放宽 NPC 知情边界',
+);
+assert.equal(ledgerRoutingTransition.knowledge_updates.length, 0);
+assert.match(ledgerRoutingTransition.operation_stats.warnings.join('\n'), /自动对齐/);
+
+const hallucinatedRoutingTransition = buildFactRoutingTransition(
+  secretBase,
+  normalizeFactRoutingResult({
+    schema_version: 1,
+    facts: [
+      {
+        local_id: 'FACT_HALLUCINATED_DELIVERY',
+        content: '邻县知县已经收到并拆阅密信',
+        evidence: '邻县知县收到了密信并当场拆阅。',
+        physical_result: '密信已经抵达邻县县衙',
+        location: '邻县县衙',
+        visibility: 'private',
+        witnesses: [],
+        witness_evidence: [],
+        target_groups: [],
+        traces: [],
+        discovery_conditions: [],
+      },
+    ],
+    scene_entities: [],
+    communications: [],
+  }),
+  secretStat,
+  ledgerText,
+);
+assert.equal(hallucinatedRoutingTransition.turn_facts.length, 0, '正文完全没有依据的事实仍须拒绝');
+assert.equal(hallucinatedRoutingTransition.operation_stats.rejected, 1);
+
+const mvuOnlyRoutingTransition = buildFactRoutingTransition(
+  secretBase,
+  normalizeFactRoutingResult({
+    schema_version: 1,
+    facts: [
+      {
+        local_id: 'FACT_MVU_ONLY',
+        content: '邻县知县已经收到密信',
+        evidence: '邻县知县已经收到密信。',
+        physical_result: '密信已经抵达邻县县衙',
+        location: '邻县县衙',
+        visibility: 'private',
+        witnesses: [],
+        witness_evidence: [],
+        target_groups: [],
+        traces: [],
+        discovery_conditions: [],
+      },
+    ],
+    scene_entities: [],
+    communications: [],
+  }),
+  secretStat,
+  `${ledgerText}\n<UpdateVariable>邻县知县已经收到密信。</UpdateVariable>`,
+);
+assert.equal(mvuOnlyRoutingTransition.turn_facts.length, 0, 'MVU 区块中的文本不能冒充主模型正文证据');
+assert.equal(mvuOnlyRoutingTransition.operation_stats.rejected, 1);
+
+const sanitizedGeographicResult = sanitizeIsolatedResult(
+  {
+    schema_version: 3,
+    base_revision: secretRoutedState.revision,
+    changes: [
+      {
+        op: 'merge',
+        target: { collection: 'actors', id: remoteJob.id },
+        changes: { location: '城南粮仓', currentAction: '在邻县县衙继续核对巡防名册' },
+      },
+      {
+        op: 'create',
+        target: { collection: 'intel', id: 'temp-intel' },
+        value: { content: '越权消息', sourceId: 'TF-private-secret' },
+      },
+    ],
+    scenes: [
+      {
+        based_on: [0],
+        location: '城南粮仓',
+        time: '当夜',
+        actors: ['远方知县'],
+        action: '瞬间抵达粮仓',
+        body: '远方知县无视路程出现在粮仓。',
+      },
+    ],
+  },
+  remoteJob,
+  secretRoutedState,
+);
+assert.equal(sanitizedGeographicResult.changes.length, 1, '越权来源 ID 必须在机械层被拒绝');
+assert.equal(
+  Object.hasOwn(sanitizedGeographicResult.changes[0].changes, 'location'),
+  false,
+  '隔离人物不得瞬移到异地',
+);
+assert.equal(sanitizedGeographicResult.scenes.length, 0, '隔离人物的旁线不得直接发生在异地');
+
+const falsePublicText = '城中官府仍在筹备明日巡防。';
+const falsePublicTransition = buildFactRoutingTransition(
+  secretBase,
+  normalizeFactRoutingResult({
+    schema_version: 1,
+    facts: [
+      {
+        local_id: 'F-public',
+        content: '城中官府正在筹备明日巡防',
+        evidence: falsePublicText,
+        physical_result: '巡防准备正在推进',
+        location: '城中官府',
+        visibility: 'local_public',
+        witnesses: [],
+        witness_evidence: [],
+        target_groups: [],
+        traces: [],
+        discovery_conditions: [],
+      },
+    ],
+    scene_entities: [],
+    communications: [],
+  }),
+  secretStat,
+  falsePublicText,
+);
+assert.equal(falsePublicTransition.turn_facts[0].visibility, 'private', '没有公开传播措辞时不得接受 local_public');
+assert.match(falsePublicTransition.operation_stats.warnings.join('\n'), /没有明确公开传播证据/);
+
+const explicitPublicText = '官府将巡防告示张贴在城门，围观百姓议论纷纷。';
+const explicitPublicTransition = buildFactRoutingTransition(
+  secretBase,
+  normalizeFactRoutingResult({
+    schema_version: 1,
+    facts: [
+      {
+        local_id: 'F-public',
+        content: '巡防告示已经张贴在城门',
+        evidence: explicitPublicText,
+        physical_result: '城门已有公开巡防告示',
+        location: '城门',
+        visibility: 'local_public',
+        witnesses: [],
+        witness_evidence: [],
+        target_groups: [],
+        traces: ['城门张贴着巡防告示'],
+        discovery_conditions: [],
+      },
+    ],
+    scene_entities: [],
+    communications: [],
+  }),
+  secretStat,
+  explicitPublicText,
+);
+assert.equal(explicitPublicTransition.turn_facts[0].visibility, 'local_public');
+
+// 只有带逐字感知证据的现场人物才能获得事实；跨地点消息必须先进入传播队列。
+const witnessText = '守卫周成推门进来，亲眼看见沈砚正在撬锁。周成立即写下急报，交给快马送往邻县县衙。';
+const witnessStat = {
+  世界运转: { 当前地点: '城南粮仓', 世界运转天数: 12 },
+  人物: { 周成: { 姓名: '周成', 是否在场: true } },
+};
+const witnessRouting = normalizeFactRoutingResult({
+  schema_version: 1,
+  facts: [
+    {
+      local_id: 'F1',
+      content: '周成亲眼看见沈砚正在撬锁',
+      evidence: '周成进门后看到了沈砚撬锁。',
+      physical_result: '沈砚撬锁的行为已被周成目击',
+      location: '城南粮仓',
+      visibility: 'witnessed',
+      witnesses: ['周成'],
+      witness_evidence: [
+        {
+          name: '周成',
+          evidence: '周成进门亲眼看到沈砚在撬锁。',
+        },
+      ],
+      target_groups: [],
+      traces: [],
+      discovery_conditions: [],
+    },
+  ],
+  scene_entities: [
+    {
+      name: '周成',
+      location: '城南粮仓',
+      public_role: '粮仓守卫',
+      apparent_goal: '保护粮仓',
+      current_action: '写下急报',
+      evidence: '周成推门后亲眼看到沈砚撬锁。',
+    },
+  ],
+  communications: [
+    {
+      fact_refs: ['F1'],
+      evidence: '周成把写好的急报交给快马送去邻县。',
+      sender: '周成',
+      recipients: ['邻县县衙'],
+      origin: '城南粮仓',
+      destination: '邻县县衙',
+      channel: '快马急报',
+      target_groups: ['邻县官府'],
+      distance_band: 'nearby_city',
+      visibility: 'restricted',
+    },
+  ],
+});
+const witnessTransition = buildFactRoutingTransition(secretBase, witnessRouting, witnessStat, witnessText);
+assert.equal(witnessTransition.turn_facts[0].witnesses[0], '周成');
+assert.equal(witnessTransition.knowledge_updates.length, 1, '合法目击者应立即获得事实权限');
+assert.equal(witnessTransition.upsert_intel.length, 1, '跨地点急报应进入消息流转');
+assert.equal(witnessTransition.upsert_intel[0].status, 'in_transit');
+assert.equal(witnessTransition.upsert_intel[0].available_after_world_days, 13);
+assert.deepEqual(Array.from(witnessTransition.upsert_intel[0].known_by), ['周成']);
+assert.ok(!witnessTransition.upsert_intel[0].known_by.includes('远方知县'));
+assert.equal(witnessTransition.operation_stats.rejected, 0, '事实、目击和通信证据自动对齐不应算作拒绝');
+const witnessState = previewTransitionState(
+  secretBase,
+  witnessTransition,
+  { messageId: 32, swipeId: 0, hash: 'witness-turn' },
+  witnessStat,
+);
+const witnessJob = selectIsolationJob(
+  witnessState,
+  witnessTransition.turn_facts.map(fact => fact.id),
+);
+assert.equal(witnessJob?.label, '远方知县', '当前画面内人物不得被第二次调用接管');
+assert.doesNotMatch(JSON.stringify(buildIsolatedPayload(witnessState, witnessJob)), /沈砚正在撬锁/);
+const arrivedWitnessState = normalizeState(
+  {
+    ...witnessState,
+    currentWorldDays: 13,
+    intelPackets: witnessState.intelPackets.map(item => ({ ...item, status: 'arrived' })),
+  },
+  secretChatId,
+);
+const arrivedWitnessJob = selectIsolationJob(arrivedWitnessState, []);
+const arrivedWitnessPayload = buildIsolatedPayload(arrivedWitnessState, arrivedWitnessJob);
+assert.equal(arrivedWitnessJob?.label, '远方知县');
+assert.equal(arrivedWitnessPayload.arrivedMessages.length, 1, '邻县官府应能匹配官府群体并在到期后收报');
+assert.match(arrivedWitnessPayload.arrivedMessages[0].content, /周成亲眼看见沈砚正在撬锁/);
+assert.equal(arrivedWitnessPayload.arrivedMessages[0].destination, '邻县县衙');
+assert.equal(arrivedWitnessPayload.arrivedMessages[0].distanceBand, 'nearby_city');
+
+const processStart = fullSource.indexOf('  async function processMessage');
+const processEnd = fullSource.indexOf('\n  function cancelActiveJob', processStart);
+const activeProcessSource = fullSource.slice(processStart, processEnd);
+assert.match(activeProcessSource, /callFactRouter/);
+assert.match(activeProcessSource, /callIsolatedWorldModel/);
+assert.match(activeProcessSource, /routingFailure \? null : selectIsolationJob/);
+assert.doesNotMatch(activeProcessSource, /resolvePromptSnapshot|resolveWorldInfoSupplement|callWorldModel\(/);
+assert.match(factRoutingSystemPrompt(), /不续写剧情、不推演任何人物/);
+assert.match(isolatedSystemPrompt(remoteJob), /没有出现的事实、正文、秘密、世界书内容/);
 
 let cancelledGenerationId = '';
 sandbox.stopGenerationById = generationId => {
@@ -2086,12 +2502,12 @@ await assert.rejects(cancelledRequest, error => error?.code === 'CWE_CANCELLED')
 assert.equal(cancelledGenerationId, cancelledJob.generationId);
 assert.equal(cancelledJob.cancelled, true);
 
-assert.match(fullSource, /const VERSION = '1\.8\.6'/);
+assert.match(fullSource, /const VERSION = '1\.9\.0'/);
 assert.match(fullSource, /requestTimeoutMs: 90000/);
 assert.match(fullSource, /data-setting="requestTimeoutSeconds"/);
 assert.match(fullSource, /data-banner-action="cancel"/);
 assert.match(fullSource, /stopGenerationById/);
 assert.doesNotMatch(fullSource, /json_schema:\s*schema/);
 console.info(
-  '天下演化测试通过：真实楼层票据、MVU 去重、假请求隔离、存储自愈、主动清空、v3 增量协议、知识来源、传播时限、群体匹配、旁线越权拦截、空结果、请求预算、稳定 ID、主动取消与旧档迁移均已覆盖。',
+  '天下演化测试通过：真实楼层票据、MVU 去重、假请求隔离、存储自愈、主动清空、v3 增量协议、两段式事实分流、知情单元隔离、秘密不可见、传播时限、群体匹配、空结果、请求预算、稳定 ID、主动取消与旧档迁移均已覆盖。',
 );
