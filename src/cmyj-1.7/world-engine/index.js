@@ -1831,8 +1831,9 @@ import integratedStyles from './styles-integrated.raw?raw';
 
 三、痕迹与通信
 1. traces 只写正文已经产生或由物理结果直接留下的可发现痕迹，不得把隐藏行为人的身份和动机写进痕迹。
-2. communications 只登记正文中已经实际发出的信件、口信、告示或报告；尚未发送的打算不得登记。玩家当前视角主体发送时，sender 固定写 CURRENT_VIEWPOINT。
-3. 远距离通信只登记出发，不判断已经抵达。fact_refs 只能引用本次 facts 的 local_id。
+2. communications 只登记正文中已经实际完成的信息传递；尚未发送的打算、没有明确接收者的自言自语、只与事实背景相关但没有传达该事实的台词都不要登记。
+3. 当面说话的 evidence 要连同“谁在说”一起复制；信件、口信、告示或报告的 evidence 要包含发送动作。玩家当前视角主体发送时，sender 固定写 CURRENT_VIEWPOINT。
+4. fact_refs 只引用这次言语或发送行为真正传达的 facts.local_id，不能因为台词提到相近话题就挂接事实。远距离通信只登记出发，不判断已经抵达。
 
 四、输出
 1. 合并同一动作或同一通信链上的重复描述；通常只需 1—6 条 facts，每项 traces 与 discovery_conditions 各不超过 3 条。
@@ -1969,9 +1970,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     const presentActors = collectPresentActorNames(currentStat);
     const previousPresence = normalizeScenePresence(baseState?.scenePresence);
     const carriedActors =
-      clock.location &&
-      previousPresence.location &&
-      locationsOverlap(clock.location, previousPresence.location)
+      clock.location && previousPresence.location && locationsOverlap(clock.location, previousPresence.location)
         ? previousPresence.actors.filter(name =>
             presentActors.some(candidate => comparableIdentity(candidate) === comparableIdentity(name)),
           )
@@ -3427,15 +3426,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     };
   }
 
-  async function callStructuredModelOnce({
-    systemPrompt,
-    payload,
-    schema,
-    generationId,
-    job,
-    label,
-    maxOutputTokens,
-  }) {
+  async function callStructuredModelOnce({ systemPrompt, payload, schema, generationId, job, label, maxOutputTokens }) {
     const generateRaw = api('generateRaw');
     const generate = api('generate');
     if (typeof generateRaw !== 'function' && typeof generate !== 'function') {
@@ -4352,12 +4343,31 @@ import integratedStyles from './styles-integrated.raw?raw';
     return best.sentence.slice(0, 600);
   }
 
-  function evidenceWasRealigned(original, recovered) {
-    return Boolean(
-      recovered &&
-        normalizedKnowledgeText(original) &&
-        normalizedKnowledgeText(original) !== normalizedKnowledgeText(recovered),
-    );
+  function recoverNamedTurnEvidence(currentTurnText, name, candidate) {
+    const expectedName = normalizedKnowledgeText(name);
+    if (!expectedName) return '';
+    const sentences =
+      asText(currentTurnText)
+        .match(/[^。！？!?；;\n]+[。！？!?；;]?/gu)
+        ?.map(sentence => sentence.trim())
+        .filter(sentence => normalizedKnowledgeText(sentence).length >= 4) || [];
+    const supplied = normalizedKnowledgeText(candidate?.evidence);
+    if (supplied) {
+      for (let start = 0; start < sentences.length; start += 1) {
+        for (let size = 1; size <= 3 && start + size <= sentences.length; size += 1) {
+          const window = sentences.slice(start, start + size).join('');
+          const normalizedWindow = normalizedKnowledgeText(window);
+          if (normalizedWindow.includes(supplied) && normalizedWindow.includes(expectedName)) {
+            return window.slice(0, 600);
+          }
+        }
+      }
+    }
+    const recovered = recoverTurnFactEvidence(currentTurnText, {
+      ...candidate,
+      content: `${name} ${asText(candidate?.content)}`,
+    });
+    return normalizedKnowledgeText(recovered).includes(expectedName) ? recovered : '';
   }
 
   function explicitCommunicationEvidence(evidence) {
@@ -4493,35 +4503,19 @@ import integratedStyles from './styles-integrated.raw?raw';
             .join(' '),
           physical_result: raw?.public_role || raw?.publicRole,
         });
-        if (
-          !name ||
-          !evidence ||
-          !normalizedKnowledgeText(evidence).includes(normalizedKnowledgeText(name))
-        ) {
+        if (!name || !evidence || !normalizedKnowledgeText(evidence).includes(normalizedKnowledgeText(name))) {
           return null;
-        }
-        if (evidenceWasRealigned(suppliedEvidence, evidence)) {
-          warnings.push(`现场人物 ${name}：已将 evidence 自动对齐为正文原句`);
         }
         return {
           name,
           location: asText(raw?.location, clock.location).slice(0, 160),
           publicRole: asText(raw?.public_role || raw?.publicRole).slice(0, 180),
           apparentGoal: asText(raw?.apparent_goal || raw?.apparentGoal).slice(0, 240),
-          currentAction: asText(raw?.current_action || raw?.currentAction, '本轮场景后的行动尚未明确').slice(
-            0,
-            280,
-          ),
+          currentAction: asText(raw?.current_action || raw?.currentAction, '本轮场景后的行动尚未明确').slice(0, 280),
           evidence,
         };
       })
       .filter(Boolean);
-    const allowedWitnessNames = uniqueTextList(
-      [...presentActors, ...verifiedEntities.map(item => item.name)],
-      32,
-      100,
-    );
-
     for (const [index, raw] of asArray(routingResult?.facts).entries()) {
       const candidate = normalizeTurnFactCandidate({
         ...raw,
@@ -4542,7 +4536,6 @@ import integratedStyles from './styles-integrated.raw?raw';
         continue;
       }
       aliases.add(aliasKey);
-      const suppliedEvidence = candidate.evidence;
       const verifiedEvidence = recoverTurnFactEvidence(narrativeText, candidate);
       if (!verifiedEvidence) {
         warnings.push(`事实分流 ${alias}：正文中找不到可支撑该事实的内容`);
@@ -4550,17 +4543,6 @@ import integratedStyles from './styles-integrated.raw?raw';
         continue;
       }
       candidate.evidence = verifiedEvidence;
-      if (evidenceWasRealigned(suppliedEvidence, verifiedEvidence)) {
-        warnings.push(`事实分流 ${alias}：已将 evidence 自动对齐为正文原句`);
-      }
-      if (
-        !knowledgeTextsRelated(candidate.evidence, candidate.content) &&
-        !knowledgeTextsRelated(candidate.evidence, candidate.physical_result)
-      ) {
-        warnings.push(`事实分流 ${alias}：事实与证据缺少可核对关系`);
-        rejected += 1;
-        continue;
-      }
 
       const requestedVisibility = asText(raw?.visibility, 'private').toLowerCase();
       const visibilityMap = {
@@ -4574,18 +4556,13 @@ import integratedStyles from './styles-integrated.raw?raw';
         .map(item => {
           const name = asText(item?.name).slice(0, 100);
           const suppliedWitnessEvidence = asText(item?.evidence || item?.quote).slice(0, 400);
-          if (!name || !allowedWitnessNames.some(value => comparableIdentity(value) === comparableIdentity(name))) {
-            return null;
-          }
-          const evidence = recoverTurnFactEvidence(narrativeText, {
+          if (!name) return null;
+          const evidence = recoverNamedTurnEvidence(narrativeText, name, {
             evidence: suppliedWitnessEvidence,
-            content: `${name} ${candidate.content}`,
+            content: candidate.content,
             physical_result: candidate.physical_result,
           });
           if (!evidence || !normalizedKnowledgeText(evidence).includes(normalizedKnowledgeText(name))) return null;
-          if (evidenceWasRealigned(suppliedWitnessEvidence, evidence)) {
-            warnings.push(`事实分流 ${alias}：已自动对齐 ${name} 的感知证据`);
-          }
           return { name, evidence: evidence.slice(0, 400) };
         })
         .filter(Boolean);
@@ -4599,9 +4576,7 @@ import integratedStyles from './styles-integrated.raw?raw';
         witnesses.length = 0;
       } else if (visibility === 'local_public' && !explicitLocalPublicEvidence(candidate.evidence)) {
         visibility = witnesses.length ? 'scene_visible' : 'private';
-        warnings.push(`事实分流 ${alias}：正文没有明确公开传播证据，已降级为 ${visibility}`);
       } else if (visibility !== 'local_public' && !witnesses.length) {
-        warnings.push(`事实分流 ${alias}：没有逐字感知证据，已降级为 private`);
         visibility = 'private';
       }
 
@@ -4617,8 +4592,7 @@ import integratedStyles from './styles-integrated.raw?raw';
         location: candidate.location || clock.location,
         traces: uniqueTextList(candidate.traces, 16, 240).filter(
           trace =>
-            knowledgeTextsRelated(candidate.evidence, trace) ||
-            knowledgeTextsRelated(candidate.physical_result, trace),
+            knowledgeTextsRelated(candidate.evidence, trace) || knowledgeTextsRelated(candidate.physical_result, trace),
         ),
         sourceRevision: Number(baseState?.revision || 0) + 1,
       });
@@ -4742,58 +4716,85 @@ import integratedStyles from './styles-integrated.raw?raw';
       ]),
     );
     for (const communication of asArray(routingResult?.communications)) {
-      const referencedFacts = uniqueTextList(
-        communication?.fact_refs || communication?.factRefs,
-        12,
-        100,
-      )
+      const referencedFacts = uniqueTextList(communication?.fact_refs || communication?.factRefs, 12, 100)
         .map(ref => factsByAlias.get(comparableIdentity(ref)))
         .filter(Boolean);
-      if (!referencedFacts.length) {
-        transition.operation_stats.warnings.push('通信分流：没有引用已接受的事实');
-        transition.operation_stats.rejected += 1;
-        continue;
-      }
+      if (!referencedFacts.length) continue;
       const sender = asText(communication?.sender).slice(0, 100);
       const recipients = uniqueTextList(communication?.recipients, 16, 100);
-      const suppliedEvidence = asText(communication?.evidence).slice(0, 800);
-      const evidence = recoverTurnFactEvidence(narrativeText, {
-        evidence: suppliedEvidence,
-        content: [
-          sender,
-          ...recipients,
-          communication?.origin,
-          communication?.destination,
-          communication?.channel,
-        ]
-          .filter(Boolean)
-          .join(' '),
-        physical_result: '消息已经发出',
-      });
-      if (!evidence || !explicitCommunicationEvidence(evidence)) {
-        transition.operation_stats.warnings.push('通信分流：正文中找不到已经发出通信的证据');
-        transition.operation_stats.rejected += 1;
-        continue;
-      }
-      if (evidenceWasRealigned(suppliedEvidence, evidence)) {
-        transition.operation_stats.warnings.push('通信分流：已将 evidence 自动对齐为正文原句');
-      }
-      const senderActor = actorRecordByName(stagedActors, sender);
-      const viewpointSender = sender.toUpperCase() === 'CURRENT_VIEWPOINT';
-      const senderKnows =
-        viewpointSender ||
-        referencedFacts.every(fact => senderActor && actorListed(fact.witnesses, senderActor));
-      if (!senderKnows) {
-        transition.operation_stats.warnings.push(`通信分流：发送者 ${sender || '未填写'} 没有事实权限`);
-        transition.operation_stats.rejected += 1;
-        continue;
-      }
       const distanceBand = enumValue(
         communication?.distance_band || communication?.distanceBand,
         DISTANCE_BANDS,
         'same_city',
       );
-      const content = referencedFacts.map(fact => fact.content).join('；').slice(0, 600);
+      const channel = asText(communication?.channel).slice(0, 160);
+      const suppliedEvidence = asText(communication?.evidence).slice(0, 800);
+      const viewpointSender = sender.toUpperCase() === 'CURRENT_VIEWPOINT';
+      const senderEvidence = viewpointSender
+        ? ''
+        : recoverNamedTurnEvidence(narrativeText, sender, {
+            evidence: suppliedEvidence,
+            content: suppliedEvidence,
+            physical_result: channel,
+          });
+      const evidence =
+        senderEvidence ||
+        recoverTurnFactEvidence(narrativeText, {
+          evidence: suppliedEvidence,
+          content: [sender, ...recipients, communication?.origin, communication?.destination, communication?.channel]
+            .filter(Boolean)
+            .join(' '),
+          physical_result: '消息已经发出',
+        });
+      const directSamePlaceSpeech =
+        distanceBand === 'same_place' &&
+        /口头|口信|言辞|言语|当面|对话|交谈|传告|转告|禀告|报告|告诫|提醒|教训|争吵|威胁|告知|告诉|喊话|face[_\s-]?to[_\s-]?face|spoken|speech|shout(?:ing)?|dialogue|conversation|oral|verbal|report|warning|threat/iu.test(
+          channel,
+        );
+      const senderActor = actorRecordByName(stagedActors, sender);
+      const senderAlreadyKnows = referencedFacts.every(
+        fact =>
+          senderActor &&
+          (actorListed(fact.witnesses, senderActor) ||
+            actorKnowsContent(senderActor, fact.content, asArray(baseState?.secrets))),
+      );
+      const senderKnows = viewpointSender || Boolean(senderEvidence) || senderAlreadyKnows;
+      const communicationIsGrounded =
+        Boolean(evidence) &&
+        (directSamePlaceSpeech
+          ? viewpointSender || Boolean(senderEvidence) || senderAlreadyKnows
+          : explicitCommunicationEvidence(evidence));
+      if (!communicationIsGrounded || !senderKnows) continue;
+      const content = referencedFacts
+        .map(fact => fact.content)
+        .join('；')
+        .slice(0, 600);
+      if (senderActor && senderEvidence) {
+        for (const fact of referencedFacts) {
+          const alreadyGranted =
+            actorListed(fact.witnesses, senderActor) ||
+            actorKnowsContent(senderActor, fact.content, asArray(baseState?.secrets)) ||
+            transition.knowledge_updates.some(
+              update =>
+                actorReferenceMatches(senderActor, update.actorId, update.actorName) &&
+                knowledgeTextsRelated(update.content, fact.content),
+            );
+          if (alreadyGranted) continue;
+          transition.knowledge_updates.push({
+            actorId: asText(senderActor?.id),
+            actorName: actorDisplayName(senderActor),
+            state: 'known',
+            mode: 'grant',
+            content: fact.content,
+            replaces: '',
+            sourceType: 'observation',
+            sourceId: fact.id,
+            sourceActorId: asText(senderActor?.id),
+            sourceActorName: actorDisplayName(senderActor),
+            confidence: 1,
+          });
+        }
+      }
       if (distanceBand === 'same_place') {
         for (const recipientName of recipients) {
           const recipient = actorRecordByName(stagedActors, recipientName);
@@ -4808,7 +4809,7 @@ import integratedStyles from './styles-integrated.raw?raw';
             sourceType: 'told_by_actor',
             sourceId: referencedFacts[0].id,
             sourceActorId: asText(senderActor?.id),
-            sourceActorName: viewpointSender ? '玩家当前视角主体' : actorDisplayName(senderActor),
+            sourceActorName: viewpointSender ? '玩家当前视角主体' : actorDisplayName(senderActor) || sender,
             confidence: 0.95,
           });
         }
@@ -4880,13 +4881,15 @@ import integratedStyles from './styles-integrated.raw?raw';
     }
     return Boolean(
       fact.visibility === 'local_public' &&
-        locationsOverlap(actor?.location, fact?.location) &&
-        actorGroupsMatchFact(actor, fact),
+      locationsOverlap(actor?.location, fact?.location) &&
+      actorGroupsMatchFact(actor, fact),
     );
   }
 
   function actorIsolationKnowledge(state, actor) {
-    const facts = asArray(state?.turnFacts).filter(fact => actorCanReadFact(actor, fact)).slice(-12);
+    const facts = asArray(state?.turnFacts)
+      .filter(fact => actorCanReadFact(actor, fact))
+      .slice(-12);
     const arrivedIntel = asArray(state?.intelPackets)
       .filter(item => intelAllowsActor(item, actor, state?.currentWorldDays))
       .slice(-8);
@@ -5052,9 +5055,7 @@ ${actorRule}
         distanceBand: item.distanceBand || item.distance_band,
         targetGroups: uniqueTextList(item.targetGroups || item.target_groups, 16, 100),
         departedWorldDays: optionalFiniteNumber(item.departedWorldDays ?? item.departed_world_days),
-        availableAfterWorldDays: optionalFiniteNumber(
-          item.availableAfterWorldDays ?? item.available_after_world_days,
-        ),
+        availableAfterWorldDays: optionalFiniteNumber(item.availableAfterWorldDays ?? item.available_after_world_days),
       })),
       relatedEvents: asArray(knowledge.relatedEvents).map(item =>
         projectPromptRecord(item, ['id', 'title', 'stage', 'location', 'summary', 'nextTrigger']),
@@ -5178,6 +5179,104 @@ ${actorRule}
     };
   }
 
+  const V3_CHANGE_FIELDS = Object.freeze({
+    events: new Set([
+      'title',
+      'stage',
+      'status',
+      'location',
+      'actors',
+      'summary',
+      'nextTrigger',
+      'impactDomains',
+      'sourceFactIds',
+    ]),
+    actors: new Set([
+      'name',
+      'location',
+      'groups',
+      'goal',
+      'currentAction',
+      'knowledge',
+      'doesNotKnow',
+      'nextDecision',
+      'updatedReason',
+      'causeType',
+      'causeId',
+      'basisIds',
+      'nextDueWorldDays',
+    ]),
+    intel: new Set([
+      'content',
+      'origin',
+      'destination',
+      'channel',
+      'status',
+      'eta',
+      'reliability',
+      'knownBy',
+      'targetGroups',
+      'visibility',
+      'sourceType',
+      'sourceId',
+      'sourceActor',
+      'sourceFactIds',
+      'distanceBand',
+      'departedWorldDays',
+      'availableAfterWorldDays',
+    ]),
+    hooks: new Set(['title', 'stage', 'summary', 'visibleSigns', 'trigger', 'failCondition', 'sourceFactIds']),
+  });
+
+  function normalizeIsolatedChangePayload(collection, rawPayload) {
+    if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) return {};
+    const payload = { ...rawPayload };
+    const basisIds = uniqueTextList(
+      [
+        payload?.causeId,
+        payload?.cause_id,
+        ...asArray(payload?.basisIds || payload?.basis_ids),
+        ...asArray(payload?.sourceFactIds || payload?.source_fact_ids),
+      ],
+      20,
+      100,
+    );
+    if (collection === 'events') {
+      payload.title ||= firstOperationText(payload.label, payload.name);
+      payload.summary ||= firstOperationText(payload.description, payload.body);
+      payload.nextTrigger ||= firstOperationText(payload.next_trigger, payload.trigger);
+      if (!asArray(payload.sourceFactIds).length && basisIds.length) payload.sourceFactIds = basisIds;
+    } else if (collection === 'actors') {
+      payload.name ||= asText(payload.label);
+      payload.currentAction ||= firstOperationText(payload.current_action, payload.action);
+      payload.nextDecision ||= firstOperationText(payload.next_decision, payload.nextAction);
+      payload.updatedReason ||= firstOperationText(payload.updated_reason, payload.reason, payload.description);
+      payload.causeType ||= asText(payload.cause_type);
+      payload.causeId ||= asText(payload.cause_id);
+      if (!asArray(payload.basisIds).length && basisIds.length) payload.basisIds = basisIds;
+    } else if (collection === 'intel') {
+      payload.content ||= firstOperationText(payload.description, payload.summary, payload.message);
+      payload.sourceFactIds ||= payload.source_fact_ids;
+      payload.targetGroups ||= payload.target_groups;
+      payload.knownBy ||= payload.known_by;
+      payload.distanceBand ||= payload.distance_band;
+      payload.sourceType ||= payload.source_type;
+      payload.sourceId ||= payload.source_id;
+      payload.sourceActor ||= payload.source_actor;
+      payload.departedWorldDays ??= payload.departed_world_days;
+      payload.availableAfterWorldDays ??= payload.available_after_world_days;
+    } else if (collection === 'hooks') {
+      payload.title ||= firstOperationText(payload.label, payload.name);
+      payload.summary ||= firstOperationText(payload.description, payload.body);
+      payload.visibleSigns ||= payload.visible_signs;
+      payload.failCondition ||= payload.fail_condition;
+      if (!asArray(payload.sourceFactIds).length && basisIds.length) payload.sourceFactIds = basisIds;
+    }
+    const fields = V3_CHANGE_FIELDS[collection];
+    if (!fields) return {};
+    return Object.fromEntries(Object.entries(payload).filter(([key, value]) => fields.has(key) && value != null));
+  }
+
   function sanitizeIsolatedResult(result, job, baseState) {
     const normalized = normalizeWorldChangeResult(result);
     const collectionByJob = { actor: 'actors', event: 'events', hook: 'hooks' };
@@ -5193,33 +5292,31 @@ ${actorRule}
       const id = asText(change?.target?.id);
       let accepted = false;
       let next = change;
-      const payload = op === 'create' ? change?.value : change?.changes;
+      const rawPayload = op === 'create' ? change?.value : change?.changes;
       const sourceReferences = uniqueTextList(
         [
-          payload?.causeId,
-          payload?.cause_id,
-          payload?.sourceId,
-          payload?.source_id,
-          ...asArray(payload?.basisIds || payload?.basis_ids),
-          ...asArray(payload?.sourceFactIds || payload?.source_fact_ids),
+          rawPayload?.causeId,
+          rawPayload?.cause_id,
+          rawPayload?.sourceId,
+          rawPayload?.source_id,
+          ...asArray(rawPayload?.basisIds || rawPayload?.basis_ids),
+          ...asArray(rawPayload?.sourceFactIds || rawPayload?.source_fact_ids),
         ],
         48,
         100,
       );
       if (sourceReferences.some(reference => !allowedSourceIds.has(String(reference)))) return;
-      if (
-        ['merge', 'delete'].includes(op) &&
-        collection === existingCollection &&
-        String(id) === String(job?.id)
-      ) {
-        if (
-          op === 'merge' &&
-          job?.type === 'actor' &&
-          asText(payload?.location) &&
-          !locationsOverlap(payload.location, job?.record?.location)
-        ) {
+      const payload = normalizeIsolatedChangePayload(collection, rawPayload);
+      if (['merge', 'delete'].includes(op) && collection === existingCollection && String(id) === String(job?.id)) {
+        if (op === 'merge') {
           next = { ...change, changes: { ...payload } };
-          delete next.changes.location;
+          if (
+            job?.type === 'actor' &&
+            asText(payload?.location) &&
+            !locationsOverlap(payload.location, job?.record?.location)
+          ) {
+            delete next.changes.location;
+          }
           if (!Object.keys(next.changes).length) return;
         }
         accepted = true;
@@ -5232,7 +5329,8 @@ ${actorRule}
         ) {
           return;
         }
-        const createPayload = payload || {};
+        const createPayload = payload;
+        if (!Object.keys(createPayload).length) return;
         const identity = firstOperationText(payload?.name, payload?.title, payload?.content, id, collection);
         next = {
           ...change,
@@ -5266,11 +5364,7 @@ ${actorRule}
         ) {
           return null;
         }
-        if (
-          actors.some(
-            actor => !allowedSceneActors.size || !allowedSceneActors.has(comparableIdentity(actor)),
-          )
-        ) {
+        if (actors.some(actor => !allowedSceneActors.size || !allowedSceneActors.has(comparableIdentity(actor)))) {
           return null;
         }
         return { ...scene, based_on: references.map(index => sourceIndexes.get(index)) };
@@ -6521,17 +6615,7 @@ ${actorRule}
         stateKey: 'activeEvents',
         outputKey: 'upsert_events',
         deleteKey: 'resolve_event_ids',
-        fields: new Set([
-          'title',
-          'stage',
-          'status',
-          'location',
-          'actors',
-          'summary',
-          'nextTrigger',
-          'impactDomains',
-          'sourceFactIds',
-        ]),
+        fields: V3_CHANGE_FIELDS.events,
         normalize: eventInput,
         valid: item => item.title && item.stage && item.location && item.summary && item.next_trigger,
       },
@@ -6539,21 +6623,7 @@ ${actorRule}
         stateKey: 'actors',
         outputKey: 'upsert_actors',
         deleteKey: 'remove_actor_ids',
-        fields: new Set([
-          'name',
-          'location',
-          'groups',
-          'goal',
-          'currentAction',
-          'knowledge',
-          'doesNotKnow',
-          'nextDecision',
-          'updatedReason',
-          'causeType',
-          'causeId',
-          'basisIds',
-          'nextDueWorldDays',
-        ]),
+        fields: V3_CHANGE_FIELDS.actors,
         normalize: actorInput,
         valid: item => item.name && item.current_action && item.updated_reason,
       },
@@ -6561,25 +6631,7 @@ ${actorRule}
         stateKey: 'intelPackets',
         outputKey: 'upsert_intel',
         deleteKey: 'remove_intel_ids',
-        fields: new Set([
-          'content',
-          'origin',
-          'destination',
-          'channel',
-          'status',
-          'eta',
-          'reliability',
-          'knownBy',
-          'targetGroups',
-          'visibility',
-          'sourceType',
-          'sourceId',
-          'sourceActor',
-          'sourceFactIds',
-          'distanceBand',
-          'departedWorldDays',
-          'availableAfterWorldDays',
-        ]),
+        fields: V3_CHANGE_FIELDS.intel,
         normalize: intelInput,
         valid: item =>
           item.content &&
@@ -6594,7 +6646,7 @@ ${actorRule}
         stateKey: 'hooks',
         outputKey: 'upsert_hooks',
         deleteKey: 'resolve_hook_ids',
-        fields: new Set(['title', 'stage', 'summary', 'visibleSigns', 'trigger', 'failCondition', 'sourceFactIds']),
+        fields: V3_CHANGE_FIELDS.hooks,
         normalize: hookInput,
         valid: item => item.title && item.stage && item.summary && item.trigger && item.fail_condition,
       },
@@ -6664,7 +6716,6 @@ ${actorRule}
           return;
         }
         if (op === 'merge' && JSON.stringify(merged) === JSON.stringify(descriptor.normalize(existing, id))) {
-          reject(change, 'merge 没有产生有效变化');
           return;
         }
         if (enforceKnowledgeBoundary && collection === 'actors') {
@@ -7036,15 +7087,13 @@ ${actorRule}
         : evolution.scene_presence;
     combined.parallel_scenes = asArray(evolution.parallel_scenes);
     combined.operation_stats = {
-      accepted:
-        Number(routing.operation_stats?.accepted || 0) + Number(evolution.operation_stats?.accepted || 0),
-      rejected:
-        Number(routing.operation_stats?.rejected || 0) + Number(evolution.operation_stats?.rejected || 0),
+      accepted: Number(routing.operation_stats?.accepted || 0) + Number(evolution.operation_stats?.accepted || 0),
+      rejected: Number(routing.operation_stats?.rejected || 0) + Number(evolution.operation_stats?.rejected || 0),
       knowledgeRejected: 0,
-      warnings: [
-        ...asArray(routing.operation_stats?.warnings),
-        ...asArray(evolution.operation_stats?.warnings),
-      ].slice(0, 24),
+      warnings: [...asArray(routing.operation_stats?.warnings), ...asArray(evolution.operation_stats?.warnings)].slice(
+        0,
+        24,
+      ),
     };
     combined.next_turn_packet = deriveNextTurnPacket(combined, currentWorldDays);
     return combined;
@@ -7384,13 +7433,8 @@ ${actorRule}
           enforceKnowledgeBoundary: false,
         });
       }
-      const transition = combineTransitions(
-        routingTransition,
-        evolutionTransition,
-        routedState.currentWorldDays,
-      );
-      transition.isolation_cursor =
-        Math.max(0, Number(baseState?.isolationCursor) || 0) + (isolationJob ? 1 : 0);
+      const transition = combineTransitions(routingTransition, evolutionTransition, routedState.currentWorldDays);
+      transition.isolation_cursor = Math.max(0, Number(baseState?.isolationCursor) || 0) + (isolationJob ? 1 : 0);
       if (transition.operation_stats.rejected > 0) {
         console.warn('[天下演化] 部分结构化增量未通过机械校验', {
           accepted: transition.operation_stats.accepted,
@@ -7720,7 +7764,7 @@ ${actorRule}
     operationWarnings.forEach((value, index) => {
       noticeCards.push(`<section class="cwe-notice danger" role="alert">
         <i aria-hidden="true"></i>
-        <div class="cwe-notice-body"><b>忽略 ${index + 1}/${operationWarnings.length}</b><p>${escapeHtml(noticeLabel(value))}</p></div>
+        <div class="cwe-notice-body"><b>处理提示 ${index + 1}/${operationWarnings.length}</b><p>${escapeHtml(noticeLabel(value))}</p></div>
         <button type="button" class="cwe-notice-close" data-action="dismiss-notice" data-notice-kind="warning" data-warning-index="${index}" aria-label="关闭此条操作警告"><span aria-hidden="true">×</span></button>
       </section>`);
     });

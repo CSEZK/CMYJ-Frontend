@@ -2223,7 +2223,168 @@ assert.ok(
   '保留私密事实不应放宽 NPC 知情边界',
 );
 assert.equal(ledgerRoutingTransition.knowledge_updates.length, 0);
-assert.match(ledgerRoutingTransition.operation_stats.warnings.join('\n'), /自动对齐/);
+assert.equal(ledgerRoutingTransition.operation_stats.warnings.length, 0, '自动对齐属于正常归一化，不应显示为警告');
+
+// 真实酒馆日志回归：{{user}}、称谓替换和省略号证据不能触发第二轮字面相似度误杀。
+const realLogText = [
+  '那挑棍不偏不倚，正中{{user}}后脑勺！围观人群爆发出一阵惊叫。只见{{user}}身子猛地一僵，“嘭”地一声，直挺挺地扑倒在青石板上，登时没了动静。',
+  '众人正自慌乱，忽见那地上的{{user}}身子一挺，“呼”地一声坐直了身子！他冲着街面上的人怒吼：“谁把老子弄到横店来了？你们当老子是群演呢？”',
+  '门外探出赵砚的脑袋，苦着脸道：“林记米铺的周家婶子正逼着娘退婚呢！”',
+  '苏晚月站在门槛外头道：“衙门那边你再不露面，人家正好换个不挨闷棍的顶你的缺。”',
+  '只见堂屋里，苏晚棠和周氏正叉着腰对阵。',
+  '周氏把桌案一拍，大声道：“我林知夏如花似玉，难道要嫁给一个傻子不成？今日这婚，不退也得退！”',
+  '苏晚棠把脸一沉，冷笑道：“周家妹子，你这算盘打得倒精！当年你们林记周转不开，是我家借银救急。”',
+  '周氏尖声道：“今日这庚帖你不退，明日我便找媒婆来，把我闺女另许人家！”',
+  '{{user}}在后宅的雕花木床上躺了三日，将这具身子残存的记忆理了个七七八八，头上的伤也好了大半，只结了一块铜钱大的血痂。',
+].join('\n');
+const realLogTransition = buildFactRoutingTransition(
+  secretBase,
+  normalizeFactRoutingResult({
+    schema_version: 1,
+    facts: [
+      {
+        local_id: 'fact_assault_and_injury_0702',
+        content: '周氏长子被沈大柱用木棍击中后脑，当场昏迷。',
+        evidence: '那挑棍不偏不倚，正中{{user}}后脑勺！……直挺挺地扑倒在青石板上，登时没了动静。',
+        physical_result: '周氏长子后脑受伤并昏迷',
+        location: '桐城县西街',
+        visibility: 'local_public',
+        witnesses: [],
+        witness_evidence: [],
+        target_groups: [],
+        traces: [],
+        discovery_conditions: [],
+      },
+      {
+        local_id: 'fact_bizarre_behavior_0702',
+        content: '周氏长子苏醒后言语怪异，提及横店和群演。',
+        evidence: '地上的{{user}}身子一挺坐直了身子！……谁把老子弄到横店来了？……你们当老子是群演呢？',
+        physical_result: '街面百姓听见了怪异言语',
+        location: '桐城县西街',
+        visibility: 'local_public',
+        witnesses: [],
+        witness_evidence: [],
+        target_groups: [],
+        traces: [],
+        discovery_conditions: [],
+      },
+      {
+        local_id: 'fact_engagement_dispute_0705',
+        content: '周氏登门要求退还庚帖并取消婚约，与苏晚棠激烈争吵。',
+        evidence: '林记米铺的周家婶子正逼着娘退婚呢！……今日这婚，不退也得退！',
+        physical_result: '堂屋内发生退婚争执',
+        location: '和济堂药铺前院堂屋',
+        visibility: 'witnessed',
+        witnesses: ['苏晚棠', '周氏'],
+        witness_evidence: [
+          {
+            name: '苏晚棠',
+            evidence: '你这算盘打得倒精！当年你们林记周转不开，是我家借银救急。',
+          },
+        ],
+        target_groups: [],
+        traces: [],
+        discovery_conditions: [],
+      },
+      {
+        local_id: 'fact_medical_leave_0702_0705',
+        content: '周氏长子受伤后在和济堂后宅静养三日并逐渐恢复。',
+        evidence:
+          '{{user}}在后宅的雕花木床上躺了三日，将这具身子残存的记忆理了个七七八八，头上的伤也好了大半，只结了一块铜钱大的血痂。',
+        physical_result: '后脑伤口已经结痂',
+        location: '和济堂药铺后宅卧室',
+        visibility: 'private',
+        witnesses: [],
+        witness_evidence: [],
+        target_groups: [],
+        traces: [],
+        discovery_conditions: [],
+      },
+    ],
+    scene_entities: [
+      {
+        name: '周氏',
+        location: '和济堂药铺前院堂屋',
+        public_role: '林记米铺东家娘子',
+        apparent_goal: '要求退婚',
+        current_action: '与苏晚棠争吵',
+        evidence: '只见堂屋里，苏晚棠和周氏正叉着腰对阵。',
+      },
+      {
+        name: '苏晚棠',
+        location: '和济堂药铺前院堂屋',
+        public_role: '和济堂主母',
+        apparent_goal: '拒绝退婚',
+        current_action: '与周氏争吵',
+        evidence: '只见堂屋里，苏晚棠和周氏正叉着腰对阵。',
+      },
+    ],
+    communications: [
+      {
+        fact_refs: ['fact_engagement_dispute_0705'],
+        evidence: '今日这庚帖你不退，明日我便找媒婆来，把我闺女另许人家！',
+        sender: '周氏',
+        recipients: ['苏晚棠'],
+        origin: '和济堂药铺前院堂屋',
+        destination: '和济堂药铺前院堂屋',
+        channel: 'face_to_face',
+        target_groups: [],
+        distance_band: 'same_place',
+        visibility: 'restricted',
+      },
+      {
+        fact_refs: ['fact_medical_leave_0702_0705'],
+        evidence: '衙门那边你再不露面，人家正好换个不挨闷棍的顶你的缺。',
+        sender: '苏晚月',
+        recipients: ['CURRENT_VIEWPOINT'],
+        origin: '和济堂药铺后宅门口',
+        destination: '和济堂药铺后宅卧室',
+        channel: '口头告诫',
+        target_groups: [],
+        distance_band: 'same_place',
+        visibility: 'restricted',
+      },
+      {
+        fact_refs: ['fact_engagement_dispute_0705'],
+        evidence: '林记米铺的周家婶子正逼着娘退婚呢！',
+        sender: '赵砚',
+        recipients: ['CURRENT_VIEWPOINT'],
+        origin: '和济堂药铺后宅门口',
+        destination: '和济堂药铺后宅卧室',
+        channel: '口信报告',
+        target_groups: [],
+        distance_band: 'same_place',
+        visibility: 'restricted',
+      },
+    ],
+  }),
+  {
+    世界运转: { 当前地点: '和济堂药铺前院堂屋', 世界运转天数: 12 },
+    人物: {
+      周氏: { 姓名: '周氏', 是否在场: true },
+      苏晚棠: { 姓名: '苏晚棠', 是否在场: true },
+    },
+  },
+  realLogText,
+);
+assert.equal(realLogTransition.turn_facts.length, 4, '真实日志中的四条事实应全部直接入账');
+assert.equal(realLogTransition.operation_stats.rejected, 0, '称谓和措辞差异不应触发事实复审');
+assert.doesNotMatch(realLogTransition.operation_stats.warnings.join('\n'), /缺少可核对关系/);
+assert.deepEqual(Array.from(realLogTransition.turn_facts[2].witnesses), ['苏晚棠']);
+assert.equal(realLogTransition.knowledge_updates.length, 3, '目击、发送者自知和当面告知应正常写入知识账');
+assert.ok(
+  realLogTransition.knowledge_updates.some(
+    update => update.sourceType === 'told_by_actor' && update.sourceActorName === '周氏',
+  ),
+  '正文中明确归属于周氏的当面发言应直接证明发送者知情，不要求模型重复把周氏列为目击者',
+);
+assert.ok(
+  realLogTransition.knowledge_updates.some(
+    update => update.sourceType === 'observation' && update.actorName === '周氏' && update.content.includes('取消婚约'),
+  ),
+  '说话人自己的事实权限也应同步写入知情账，供后续隔离推演使用',
+);
+assert.equal(realLogTransition.operation_stats.warnings.length, 0, '通信候选的正常归一化不应显示成警告');
 
 const hallucinatedRoutingTransition = buildFactRoutingTransition(
   secretBase,
@@ -2312,12 +2473,85 @@ const sanitizedGeographicResult = sanitizeIsolatedResult(
   secretRoutedState,
 );
 assert.equal(sanitizedGeographicResult.changes.length, 1, '越权来源 ID 必须在机械层被拒绝');
-assert.equal(
-  Object.hasOwn(sanitizedGeographicResult.changes[0].changes, 'location'),
-  false,
-  '隔离人物不得瞬移到异地',
-);
+assert.equal(Object.hasOwn(sanitizedGeographicResult.changes[0].changes, 'location'), false, '隔离人物不得瞬移到异地');
 assert.equal(sanitizedGeographicResult.scenes.length, 0, '隔离人物的旁线不得直接发生在异地');
+
+// 第二次调用只做结构归一化和权限裁剪，不应因常见别名字段再次否定合法演化。
+const sanitizedAliasResult = sanitizeIsolatedResult(
+  {
+    schema_version: 3,
+    base_revision: secretRoutedState.revision,
+    changes: [
+      {
+        op: 'create',
+        target: { collection: 'events', id: 'temp-event' },
+        value: {
+          type: 'event',
+          label: '巡防名册复核',
+          description: '远方知县继续在本县复核巡防名册。',
+          stage: '萌芽',
+          location: '邻县县衙',
+          actors: ['远方知县'],
+          next_trigger: '次日点卯',
+          causeId: remoteJob.id,
+          basisIds: [remoteJob.id],
+        },
+      },
+      {
+        op: 'create',
+        target: { collection: 'hooks', id: 'temp-hook' },
+        value: {
+          type: 'hook',
+          label: '巡防名册疑点',
+          description: '名册中有一处班次空缺。',
+          stage: '萌芽',
+          trigger: '再次核对名册',
+          fail_condition: '班次空缺被补齐',
+          causeId: remoteJob.id,
+          basisIds: [remoteJob.id],
+        },
+      },
+    ],
+    scenes: [],
+  },
+  remoteJob,
+  secretRoutedState,
+);
+assert.equal(sanitizedAliasResult.changes.length, 2, '合法演化不得因别名字段被整段丢弃');
+assert.deepEqual(
+  JSON.parse(JSON.stringify(sanitizedAliasResult.changes[0].value)),
+  {
+    title: '巡防名册复核',
+    stage: '萌芽',
+    location: '邻县县衙',
+    actors: ['远方知县'],
+    summary: '远方知县继续在本县复核巡防名册。',
+    nextTrigger: '次日点卯',
+    sourceFactIds: [remoteJob.id],
+  },
+  '第二次调用的事件字段应归一化为正式协议',
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(sanitizedAliasResult.changes[1].value)),
+  {
+    title: '巡防名册疑点',
+    stage: '萌芽',
+    summary: '名册中有一处班次空缺。',
+    trigger: '再次核对名册',
+    failCondition: '班次空缺被补齐',
+    sourceFactIds: [remoteJob.id],
+  },
+  '第二次调用的伏线字段应归一化为正式协议',
+);
+const aliasTransition = buildTransitionFromChanges(secretRoutedState, sanitizedAliasResult, {
+  currentStat: secretStat,
+  currentTurnText: '',
+  enforceKnowledgeBoundary: false,
+});
+assert.equal(aliasTransition.operation_stats.accepted, 2);
+assert.equal(aliasTransition.operation_stats.rejected, 0);
+assert.equal(aliasTransition.upsert_events.length, 1);
+assert.equal(aliasTransition.upsert_hooks.length, 1);
 
 const falsePublicText = '城中官府仍在筹备明日巡防。';
 const falsePublicTransition = buildFactRoutingTransition(
@@ -2346,7 +2580,7 @@ const falsePublicTransition = buildFactRoutingTransition(
   falsePublicText,
 );
 assert.equal(falsePublicTransition.turn_facts[0].visibility, 'private', '没有公开传播措辞时不得接受 local_public');
-assert.match(falsePublicTransition.operation_stats.warnings.join('\n'), /没有明确公开传播证据/);
+assert.equal(falsePublicTransition.operation_stats.warnings.length, 0, '保守降级属于正常归一化，不应显示成警告');
 
 const explicitPublicText = '官府将巡防告示张贴在城门，围观百姓议论纷纷。';
 const explicitPublicTransition = buildFactRoutingTransition(
