@@ -6,7 +6,7 @@ import integratedStyles from './styles-integrated.raw?raw';
 (() => {
   'use strict';
 
-  const VERSION = '1.9.0';
+  const VERSION = '2.0.0';
   const RUNTIME_KEY = '__CMYJWorldEngineV1';
   const CHAT_STATE_KEY = 'cmyj_world_engine_v1';
   const BACKUP_SCRIPT_ID = 'cmyj-world-engine-backup-v1';
@@ -132,6 +132,12 @@ import integratedStyles from './styles-integrated.raw?raw';
     maxOutputTokens: 6000,
     assistantOutputChars: 14000,
   });
+  const WORLD_ROSTER_BUDGET = Object.freeze({
+    profileChars: 6500,
+    maxEntries: 64,
+    historyEntries: 96,
+  });
+  const WORLD_JOB_LANES = Object.freeze(['actor', 'actor', 'event', 'actor', 'hook']);
 
   const runtime = {
     mounted: true,
@@ -151,6 +157,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     integrityTimer: null,
     storageRecoveryCount: 0,
     storageWarningLogged: false,
+    rosterWarningLogged: false,
     isOpen: false,
     activeTab: 'overview',
     lamp: null,
@@ -473,6 +480,13 @@ import integratedStyles from './styles-integrated.raw?raw';
       updatedAt: nowIso(),
       lastProcessed: null,
       isolationCursor: 0,
+      worldSchedule: {
+        laneCursor: 0,
+        lastJobType: '',
+        lastJobId: '',
+        consecutiveCount: 0,
+        history: [],
+      },
       activeEvents: [],
       actors: [],
       intelPackets: [],
@@ -533,6 +547,35 @@ import integratedStyles from './styles-integrated.raw?raw';
     };
   }
 
+  function normalizeWorldSchedule(value) {
+    const source = value && typeof value === 'object' ? value : {};
+    const historyMap = new Map();
+    for (const item of asArray(source.history)) {
+      const id = asText(item?.id).slice(0, 120);
+      const type = ['actor', 'event', 'hook'].includes(asText(item?.type)) ? asText(item.type) : '';
+      if (!id || !type) continue;
+      historyMap.set(`${type}:${id}`, {
+        id,
+        type,
+        name: asText(item?.name).slice(0, 120),
+        lastEvolvedRevision: Math.max(
+          -1,
+          Math.floor(optionalFiniteNumber(item?.lastEvolvedRevision) ?? -1),
+        ),
+        evolutionCount: Math.max(0, Math.floor(Number(item?.evolutionCount) || 0)),
+      });
+    }
+    return {
+      laneCursor: Math.max(0, Math.floor(Number(source.laneCursor) || 0)) % WORLD_JOB_LANES.length,
+      lastJobType: ['actor', 'event', 'hook'].includes(asText(source.lastJobType))
+        ? asText(source.lastJobType)
+        : '',
+      lastJobId: asText(source.lastJobId).slice(0, 120),
+      consecutiveCount: Math.max(0, Math.floor(Number(source.consecutiveCount) || 0)),
+      history: [...historyMap.values()].slice(-WORLD_ROSTER_BUDGET.historyEntries),
+    };
+  }
+
   function normalizeState(raw, chatId = getCurrentChatId()) {
     if (!raw || typeof raw !== 'object' || Number(raw.version) !== 1 || (raw.chatId && raw.chatId !== chatId)) {
       return createEmptyState(chatId);
@@ -541,6 +584,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     state._storageRevision = Math.max(0, Math.floor(Number(state._storageRevision) || 0));
     state.currentWorldDays = Math.max(0, Number(state.currentWorldDays) || 0);
     state.isolationCursor = Math.max(0, Math.floor(Number(state.isolationCursor) || 0));
+    state.worldSchedule = normalizeWorldSchedule(state.worldSchedule);
     // 早期版本允许空字段和错误归类进入档案；读取时先做保守清理，避免脏数据继续喂给副模型。
     // 长期事实与世界摘要交给聊天记忆插件；旧档案读取时不再继续携带这些重复内容。
     delete state.facts;
@@ -927,6 +971,8 @@ import integratedStyles from './styles-integrated.raw?raw';
       createdAt: state.createdAt,
       updatedAt: state.updatedAt,
       lastProcessed: state.lastProcessed,
+      isolationCursor: state.isolationCursor,
+      worldSchedule: state.worldSchedule,
       activeEvents: state.activeEvents,
       actors: state.actors,
       intelPackets: state.intelPackets,
@@ -4094,33 +4140,103 @@ import integratedStyles from './styles-integrated.raw?raw';
     return `有限可见事实「${label}」：当前仅 ${witnesses.join('、')} 可据此行动，其他人物须等待告知或情报传播。`;
   }
 
-  function buildPersistentMainModelPacket(state, latestPacket = normalizePacket(state?.nextTurnPacket)) {
+  function mainModelRelevantActor(state, actor, focusText) {
+    return (
+      identityAppearsInText(actor, focusText) ||
+      actorListed(state?.scenePresence?.actors, actor) ||
+      locationsOverlap(actor?.location, state?.scenePresence?.location)
+    );
+  }
+
+  function mainModelRelevantRecord(state, record, focusText, fields) {
+    const values = fields.map(field => asText(record?.[field])).filter(Boolean);
+    if (values.some(value => normalizedPromptIdentity(focusText).includes(normalizedPromptIdentity(value)))) return true;
+    const relatedActors = asArray(record?.actors).filter(Boolean);
+    if (
+      relatedActors.some(name => {
+        const actor = asArray(state?.actors).find(item => actorListed([name], item));
+        return actor ? mainModelRelevantActor(state, actor, focusText) : identityAppearsInText({ name }, focusText);
+      })
+    ) {
+      return true;
+    }
+    return locationsOverlap(record?.location, state?.scenePresence?.location);
+  }
+
+  function filterMainModelPacket(state, rawPacket, focusText) {
+    const packet = normalizePacket(rawPacket);
+    const relevantActorNames = asArray(state?.actors)
+      .filter(actor => mainModelRelevantActor(state, actor, focusText))
+      .map(actor => actorDisplayName(actor));
+    const relevantEventLabels = asArray(state?.activeEvents)
+      .filter(event => mainModelRelevantRecord(state, event, focusText, ['title', 'summary', 'location']))
+      .flatMap(event => [event?.title, event?.summary]);
+    const relevantHookLabels = asArray(state?.hooks)
+      .filter(hook => mainModelRelevantRecord(state, hook, focusText, ['title', 'summary', 'trigger']))
+      .flatMap(hook => [hook?.title, hook?.summary]);
+    const visibleIntel = asArray(state?.intelPackets).filter(
+      intel =>
+        intelHasArrived(intel, state?.currentWorldDays) &&
+        (locationsOverlap(intel?.destination, state?.scenePresence?.location) ||
+          [intel?.content, intel?.origin, intel?.destination].some(value => {
+            const normalized = normalizedPromptIdentity(value);
+            return normalized && normalizedPromptIdentity(focusText).includes(normalized);
+          })),
+    );
+    const visibleIntelLabels = visibleIntel.flatMap(item => [item?.content, item?.origin, item?.destination]);
+    const packetItemRelevant = (item, labels) => packetMentionsIdentity([item], labels);
+    return normalizePacket({
+      offscreenMoves: packet.offscreenMoves.filter(item => packetItemRelevant(item, relevantActorNames)),
+      arrivingIntel: packet.arrivingIntel.filter(item => packetItemRelevant(item, visibleIntelLabels)),
+      intelInTransit: [],
+      npcKnowledge: packet.npcKnowledge.filter(item =>
+        relevantActorNames.some(name => comparableIdentity(name) === comparableIdentity(item?.name)),
+      ),
+      activePressures: packet.activePressures.filter(item => packetItemRelevant(item, relevantEventLabels)),
+      pendingConsequences: packet.pendingConsequences.filter(item => packetItemRelevant(item, relevantHookLabels)),
+      uncertainties: packet.uncertainties.filter(item => packetItemRelevant(item, visibleIntelLabels)),
+      constraints: packet.constraints,
+    });
+  }
+
+  function buildPersistentMainModelPacket(
+    state,
+    latestPacket = normalizePacket(state?.nextTurnPacket),
+    focusText = '',
+  ) {
     const latestIntel = [...latestPacket.arrivingIntel, ...latestPacket.intelInTransit, ...latestPacket.uncertainties];
     const latestActorNames = latestPacket.npcKnowledge.map(item => item.name);
     const actors = selectRecentPersistentRecords(
-      state?.actors,
+      asArray(state?.actors).filter(actor => mainModelRelevantActor(state, actor, focusText)),
       MAIN_MODEL_CONTEXT_LIMITS.persistentItems,
       item =>
         !packetMentionsIdentity(latestPacket.offscreenMoves, [item?.name]) &&
         !packetMentionsIdentity(latestActorNames, [item?.name]),
     );
     const events = selectRecentPersistentRecords(
-      state?.activeEvents,
+      asArray(state?.activeEvents).filter(event =>
+        mainModelRelevantRecord(state, event, focusText, ['title', 'summary', 'location']),
+      ),
       MAIN_MODEL_CONTEXT_LIMITS.persistentItems,
       item => !packetMentionsIdentity(latestPacket.activePressures, [item?.title, item?.summary]),
     );
     const hooks = selectRecentPersistentRecords(
-      state?.hooks,
+      asArray(state?.hooks).filter(hook =>
+        mainModelRelevantRecord(state, hook, focusText, ['title', 'summary', 'trigger']),
+      ),
       MAIN_MODEL_CONTEXT_LIMITS.persistentItems,
       item => !packetMentionsIdentity(latestPacket.pendingConsequences, [item?.title, item?.summary]),
     );
-    const intelInTransit = selectRecentPersistentRecords(
-      state?.intelPackets,
-      MAIN_MODEL_CONTEXT_LIMITS.persistentItems,
-      item => !intelHasArrived(item, state?.currentWorldDays) && !packetMentionsIdentity(latestIntel, [item?.content]),
-    );
     const uncertainties = selectRecentPersistentRecords(
-      state?.intelPackets,
+      asArray(state?.intelPackets).filter(
+        intel =>
+          intelHasArrived(intel, state?.currentWorldDays) &&
+          (locationsOverlap(intel?.destination, state?.scenePresence?.location) ||
+            [intel?.content, intel?.origin, intel?.destination].some(value => {
+              const normalized = normalizedPromptIdentity(value);
+              return normalized && normalizedPromptIdentity(focusText).includes(normalized);
+            })),
+      ),
       MAIN_MODEL_CONTEXT_LIMITS.persistentItems,
       item =>
         Number(item?.reliability) > 0 &&
@@ -4130,7 +4246,7 @@ import integratedStyles from './styles-integrated.raw?raw';
     return normalizePacket({
       offscreenMoves: actors.map(actorPacketLabel).filter(Boolean),
       arrivingIntel: [],
-      intelInTransit: intelInTransit.map(intelPacketLabel).filter(Boolean),
+      intelInTransit: [],
       npcKnowledge: actors
         .map(actorKnowledgePacket)
         .filter(item => item.name && (item.knows.length || item.doesNotKnow.length)),
@@ -4646,6 +4762,7 @@ import integratedStyles from './styles-integrated.raw?raw';
       parallel_scenes: [],
       current_world_days: Math.max(0, Number(currentWorldDays) || 0),
       isolation_cursor: null,
+      world_schedule: null,
       operation_stats: { accepted: 0, rejected: 0, knowledgeRejected: 0, warnings: [] },
     };
   }
@@ -4860,6 +4977,224 @@ import integratedStyles from './styles-integrated.raw?raw';
     return transition;
   }
 
+  function normalizedWorldbookEntry(raw, worldbookName) {
+    const uid = Number(raw?.uid ?? raw?.id);
+    const name = asText(raw?.name || raw?.comment || raw?.title).slice(0, 160);
+    const content = asText(raw?.content || raw?.text);
+    const keys = asArray(raw?.strategy?.keys || raw?.keys || raw?.key || raw?.keywords)
+      .filter(value => typeof value === 'string')
+      .map(value => asText(value).slice(0, 100))
+      .filter(Boolean);
+    return {
+      uid: Number.isFinite(uid) ? uid : -1,
+      name,
+      content,
+      keys,
+      enabled: raw?.enabled !== false && raw?.disable !== true,
+      worldbookName: asText(worldbookName),
+    };
+  }
+
+  function worldbookActorName(entry) {
+    const contentName =
+      entry?.content.match(/(?:^|\n)\s*character\s*:\s*["']?([^\n"']{1,100})["']?\s*(?:\n|$)/iu)?.[1] || '';
+    const entryName = asText(entry?.name)
+      .replace(/^(?:\[.*?\]\s*)+/u, '')
+      .replace(/_(?:SFW|NSFW)\s*$/iu, '')
+      .trim();
+    return firstOperationText(contentName, entry?.keys?.[0], entryName).slice(0, 100);
+  }
+
+  function worldbookProfileField(content, labels) {
+    for (const label of labels) {
+      const escaped = String(label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const match = asText(content).match(
+        new RegExp(`(?:^|\\n)\\s*${escaped}\\s*:\\s*(?:\\|\\s*)?(?:\\n\\s*)?([^\\n]{1,240})`, 'iu'),
+      );
+      const value = asText(match?.[1])
+        .replace(/^[-"'“”]+|[-"'“”]+$/gu, '')
+        .trim();
+      if (value) return value;
+    }
+    return '';
+  }
+
+  function actorProfileFromEntry(entry) {
+    const name = worldbookActorName(entry);
+    if (!name) return null;
+    const content = promptExcerpt(entry.content, WORLD_ROSTER_BUDGET.profileChars);
+    const aliases = uniqueTextList([name, ...asArray(entry.keys)], 12, 100);
+    return {
+      key: `${entry.worldbookName}:${entry.uid}`,
+      actorId: stableId('AC', name),
+      name,
+      aliases,
+      worldbookName: entry.worldbookName,
+      entryUid: entry.uid,
+      entryName: entry.name,
+      profileHash: hashText(entry.content),
+      content,
+      location: worldbookProfileField(content, ['居住', '所在地', '当前地点']),
+      occupation: worldbookProfileField(content, ['职业', '身份']),
+      goal: worldbookProfileField(content, ['近期目标', '当前目标', '核心目标', '目标', '欲望', '驱动力']),
+    };
+  }
+
+  function extractActorProfilesFromWorldbook(rawEntries, worldbookName) {
+    const entries = asArray(rawEntries).map(entry => normalizedWorldbookEntry(entry, worldbookName));
+    const hasSectionMarkers = entries.some(entry => /===\s*角色开始\s*===/u.test(entry.name));
+    let insideActorSection = !hasSectionMarkers;
+    const profiles = [];
+    for (const entry of entries) {
+      if (/===\s*角色开始\s*===/u.test(entry.name)) {
+        insideActorSection = true;
+        continue;
+      }
+      if (/===\s*角色结束\s*===/u.test(entry.name)) {
+        insideActorSection = false;
+        continue;
+      }
+      if (!insideActorSection || !entry.enabled || !entry.content) continue;
+      const looksLikeActor =
+        /(?:^|\n)\s*character\s*:/iu.test(entry.content) || /_(?:SFW|NSFW)\s*$/iu.test(entry.name);
+      if (!hasSectionMarkers && !looksLikeActor) continue;
+      const profile = actorProfileFromEntry(entry);
+      if (profile) profiles.push(profile);
+    }
+    return profiles;
+  }
+
+  async function resolveCharacterWorldbookNames() {
+    const official = api('getCharWorldbookNames');
+    const legacy = api('getCharLorebooks');
+    const reader = typeof official === 'function' ? official : legacy;
+    if (typeof reader !== 'function') return [];
+    const currentCharacter =
+      api('getCurrentCharacterId')?.() || api('getCurrentCharacterName')?.() || 'current';
+    let binding;
+    try {
+      binding = await Promise.resolve(reader('current'));
+    } catch {
+      binding = await Promise.resolve(reader(currentCharacter));
+    }
+    if (!binding?.primary && legacy === reader && currentCharacter !== 'current') {
+      try {
+        binding = await Promise.resolve(reader(currentCharacter));
+      } catch {
+        /* 保留第一次返回 */
+      }
+    }
+    return uniqueTextList([binding?.primary, ...asArray(binding?.additional)], 12, 160);
+  }
+
+  async function loadWorldActorRoster() {
+    const getWorldbook = api('getWorldbook') || api('getLorebookEntries');
+    if (typeof getWorldbook !== 'function') return [];
+    try {
+      const worldbookNames = await resolveCharacterWorldbookNames();
+      const profiles = [];
+      for (const worldbookName of worldbookNames) {
+        const raw = await Promise.resolve(getWorldbook(worldbookName));
+        const entries = Array.isArray(raw) ? raw : Object.values(raw || {});
+        profiles.push(...extractActorProfilesFromWorldbook(entries, worldbookName));
+      }
+      const map = new Map();
+      for (const profile of profiles) {
+        const key = comparableIdentity(profile.name);
+        if (!key) continue;
+        const previous = map.get(key);
+        if (!previous || /_SFW\s*$/iu.test(profile.entryName)) map.set(key, profile);
+      }
+      runtime.rosterWarningLogged = false;
+      return [...map.values()].slice(0, WORLD_ROSTER_BUDGET.maxEntries);
+    } catch (error) {
+      if (!runtime.rosterWarningLogged) {
+        runtime.rosterWarningLogged = true;
+        console.warn('[天下演化] 角色世界书名册暂不可用，将继续推进既有天下档案。', error);
+      }
+      return [];
+    }
+  }
+
+  function actorRecordFromProfile(profile, currentWorldDays = 0) {
+    const occupation = asText(profile?.occupation);
+    const location = asText(profile?.location) || '原有生活地点';
+    const goal =
+      asText(profile?.goal) || (occupation ? `履行${occupation}的职责并维持自身生活` : '维持自身生活与未竟目标');
+    return {
+      id: asText(profile?.actorId, stableId('AC', profile?.name)),
+      name: asText(profile?.name),
+      location,
+      groups: occupation ? [occupation] : [],
+      goal,
+      currentAction: occupation ? `处理${occupation}的日常事务` : '沿既有生活轨迹处理自己的事务',
+      knowledge: [],
+      doesNotKnow: [],
+      knowledgeLedger: [],
+      nextDecision: goal,
+      updatedReason: '由已启用的角色世界书名册建立独立行动档案',
+      causeType: 'autonomous',
+      causeId: asText(profile?.actorId, stableId('AC', profile?.name)),
+      basisIds: [asText(profile?.actorId, stableId('AC', profile?.name))],
+      nextDueWorldDays: Math.max(0, Number(currentWorldDays) || 0),
+    };
+  }
+
+  function jobHistory(state, type, id) {
+    return (
+      asArray(state?.worldSchedule?.history).find(
+        item => item?.type === type && String(item?.id) === String(id),
+      ) || {
+        lastEvolvedRevision: -1,
+        evolutionCount: 0,
+      }
+    );
+  }
+
+  function profileLocationAffinity(profile, location) {
+    const source = normalizedKnowledgeText(location).slice(0, 80);
+    const target = normalizedKnowledgeText(`${profile?.location || ''} ${profile?.content || ''}`);
+    if (!source || !target) return 0;
+    for (let size = Math.min(8, source.length); size >= 2; size -= 1) {
+      for (let index = 0; index <= source.length - size; index += 1) {
+        const fragment = source.slice(index, index + size);
+        if (target.includes(fragment)) return size;
+      }
+    }
+    return 0;
+  }
+
+  function isolationLocationAllowed(job, location) {
+    const recordLocation = asText(job?.record?.location);
+    const profileLocation = asText(job?.profile?.location);
+    if (!recordLocation || !asText(location)) return true;
+    if (locationsOverlap(location, recordLocation) || locationsOverlap(location, profileLocation)) return true;
+    return profileLocationAffinity({ location: `${recordLocation} ${profileLocation}` }, location) >= 3;
+  }
+
+  function markWorldSchedule(state, job, revision) {
+    const previous = normalizeWorldSchedule(state?.worldSchedule);
+    if (!job) return previous;
+    const key = `${job.type}:${job.id}`;
+    const map = new Map(previous.history.map(item => [`${item.type}:${item.id}`, item]));
+    const old = map.get(key);
+    map.set(key, {
+      id: job.id,
+      type: job.type,
+      name: job.label,
+      lastEvolvedRevision: Math.max(0, Number(revision) || 0),
+      evolutionCount: Math.max(0, Number(old?.evolutionCount) || 0) + 1,
+    });
+    const sameJob = previous.lastJobType === job.type && String(previous.lastJobId) === String(job.id);
+    return normalizeWorldSchedule({
+      laneCursor: (Math.max(0, Number(job.scheduleLaneIndex) || 0) + 1) % WORLD_JOB_LANES.length,
+      lastJobType: job.type,
+      lastJobId: job.id,
+      consecutiveCount: sameJob ? previous.consecutiveCount + 1 : 1,
+      history: [...map.values()],
+    });
+  }
+
   function actorGroupsMatchFact(actor, fact) {
     const targets = uniqueTextList(fact?.targetGroups || fact?.target_groups, 16, 100).map(comparableIdentity);
     if (!targets.length) return true;
@@ -4913,27 +5248,76 @@ import integratedStyles from './styles-integrated.raw?raw';
     return { facts, arrivedIntel, ledger, relatedEvents, allowedSourceIds };
   }
 
-  function buildIsolationJobs(state, routedFactIds = []) {
+  function buildIsolationJobs(state, routedFactIds = [], rosterProfiles = []) {
     const routed = new Set(asArray(routedFactIds).map(String));
     const visibleActors = uniqueTextList(state?.scenePresence?.actors, 32, 100);
     const actorIsOnStage = actor => actorListed(visibleActors, actor);
-    const actorJobs = asArray(state?.actors)
-      .filter(actor => !actorIsOnStage(actor))
-      .map(actor => {
-        const knowledge = actorIsolationKnowledge(state, actor);
-        const hasFreshFact = knowledge.facts.some(fact => routed.has(String(fact.id)));
-        const dueAt = optionalFiniteNumber(actor?.nextDueWorldDays ?? actor?.next_due_world_days);
-        return {
-          type: 'actor',
-          id: asText(actor?.id),
-          label: actorDisplayName(actor),
-          record: actor,
-          knowledge,
-          priority: hasFreshFact ? 0 : dueAt != null && dueAt <= Number(state?.currentWorldDays || 0) ? 1 : 3,
-          allowedSceneActors: [actorDisplayName(actor)],
-          allowedCreateCollections: ['events', 'intel', 'hooks'],
-        };
+    const profilesByName = new Map(
+      asArray(rosterProfiles)
+        .map(profile => [comparableIdentity(profile?.name), profile])
+        .filter(([key]) => key),
+    );
+    const actorMap = new Map();
+    for (const actor of asArray(state?.actors)) {
+      actorMap.set(comparableIdentity(actorDisplayName(actor)), actor);
+    }
+    const actorJobs = [];
+    for (const actor of asArray(state?.actors)) {
+      if (actorIsOnStage(actor)) continue;
+      const profile = profilesByName.get(comparableIdentity(actorDisplayName(actor))) || null;
+      const knowledge = actorIsolationKnowledge(state, actor);
+      const hasFreshFact = knowledge.facts.some(fact => routed.has(String(fact.id)));
+      const dueAt = optionalFiniteNumber(actor?.nextDueWorldDays ?? actor?.next_due_world_days);
+      const history = jobHistory(state, 'actor', actor.id);
+      actorJobs.push({
+        type: 'actor',
+        id: asText(actor?.id),
+        label: actorDisplayName(actor),
+        record: actor,
+        knowledge,
+        profile,
+        isRosterSeed: false,
+        hasFreshFact,
+        isDue: dueAt == null || dueAt <= Number(state?.currentWorldDays || 0),
+        lastEvolvedRevision: Number(history.lastEvolvedRevision ?? -1),
+        evolutionCount: Number(history.evolutionCount || 0),
+        locationAffinity: Math.max(
+          locationsOverlap(actor?.location, state?.scenePresence?.location) ? 8 : 0,
+          profileLocationAffinity(profile, state?.scenePresence?.location),
+        ),
+        allowedSceneActors: [actorDisplayName(actor)],
+        allowedCreateCollections: ['events', 'intel', 'hooks'],
       });
+    }
+    for (const profile of asArray(rosterProfiles)) {
+      if (!profile?.name || actorMap.has(comparableIdentity(profile.name)) || actorIsOnStage({ name: profile.name })) {
+        continue;
+      }
+      const actor = actorRecordFromProfile(profile, state?.currentWorldDays);
+      const history = jobHistory(state, 'actor', actor.id);
+      actorJobs.push({
+        type: 'actor',
+        id: actor.id,
+        label: actor.name,
+        record: actor,
+        knowledge: {
+          facts: [],
+          arrivedIntel: [],
+          ledger: [],
+          relatedEvents: [],
+          allowedSourceIds: [actor.id],
+        },
+        profile,
+        isRosterSeed: true,
+        hasFreshFact: false,
+        isDue: true,
+        lastEvolvedRevision: Number(history.lastEvolvedRevision ?? -1),
+        evolutionCount: Number(history.evolutionCount || 0),
+        locationAffinity: profileLocationAffinity(profile, state?.scenePresence?.location),
+        allowedSceneActors: [actor.name],
+        allowedCreateCollections: ['events', 'intel', 'hooks'],
+      });
+    }
     const eventJobs = asArray(state?.activeEvents)
       .filter(event => {
         const participants = uniqueTextList(event?.actors, 24, 100);
@@ -4941,60 +5325,103 @@ import integratedStyles from './styles-integrated.raw?raw';
           visibleActors.some(visible => comparableIdentity(visible) === comparableIdentity(name)),
         );
       })
-      .map(event => ({
-        type: 'event',
-        id: asText(event?.id),
-        label: asText(event?.title),
-        record: event,
-        knowledge: { facts: [], arrivedIntel: [], ledger: [], relatedEvents: [], allowedSourceIds: [event?.id] },
-        priority: 4,
-        allowedSceneActors: uniqueTextList(event?.actors, 12, 100),
-        allowedCreateCollections: ['hooks'],
-      }));
-    const hookJobs = asArray(state?.hooks).map(hook => ({
-      type: 'hook',
-      id: asText(hook?.id),
-      label: asText(hook?.title),
-      record: hook,
-      knowledge: { facts: [], arrivedIntel: [], ledger: [], relatedEvents: [], allowedSourceIds: [hook?.id] },
-      priority: 5,
-      allowedSceneActors: [],
-      allowedCreateCollections: [],
-    }));
+      .map(event => {
+        const history = jobHistory(state, 'event', event?.id);
+        return {
+          type: 'event',
+          id: asText(event?.id),
+          label: asText(event?.title),
+          record: event,
+          knowledge: { facts: [], arrivedIntel: [], ledger: [], relatedEvents: [], allowedSourceIds: [event?.id] },
+          lastEvolvedRevision: Number(history.lastEvolvedRevision ?? -1),
+          evolutionCount: Number(history.evolutionCount || 0),
+          allowedSceneActors: uniqueTextList(event?.actors, 12, 100),
+          allowedCreateCollections: ['hooks'],
+        };
+      });
+    const hookJobs = asArray(state?.hooks).map(hook => {
+      const history = jobHistory(state, 'hook', hook?.id);
+      return {
+        type: 'hook',
+        id: asText(hook?.id),
+        label: asText(hook?.title),
+        record: hook,
+        knowledge: { facts: [], arrivedIntel: [], ledger: [], relatedEvents: [], allowedSourceIds: [hook?.id] },
+        lastEvolvedRevision: Number(history.lastEvolvedRevision ?? -1),
+        evolutionCount: Number(history.evolutionCount || 0),
+        allowedSceneActors: [],
+        allowedCreateCollections: [],
+      };
+    });
     return [...actorJobs, ...eventJobs, ...hookJobs].filter(job => job.id && job.label);
   }
 
-  function selectIsolationJob(state, routedFactIds = []) {
-    const jobs = buildIsolationJobs(state, routedFactIds);
+  function selectIsolationJob(state, routedFactIds = [], rosterProfiles = []) {
+    const jobs = buildIsolationJobs(state, routedFactIds, rosterProfiles);
     if (!jobs.length) return null;
-    const bestPriority = Math.min(...jobs.map(job => job.priority));
-    const eligible = jobs
-      .filter(job => job.priority === bestPriority)
-      .sort((left, right) => `${left.type}:${left.id}`.localeCompare(`${right.type}:${right.id}`, 'zh-CN'));
-    const cursor = Math.max(0, Number(state?.isolationCursor) || 0);
-    return eligible[cursor % eligible.length];
+    const schedule = normalizeWorldSchedule(state?.worldSchedule);
+    let laneIndex = schedule.laneCursor;
+    let eligible = [];
+    for (let offset = 0; offset < WORLD_JOB_LANES.length; offset += 1) {
+      const candidateIndex = (schedule.laneCursor + offset) % WORLD_JOB_LANES.length;
+      const candidateType = WORLD_JOB_LANES[candidateIndex];
+      const candidates = jobs.filter(job => job.type === candidateType);
+      if (!candidates.length) continue;
+      laneIndex = candidateIndex;
+      eligible = candidates;
+      break;
+    }
+    if (!eligible.length) return null;
+    eligible.sort((left, right) => {
+      const leftRepeated =
+        schedule.lastJobType === left.type && String(schedule.lastJobId) === String(left.id)
+          ? schedule.consecutiveCount
+          : 0;
+      const rightRepeated =
+        schedule.lastJobType === right.type && String(schedule.lastJobId) === String(right.id)
+          ? schedule.consecutiveCount
+          : 0;
+      const leftDistancePenalty = left.type === 'actor' && Number(left.locationAffinity || 0) < 2 ? 5 : 0;
+      const rightDistancePenalty = right.type === 'actor' && Number(right.locationAffinity || 0) < 2 ? 5 : 0;
+      const leftFairness = Number(left.lastEvolvedRevision ?? -1) + leftDistancePenalty;
+      const rightFairness = Number(right.lastEvolvedRevision ?? -1) + rightDistancePenalty;
+      return (
+        Number(Boolean(right.hasFreshFact)) - Number(Boolean(left.hasFreshFact)) ||
+        Number(leftRepeated >= 2) - Number(rightRepeated >= 2) ||
+        leftFairness - rightFairness ||
+        Number(right.locationAffinity || 0) - Number(left.locationAffinity || 0) ||
+        Number(left.evolutionCount || 0) - Number(right.evolutionCount || 0) ||
+        `${left.type}:${left.id}`.localeCompare(`${right.type}:${right.id}`, 'zh-CN')
+      );
+    });
+    return { ...eligible[0], scheduleLaneIndex: laneIndex };
   }
 
   function isolatedSystemPrompt(job) {
     const actorRule =
       job?.type === 'actor'
-        ? `本轮只允许推进人物「${job.label}」。不得替其他具名人物作决定，也不得假定其他人物知道本任务未提供的信息。`
+        ? `本轮只允许推进人物「${job.label}」。这是一次已经轮到该人物的生活心跳，不是可有可无的候选生成：
+1. 必须沿用 record.currentAction、record.nextDecision 和已有档案继续推进，不能把人物重新初始化，也不能突然换成无关目标。
+2. 必须至少 merge 一次该人物的 currentAction、nextDecision 或 updatedReason，并生成一段与该变化相连的 scenes。日常工作、准备、交际、赶路中的一步、犹豫和休息，只要改变了行动进度或下一决定，都是有效推进。
+3. SELF_PROFILE 只定义该人物自己的身份、经历、性格、关系背景和行动约束。它不是本轮新消息，也不能让人物凭空知道别处正在发生的事。
+4. 不得替其他具名人物作决定；场景中的无名路人、伙计或差役只能作为环境反应，不能携带本任务未提供的秘密。`
         : job?.type === 'event'
-          ? `本轮只允许推进事件「${job.label}」的既有客观进程。不得生成未由事件记录支持的人物认知变化。`
-          : `本轮只允许推进伏线「${job?.label || ''}」的条件状态。`;
+          ? `本轮只允许推进事件「${job.label}」的既有客观进程。必须沿用已有 stage、summary 与 nextTrigger 推进一步；不得生成未由事件记录支持的人物认知变化。若存在 LICENSE.allowedSceneActors，应生成一段直接展示这次变化的 scenes。`
+          : `本轮只允许推进伏线「${job?.label || ''}」的条件状态。必须根据已有 trigger 与 failCondition 更新一次条件状态，不得凭空兑现结果。`;
     return `你是《残明余烬》的隔离世界模拟器。程序已经替你完成事实分流；你只会看到当前任务合法可用的信息。
 
 ${actorRule}
 
 硬边界：
-1. ISOLATED_CONTEXT 是本任务的全部可知范围。没有出现的事实、正文、秘密、世界书内容和其他人物状态一律不可使用、不可猜测。
-2. 只提交相对于当前记录真正发生的少量增量；可以返回空 changes 和空 scenes。
+1. 本次 JSON 载荷就是 ISOLATED_CONTEXT。除其中 SELF_PROFILE、authorizedFacts、knownClaims、arrivedMessages 和 relatedEvents 外，没有出现的正文、秘密、世界书内容和其他人物状态一律不可使用、不可猜测。
+2. 只提交相对于当前记录真正发生的少量增量。当前任务已经由公平调度器判定为到期，不能用空 changes 逃避推进。
 3. merge/delete 只能使用 LICENSE.existingTarget；create 只能使用 LICENSE.allowedCreateCollections。
 4. causeId、basisIds、sourceFactIds 只能逐字选择 LICENSE.allowedSourceIds。
 5. 新建消息表示刚刚发出，status 必须为 in_transit；不得声称接收者已经收到。
 6. scenes 只能展示本任务变化的过程或直接结果，出场人物只能来自 LICENSE.allowedSceneActors。
 7. 人物只能在自身 location 直接行动。异地消息只能引发本地决策、出发、命令或新的在途通信，不能让远方结果立刻发生。
-8. 不得输出检查过程，不得复述输入，也不得生成玩家当前视角正文。
+8. 旁线正文要把人物当作独立生活的人来写，但不得逐条复述 SELF_PROFILE，也不得生成玩家当前视角正文。
+9. 不得输出检查过程。
 
 只返回符合 JSON Schema 的对象。`;
   }
@@ -5023,10 +5450,26 @@ ${actorRule}
       schema_version: 3,
       base_revision: Number(state?.revision) || 0,
       clock: { currentWorldDays: Number(state?.currentWorldDays) || 0 },
+      SELF_PROFILE:
+        job?.type === 'actor' && job?.profile
+          ? {
+              source: {
+                worldbook: job.profile.worldbookName,
+                entryUid: job.profile.entryUid,
+                entryName: job.profile.entryName,
+                profileHash: job.profile.profileHash,
+              },
+              rule: '这是当前人物自己的静态人设与生平约束，不是别处的实时情报；不得在旁线中复述设定文本。',
+              content: promptExcerpt(job.profile.content, WORLD_ROSTER_BUDGET.profileChars),
+            }
+          : null,
       job: {
         type: job.type,
         id: job.id,
         label: job.label,
+        isRosterSeed: Boolean(job.isRosterSeed),
+        lastEvolvedRevision: Number(job.lastEvolvedRevision ?? -1),
+        evolutionCount: Number(job.evolutionCount || 0),
         record:
           job.type === 'actor'
             ? actor
@@ -5143,12 +5586,14 @@ ${actorRule}
           base_revision: { type: 'integer', minimum: 0 },
           changes: {
             type: 'array',
+            minItems: 1,
             maxItems: 8,
             items: { anyOf: variants },
           },
           scenes: {
             type: 'array',
-            maxItems: 2,
+            minItems: job?.type === 'actor' || (job?.type === 'event' && job.allowedSceneActors.length) ? 1 : 0,
+            maxItems: job?.type === 'actor' ? 1 : 2,
             items: {
               type: 'object',
               additionalProperties: false,
@@ -5230,7 +5675,12 @@ ${actorRule}
 
   function normalizeIsolatedChangePayload(collection, rawPayload) {
     if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) return {};
-    const payload = { ...rawPayload };
+    const nestedRecord =
+      rawPayload?.record && typeof rawPayload.record === 'object' && !Array.isArray(rawPayload.record)
+        ? rawPayload.record
+        : {};
+    const payload = { ...rawPayload, ...nestedRecord };
+    delete payload.record;
     const basisIds = uniqueTextList(
       [
         payload?.causeId,
@@ -5242,17 +5692,26 @@ ${actorRule}
       100,
     );
     if (collection === 'events') {
-      payload.title ||= firstOperationText(payload.label, payload.name);
-      payload.summary ||= firstOperationText(payload.description, payload.body);
-      payload.nextTrigger ||= firstOperationText(payload.next_trigger, payload.trigger);
+      const title = firstOperationText(payload.label, payload.name);
+      const summary = firstOperationText(payload.description, payload.body);
+      const nextTrigger = firstOperationText(payload.next_trigger, payload.trigger);
+      if (!asText(payload.title) && title) payload.title = title;
+      if (!asText(payload.summary) && summary) payload.summary = summary;
+      if (!asText(payload.nextTrigger) && nextTrigger) payload.nextTrigger = nextTrigger;
       if (!asArray(payload.sourceFactIds).length && basisIds.length) payload.sourceFactIds = basisIds;
     } else if (collection === 'actors') {
-      payload.name ||= asText(payload.label);
-      payload.currentAction ||= firstOperationText(payload.current_action, payload.action);
-      payload.nextDecision ||= firstOperationText(payload.next_decision, payload.nextAction);
-      payload.updatedReason ||= firstOperationText(payload.updated_reason, payload.reason, payload.description);
-      payload.causeType ||= asText(payload.cause_type);
-      payload.causeId ||= asText(payload.cause_id);
+      const name = asText(payload.label);
+      const currentAction = firstOperationText(payload.current_action, payload.action);
+      const nextDecision = firstOperationText(payload.next_decision, payload.nextAction);
+      const updatedReason = firstOperationText(payload.updated_reason, payload.reason, payload.description);
+      const causeType = asText(payload.cause_type);
+      const causeId = asText(payload.cause_id);
+      if (!asText(payload.name) && name) payload.name = name;
+      if (!asText(payload.currentAction) && currentAction) payload.currentAction = currentAction;
+      if (!asText(payload.nextDecision) && nextDecision) payload.nextDecision = nextDecision;
+      if (!asText(payload.updatedReason) && updatedReason) payload.updatedReason = updatedReason;
+      if (!asText(payload.causeType) && causeType) payload.causeType = causeType;
+      if (!asText(payload.causeId) && causeId) payload.causeId = causeId;
       if (!asArray(payload.basisIds).length && basisIds.length) payload.basisIds = basisIds;
     } else if (collection === 'intel') {
       payload.content ||= firstOperationText(payload.description, payload.summary, payload.message);
@@ -5266,15 +5725,21 @@ ${actorRule}
       payload.departedWorldDays ??= payload.departed_world_days;
       payload.availableAfterWorldDays ??= payload.available_after_world_days;
     } else if (collection === 'hooks') {
-      payload.title ||= firstOperationText(payload.label, payload.name);
-      payload.summary ||= firstOperationText(payload.description, payload.body);
+      const title = firstOperationText(payload.label, payload.name);
+      const summary = firstOperationText(payload.description, payload.body);
+      if (!asText(payload.title) && title) payload.title = title;
+      if (!asText(payload.summary) && summary) payload.summary = summary;
       payload.visibleSigns ||= payload.visible_signs;
       payload.failCondition ||= payload.fail_condition;
       if (!asArray(payload.sourceFactIds).length && basisIds.length) payload.sourceFactIds = basisIds;
     }
     const fields = V3_CHANGE_FIELDS[collection];
     if (!fields) return {};
-    return Object.fromEntries(Object.entries(payload).filter(([key, value]) => fields.has(key) && value != null));
+    return Object.fromEntries(
+      Object.entries(payload).filter(
+        ([key, value]) => fields.has(key) && value != null && (typeof value !== 'string' || Boolean(value.trim())),
+      ),
+    );
   }
 
   function sanitizeIsolatedResult(result, job, baseState) {
@@ -5313,7 +5778,7 @@ ${actorRule}
           if (
             job?.type === 'actor' &&
             asText(payload?.location) &&
-            !locationsOverlap(payload.location, job?.record?.location)
+            !isolationLocationAllowed(job, payload.location)
           ) {
             delete next.changes.location;
           }
@@ -5325,7 +5790,7 @@ ${actorRule}
           collection === 'events' &&
           job?.type === 'actor' &&
           asText(payload?.location) &&
-          !locationsOverlap(payload.location, job?.record?.location)
+          !isolationLocationAllowed(job, payload.location)
         ) {
           return;
         }
@@ -5352,22 +5817,36 @@ ${actorRule}
       sourceIndexes.set(sourceIndex, changes.length);
       changes.push(next);
     });
+    const actorMergeIndex =
+      job?.type === 'actor'
+        ? changes.findIndex(
+            change =>
+              change?.op === 'merge' &&
+              change?.target?.collection === 'actors' &&
+              String(change?.target?.id) === String(job?.id),
+          )
+        : -1;
     const scenes = asArray(normalized.scenes)
       .map(scene => {
         const references = asArray(scene?.based_on);
-        if (!references.length || references.some(index => !sourceIndexes.has(index))) return null;
+        if (!references.length) return null;
+        const mappedReferences = references
+          .filter(index => sourceIndexes.has(index))
+          .map(index => sourceIndexes.get(index));
+        if (!mappedReferences.length && actorMergeIndex >= 0) mappedReferences.push(actorMergeIndex);
+        if (!mappedReferences.length) return null;
         const actors = uniqueTextList(scene?.actors, 12, 100);
         if (
           ['actor', 'event'].includes(job?.type) &&
           asText(job?.record?.location) &&
-          !locationsOverlap(scene?.location, job.record.location)
+          !isolationLocationAllowed(job, scene?.location)
         ) {
           return null;
         }
         if (actors.some(actor => !allowedSceneActors.size || !allowedSceneActors.has(comparableIdentity(actor)))) {
           return null;
         }
-        return { ...scene, based_on: references.map(index => sourceIndexes.get(index)) };
+        return { ...scene, based_on: [...new Set(mappedReferences)] };
       })
       .filter(Boolean)
       .slice(0, 2);
@@ -6595,6 +7074,8 @@ ${actorRule}
       next_turn_packet: {},
       parallel_scenes: [],
       current_world_days: currentWorldDays,
+      isolation_cursor: null,
+      world_schedule: null,
       operation_stats: { accepted: 0, rejected: 0, knowledgeRejected: 0, warnings: [] },
     };
     const stats = transition.operation_stats;
@@ -6843,6 +7324,9 @@ ${actorRule}
     state.isolationCursor =
       optionalFiniteNumber(source.isolation_cursor ?? source.isolationCursor) ??
       Math.max(0, Number(baseState?.isolationCursor) || 0);
+    state.worldSchedule = normalizeWorldSchedule(
+      source.world_schedule ?? source.worldSchedule ?? baseState?.worldSchedule,
+    );
 
     const resolvedEvents = new Set(asArray(source.resolve_event_ids).map(String));
     state.activeEvents = asArray(state.activeEvents).filter(item => !resolvedEvents.has(String(item.id)));
@@ -7086,6 +7570,11 @@ ${actorRule}
         ? routing.scene_presence
         : evolution.scene_presence;
     combined.parallel_scenes = asArray(evolution.parallel_scenes);
+    combined.isolation_cursor =
+      optionalFiniteNumber(evolution.isolation_cursor ?? evolution.isolationCursor) ??
+      optionalFiniteNumber(routing.isolation_cursor ?? routing.isolationCursor);
+    combined.world_schedule =
+      evolution.world_schedule ?? evolution.worldSchedule ?? routing.world_schedule ?? routing.worldSchedule ?? null;
     combined.operation_stats = {
       accepted: Number(routing.operation_stats?.accepted || 0) + Number(evolution.operation_stats?.accepted || 0),
       rejected: Number(routing.operation_stats?.rejected || 0) + Number(evolution.operation_stats?.rejected || 0),
@@ -7166,15 +7655,9 @@ ${actorRule}
         ...asArray(item?.doesNotKnow),
       ]),
     ].join('\n');
-    const direct = actors.filter(actor => identityAppearsInText(actor, focusText));
+    const direct = actors.filter(actor => mainModelRelevantActor(state, actor, focusText));
     const packetActors = actors.filter(actor => identityAppearsInText(actor, packetText));
-    const scored = selectRelevantRecords(
-      actors,
-      `${focusText}\n${packetText}`,
-      MAIN_MODEL_CONTEXT_LIMITS.relevantKnowledgeActors,
-      ['id', 'name', 'location', 'goal', 'currentAction', 'knowledge', 'doesNotKnow', 'knowledgeLedger'],
-    );
-    return mergeRecords([...direct, ...packetActors], scored, MAIN_MODEL_CONTEXT_LIMITS.relevantKnowledgeActors);
+    return mergeRecords(direct, packetActors, MAIN_MODEL_CONTEXT_LIMITS.relevantKnowledgeActors);
   }
 
   function knowledgeFactLabel(item) {
@@ -7247,10 +7730,26 @@ ${actorRule}
     return `当前相关人物的知识权限卡（硬约束）:\n${cards.join('\n\n')}`;
   }
 
-  function formatSecretRegistry(state) {
+  function formatSecretRegistry(state, focusText = '') {
     const priority = { critical: 0, high: 1, normal: 2 };
+    const relevantActors = asArray(state?.actors)
+      .filter(actor => mainModelRelevantActor(state, actor, focusText))
+      .map(actor => actorDisplayName(actor));
     const secrets = asArray(state?.secrets)
       .filter(secret => ['hidden', 'compromised'].includes(asText(secret?.status)))
+      .filter(secret => {
+        const holders = uniqueTextList(secret?.holders, 30, 100);
+        const focus = normalizedPromptIdentity(focusText);
+        const identities = [secret?.id, secret?.title, secret?.sourceId]
+          .map(normalizedPromptIdentity)
+          .filter(value => value.length >= 2);
+        return (
+          identities.some(identity => focus.includes(identity)) ||
+          holders.some(holder =>
+            relevantActors.some(actor => comparableIdentity(actor) === comparableIdentity(holder)),
+          )
+        );
+      })
       .sort(
         (left, right) =>
           (priority[asText(left?.level)] ?? 9) - (priority[asText(right?.level)] ?? 9) ||
@@ -7272,11 +7771,11 @@ ${actorRule}
   }
 
   function buildMainModelInjection(state, focusText = recentConversationFocusText()) {
-    const packet = normalizePacket(state.nextTurnPacket);
-    const persistentPacket = buildPersistentMainModelPacket(state, packet);
+    const packet = filterMainModelPacket(state, state.nextTurnPacket, focusText);
+    const persistentPacket = buildPersistentMainModelPacket(state, packet, focusText);
     const latestSections = buildPacketSections(packet);
     const persistentSections = buildPacketSections(persistentPacket, true);
-    const secretRegistry = formatSecretRegistry(state);
+    const secretRegistry = formatSecretRegistry(state, focusText);
     const knowledgeBoundaries = formatActorKnowledgeBoundaries(state, focusText, packet);
     const sections = [
       `<天下演化上下文 version="${state.revision}">`,
@@ -7415,12 +7914,20 @@ ${actorRule}
         routingTransition.operation_stats.warnings.unshift(`事实分流失败：${routingFailure}`.slice(0, 300));
         routingTransition.operation_stats.rejected += 1;
       }
-      const routedState = previewTransitionState(baseState, routingTransition, messageKey, currentStat || {});
+      let routedState = previewTransitionState(baseState, routingTransition, messageKey, currentStat || {});
       const routedFactIds = routingTransition.turn_facts.map(fact => fact.id);
-      const isolationJob = routingFailure ? null : selectIsolationJob(routedState, routedFactIds);
+      const rosterProfiles = routingFailure ? [] : await loadWorldActorRoster();
+      const isolationJob = routingFailure ? null : selectIsolationJob(routedState, routedFactIds, rosterProfiles);
       let result = { schema_version: 3, base_revision: baseState.revision, changes: [], scenes: [] };
       let evolutionTransition = emptyTransition(routedState.currentWorldDays);
       if (isolationJob) {
+        if (isolationJob.isRosterSeed && !actorRecordByName(routedState.actors, isolationJob.label)) {
+          routingTransition.upsert_actors.push(actorInput(isolationJob.record, isolationJob.id));
+          routingTransition.operation_stats.accepted += 1;
+          routedState = previewTransitionState(baseState, routingTransition, messageKey, currentStat || {});
+          isolationJob.record = actorRecordByName(routedState.actors, isolationJob.label) || isolationJob.record;
+          isolationJob.knowledge = actorIsolationKnowledge(routedState, isolationJob.record);
+        }
         job.generationId = `${generationRoot}-evolve`;
         result = await callIsolatedWorldModel(routedState, isolationJob, job.generationId, job);
         if (!jobStillValid(job)) throw new Error('聊天或回复版本已经改变，本次推演结果已作废。');
@@ -7435,6 +7942,7 @@ ${actorRule}
       }
       const transition = combineTransitions(routingTransition, evolutionTransition, routedState.currentWorldDays);
       transition.isolation_cursor = Math.max(0, Number(baseState?.isolationCursor) || 0) + (isolationJob ? 1 : 0);
+      transition.world_schedule = markWorldSchedule(baseState, isolationJob, Number(baseState?.revision || 0) + 1);
       if (transition.operation_stats.rejected > 0) {
         console.warn('[天下演化] 部分结构化增量未通过机械校验', {
           accepted: transition.operation_stats.accepted,

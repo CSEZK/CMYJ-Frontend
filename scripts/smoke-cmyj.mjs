@@ -334,7 +334,7 @@ assert.doesNotMatch(releaseStatusbarSource, /rebindCharWorldbooks/);
 assert.match(releaseGeneratorSource, /STORAGE_KEY_API = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /API_SETTINGS_KEY = 'canming-gen-api-cfg'/);
 assert.match(releaseScenarioSource, /minBaseVersion: '1\.7\.0'/);
-assert.match(releaseWorldEngineSource, /VERSION = '1\.9\.0'/);
+assert.match(releaseWorldEngineSource, /VERSION = '2\.0\.0'/);
 assert.match(releaseWorldEngineSource, /function factRoutingSystemPrompt/);
 assert.match(releaseWorldEngineSource, /function isolatedSystemPrompt/);
 assert.match(releaseWorldEngineSource, /callFactRouter/);

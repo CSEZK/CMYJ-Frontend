@@ -7,7 +7,7 @@ let source = fullSource.slice(fullSource.indexOf('(() =>'));
 const end = source.lastIndexOf('})();');
 source =
   source.slice(0, end) +
-  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, normalizeWorldChangeResult, buildTransitionFromChanges, worldChangeSystemPrompt, worldChangeOutputSchema, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, normalizeModelRequestError, cancelActiveJob, buildSceneEvidence, buildAutonomyFocus, compactStateForPrompt, buildGenerationLicense, incrementalSystemPrompt, eligibleAssistantMessage, createPendingSettlement, releasePendingSettlementAfterMvu, clearPendingSettlement, waitForStableMessage, settlePendingTicket, registerEvents, getChatState, saveChatState, deleteChatState, reconcileStateStorage, normalizeFactRoutingResult, buildFactRoutingTransition, previewTransitionState, selectIsolationJob, buildIsolatedPayload, sanitizeIsolatedResult, factRoutingSystemPrompt, isolatedSystemPrompt, runtime };\n' +
+  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, normalizeWorldChangeResult, buildTransitionFromChanges, worldChangeSystemPrompt, worldChangeOutputSchema, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, normalizeModelRequestError, cancelActiveJob, buildSceneEvidence, buildAutonomyFocus, compactStateForPrompt, buildGenerationLicense, incrementalSystemPrompt, eligibleAssistantMessage, createPendingSettlement, releasePendingSettlementAfterMvu, clearPendingSettlement, waitForStableMessage, settlePendingTicket, registerEvents, getChatState, saveChatState, deleteChatState, reconcileStateStorage, normalizeFactRoutingResult, buildFactRoutingTransition, previewTransitionState, selectIsolationJob, buildIsolationJobs, buildIsolatedPayload, sanitizeIsolatedResult, factRoutingSystemPrompt, isolatedSystemPrompt, isolatedWorldChangeOutputSchema, normalizeWorldSchedule, extractActorProfilesFromWorldbook, actorRecordFromProfile, actorInput, loadWorldActorRoster, markWorldSchedule, filterMainModelPacket, runtime };\n' +
   source.slice(end);
 
 const sandbox = {
@@ -69,10 +69,19 @@ const {
   buildFactRoutingTransition,
   previewTransitionState,
   selectIsolationJob,
+  buildIsolationJobs,
   buildIsolatedPayload,
   sanitizeIsolatedResult,
   factRoutingSystemPrompt,
   isolatedSystemPrompt,
+  isolatedWorldChangeOutputSchema,
+  normalizeWorldSchedule,
+  extractActorProfilesFromWorldbook,
+  actorRecordFromProfile,
+  actorInput,
+  loadWorldActorRoster,
+  markWorldSchedule,
+  filterMainModelPacket,
   runtime,
 } = sandbox.__cweTest;
 const emptyState = () => ({ activeEvents: [], actors: [], intelPackets: [], hooks: [], secrets: [] });
@@ -886,7 +895,11 @@ const mainModelState = normalizeState(
   },
   'test-chat',
 );
-const persistentPacket = buildPersistentMainModelPacket(mainModelState);
+const persistentPacket = buildPersistentMainModelPacket(
+  mainModelState,
+  undefined,
+  '李四正在城外粮仓清点存粮。',
+);
 assert.equal(
   persistentPacket.offscreenMoves.some(item => item.includes('张三')),
   false,
@@ -905,11 +918,11 @@ assert.equal(
 );
 assert.equal(
   persistentPacket.pendingConsequences.some(item => item.includes('持续伏线')),
-  true,
+  false,
 );
 assert.equal(
   persistentPacket.intelInTransit.some(item => item.includes('旧驿报仍在途中')),
-  true,
+  false,
 );
 assert.equal(
   persistentPacket.intelInTransit.some(item => item.includes('已经公开的旧京报')),
@@ -920,13 +933,14 @@ assert.ok(persistentPacket.offscreenMoves.length <= 4);
 const mainModelInjection = buildMainModelInjection(mainModelState, '李四正在城外粮仓清点存粮。');
 assert.match(mainModelInjection, /本轮新近变化/);
 assert.match(mainModelInjection, /持续核心状态（未在本轮更新，但仍未结束）/);
-assert.match(mainModelInjection, /张三的回报已经送达/);
+assert.doesNotMatch(mainModelInjection, /张三的回报已经送达/);
 assert.match(mainModelInjection, /城外粮价仍在上涨/);
-assert.match(mainModelInjection, /旧债主仍在寻找主角/);
+assert.doesNotMatch(mainModelInjection, /旧债主仍在寻找主角/);
 assert.match(mainModelInjection, /连夜清点存粮/);
-assert.match(mainModelInjection, /秘密与信息盲区登记簿/);
-assert.match(mainModelInjection, /账册缺页藏在李四的旧木箱中/);
+assert.doesNotMatch(mainModelInjection, /秘密与信息盲区登记簿/);
+assert.doesNotMatch(mainModelInjection, /账册缺页藏在李四的旧木箱中/);
 assert.match(mainModelInjection, /人物：李四/);
+assert.doesNotMatch(mainModelInjection, /人物：张三/);
 assert.match(mainModelInjection, /仅为怀疑：粮商可能暗中囤粮/);
 assert.match(mainModelInjection, /主观相信但未证实：粮船仍会按期抵达/);
 assert.match(mainModelInjection, /明确不知道：粮船已经改道/);
@@ -934,6 +948,10 @@ assert.match(mainModelInjection, /秘密权限：无/);
 assert.match(mainModelInjection, /合法知情者.*白名单/s);
 assert.match(mainModelInjection, /持续核心状态.*不代表.*本轮/s);
 assert.doesNotMatch(mainModelInjection, /这段平行世界正文绝不能注入主模型/);
+
+const secretFocusInjection = buildMainModelInjection(mainModelState, '玩家正在追查“缺页下落”。');
+assert.match(secretFocusInjection, /秘密与信息盲区登记簿/);
+assert.match(secretFocusInjection, /账册缺页藏在李四的旧木箱中/);
 
 // 知识与秘密只做本地因果校验：合法传播写入，模型臆造的“公开消息”直接拒绝，不增加第二次生成调用。
 const knowledgeBase = normalizeState(
@@ -2068,7 +2086,326 @@ assert.match(
   /已按天下演化请求预算省略中段/,
 );
 
-// 1.9 两段式隔离：第一次调用只分流正文事实，第二次调用看不到未授权秘密。
+// 世界书角色名册：只读取角色区间内已启用的人设，第二次调用精准携带当轮人物，公平轮换且不泄露其他人。
+const rosterEntries = [
+  { uid: 117, name: '===角色开始===', enabled: false, content: '' },
+  {
+    uid: 118,
+    name: '栖云_SFW',
+    enabled: true,
+    strategy: { keys: ['栖云', '云儿'] },
+    content:
+      '<栖云_SFW>\ncharacter: 栖云\n核心身份:\n  职业: 和济堂养女\n背景:\n  居住: |\n    桐城县和济堂后宅\n近期目标: 守住家里日常',
+  },
+  {
+    uid: 119,
+    name: '栖云_NSFW',
+    enabled: false,
+    strategy: { keys: ['栖云'] },
+    content: 'character: 栖云\n不应读取的禁用内容',
+  },
+  {
+    uid: 142,
+    name: '方子衿_SFW',
+    enabled: true,
+    strategy: { keys: ['方子衿', '子衿'] },
+    content:
+      '<方子衿_SFW>\ncharacter: 方子衿\n核心身份:\n  职业: 方氏长房嫡孙女\n背景:\n  居住: |\n    桐城县方家工坊\n近期目标: 改进纺车传动',
+  },
+  { uid: 164, name: '===角色结束===', enabled: false, content: '' },
+  {
+    uid: 170,
+    name: '[scenario_builtin]不属于角色区',
+    enabled: true,
+    content: 'character: 错误角色\n这里不应进入世界名册',
+  },
+];
+const rosterProfiles = extractActorProfilesFromWorldbook(rosterEntries, '测试角色书');
+assert.deepEqual(
+  Array.from(rosterProfiles, item => item.name),
+  ['栖云', '方子衿'],
+  '角色名册必须遵守角色区间与启用状态',
+);
+assert.doesNotMatch(JSON.stringify(rosterProfiles), /禁用内容|错误角色/);
+const rosterSeed = actorRecordFromProfile(rosterProfiles[0], 4);
+assert.equal(rosterSeed.name, '栖云');
+assert.match(rosterSeed.location, /桐城县和济堂后宅/);
+assert.ok(rosterSeed.goal);
+assert.ok(rosterSeed.nextDecision);
+assert.equal(rosterSeed.causeId, rosterSeed.id);
+const fallbackRosterSeed = actorRecordFromProfile({ name: '无显式目标人物', actorId: 'AC-fallback' }, 4);
+assert.equal(fallbackRosterSeed.location, '原有生活地点');
+assert.equal(fallbackRosterSeed.goal, '维持自身生活与未竟目标');
+assert.equal(fallbackRosterSeed.nextDecision, fallbackRosterSeed.goal);
+const fallbackRosterState = normalizeState(
+  {
+    version: 1,
+    chatId: 'fallback-roster-chat',
+    revision: 0,
+    currentWorldDays: 4,
+    actors: [fallbackRosterSeed],
+  },
+  'fallback-roster-chat',
+);
+const fallbackRosterTransition = buildTransitionFromChanges(
+  fallbackRosterState,
+  {
+    schema_version: 3,
+    base_revision: 0,
+    changes: [
+      {
+        op: 'merge',
+        target: { collection: 'actors', id: fallbackRosterSeed.id },
+        changes: {
+          currentAction: '整理自己的住处',
+          nextDecision: '整理完后出门办事',
+          updatedReason: '按原有生活节奏继续行动',
+        },
+      },
+    ],
+    scenes: [
+      {
+        based_on: [0],
+        location: '原有生活地点',
+        time: '清晨',
+        actors: ['无显式目标人物'],
+        action: '整理住处',
+        body: '天亮后，此人先收拾住处，再准备出门办自己的事。',
+      },
+    ],
+  },
+  { currentStat: {}, currentTurnText: '', enforceKnowledgeBoundary: false },
+);
+assert.equal(fallbackRosterTransition.operation_stats.rejected, 0);
+assert.equal(fallbackRosterTransition.upsert_actors.length, 1);
+assert.equal(fallbackRosterTransition.parallel_scenes.length, 1);
+const seedRoutingTransition = buildFactRoutingTransition(
+  normalizeState({ version: 1, chatId: 'seed-preview-chat', revision: 0, currentWorldDays: 4 }, 'seed-preview-chat'),
+  { schema_version: 1, facts: [], scene_entities: [], communications: [] },
+  {},
+  '',
+);
+seedRoutingTransition.upsert_actors.push(actorInput(fallbackRosterSeed, fallbackRosterSeed.id));
+const seededPreviewState = previewTransitionState(
+  normalizeState({ version: 1, chatId: 'seed-preview-chat', revision: 0, currentWorldDays: 4 }, 'seed-preview-chat'),
+  seedRoutingTransition,
+  { messageId: 2, swipeId: 0, hash: 'seed-preview' },
+  {},
+);
+const seededPreviewTransition = buildTransitionFromChanges(
+  seededPreviewState,
+  {
+    schema_version: 3,
+    base_revision: 0,
+    changes: [
+      {
+        op: 'merge',
+        target: { collection: 'actors', id: fallbackRosterSeed.id },
+        changes: {
+          currentAction: '整理自己的住处',
+          nextDecision: '整理完后出门办事',
+          updatedReason: '按原有生活节奏继续行动',
+        },
+      },
+    ],
+    scenes: [
+      {
+        based_on: [0],
+        location: '原有生活地点',
+        time: '清晨',
+        actors: ['无显式目标人物'],
+        action: '整理住处',
+        body: '天亮后，此人先收拾住处，再准备出门办自己的事。',
+      },
+    ],
+  },
+  { currentStat: {}, currentTurnText: '', enforceKnowledgeBoundary: false },
+);
+assert.equal(seededPreviewTransition.operation_stats.rejected, 0, '名册人物在同轮建档后必须能接受第二阶段 merge');
+assert.equal(seededPreviewTransition.parallel_scenes.length, 1, '同轮建档人物的合法旁线不得因预览状态而丢失');
+const liveLikeProfile = {
+  name: '翠儿',
+  actorId: 'AC-live-roster',
+  location: '后宅灶间隔壁一间巴掌大的小房，墙上挂着用了三年的笤帚。',
+  occupation: '和济堂内宅粗使丫鬟，签了死契',
+  goal: '',
+  content: 'character: 翠儿\n职业: 和济堂内宅粗使丫鬟，签了死契',
+  worldbookName: '测试角色书',
+  entryUid: 138,
+  entryName: '翠儿_SFW',
+  profileHash: 'live-like',
+};
+const liveLikeBase = normalizeState(
+  {
+    version: 1,
+    chatId: 'live-like-roster-chat',
+    revision: 1,
+    currentWorldDays: 4,
+    scenePresence: { location: '和济堂前院', actors: ['苏晚棠'] },
+  },
+  'live-like-roster-chat',
+);
+const liveLikeJob = selectIsolationJob(liveLikeBase, [], [liveLikeProfile]);
+const liveLikeRouting = buildFactRoutingTransition(
+  liveLikeBase,
+  { schema_version: 1, facts: [], scene_entities: [], communications: [] },
+  {},
+  '',
+);
+liveLikeRouting.upsert_actors.push(actorInput(liveLikeJob.record, liveLikeJob.id));
+const liveLikeRouted = previewTransitionState(
+  liveLikeBase,
+  liveLikeRouting,
+  { messageId: 4, swipeId: 0, hash: 'live-like' },
+  {},
+);
+liveLikeJob.record = liveLikeRouted.actors.find(actor => actor.id === liveLikeJob.id);
+const liveLikeSanitized = sanitizeIsolatedResult(
+  {
+    schema_version: 3,
+    base_revision: 1,
+    changes: [
+      {
+        op: 'merge',
+        target: { collection: 'actors', id: liveLikeJob.id },
+        changes: {
+          record: {
+            currentAction: '寅时起身生火烧水，清扫后宅院落',
+            nextDecision: '扫完院子后去挑满水缸',
+            updatedReason: '按她维持多年的生活节奏开始晨间劳作',
+          },
+        },
+      },
+      {
+        op: 'create',
+        target: { collection: 'events', id: 'temporary-daily-event' },
+        value: {
+          description: '翠儿开始了每日晨间劳作。',
+          location: '和济堂后宅',
+          basisIds: [liveLikeJob.id],
+        },
+      },
+    ],
+    scenes: [
+      {
+        based_on: [1],
+        location: '后宅灶间隔壁小房',
+        time: '第4日寅时',
+        actors: ['翠儿'],
+        action: '开始晨间劳作',
+        body: '天还没亮，翠儿便披衣起身，拎起水桶往井边去了。',
+      },
+    ],
+  },
+  liveLikeJob,
+  liveLikeRouted,
+);
+assert.equal(liveLikeSanitized.changes.length, 1, '字段不足的附带日常事件应静默舍弃，只保留人物核心推进');
+assert.deepEqual(Array.from(liveLikeSanitized.scenes[0].based_on), [0], '旁线应自动回挂到当轮人物 merge');
+const liveLikeEvolution = buildTransitionFromChanges(liveLikeRouted, liveLikeSanitized, {
+  currentStat: {},
+  currentTurnText: '',
+  enforceKnowledgeBoundary: false,
+});
+assert.equal(
+  liveLikeEvolution.operation_stats.rejected,
+  0,
+  `真实角色条目缺少显式目标时也不能拒绝合法 merge：${JSON.stringify({
+    actor: liveLikeJob.record,
+    sanitized: liveLikeSanitized,
+    warnings: liveLikeEvolution.operation_stats.warnings,
+  })}`,
+);
+assert.equal(liveLikeEvolution.parallel_scenes.length, 1);
+
+const rosterState = normalizeState(
+  {
+    version: 1,
+    chatId: 'roster-chat',
+    revision: 0,
+    currentWorldDays: 4,
+    scenePresence: { location: '桐城县和济堂前院', actors: ['苏晚棠'] },
+  },
+  'roster-chat',
+);
+const firstRosterJob = selectIsolationJob(rosterState, [], rosterProfiles);
+assert.equal(firstRosterJob?.label, '栖云', '当地且从未推进的角色应先进入世界心跳');
+assert.equal(firstRosterJob?.isRosterSeed, true);
+const firstRosterPayload = buildIsolatedPayload(rosterState, firstRosterJob);
+assert.match(firstRosterPayload.SELF_PROFILE.content, /character: 栖云/);
+assert.doesNotMatch(JSON.stringify(firstRosterPayload), /方子衿|改进纺车/);
+assert.equal(isolatedWorldChangeOutputSchema(firstRosterJob).value.properties.changes.minItems, 1);
+assert.equal(isolatedWorldChangeOutputSchema(firstRosterJob).value.properties.scenes.minItems, 1);
+
+const rosterScheduleAfterFirst = markWorldSchedule(rosterState, firstRosterJob, 1);
+const rotatedRosterState = normalizeState(
+  {
+    ...rosterState,
+    revision: 1,
+    worldSchedule: rosterScheduleAfterFirst,
+    actors: [rosterSeed],
+    scenePresence: { location: '桐城县和济堂前院', actors: ['苏晚棠'] },
+  },
+  'roster-chat',
+);
+const secondRosterJob = selectIsolationJob(rotatedRosterState, [], rosterProfiles);
+assert.equal(secondRosterJob?.label, '方子衿', '已经推进过的人物不得霸占下一次人物轮换');
+const eventFairState = normalizeState(
+  {
+    ...rotatedRosterState,
+    worldSchedule: { ...rotatedRosterState.worldSchedule, laneCursor: 2 },
+    activeEvents: [
+      {
+        id: 'EV-fair',
+        title: '桐城米价波动',
+        stage: '萌芽',
+        status: 'active',
+        location: '桐城县粮市',
+        actors: ['米商'],
+        summary: '粮市米价开始缓慢上涨',
+        nextTrigger: '下一次粮船抵达',
+      },
+    ],
+  },
+  'roster-chat',
+);
+assert.equal(selectIsolationJob(eventFairState, [], rosterProfiles)?.type, 'event', '世事轮次不得被人物永久挤占');
+
+sandbox.getCharWorldbookNames = () => ({ primary: '测试角色书', additional: [] });
+sandbox.getWorldbook = async name => (name === '测试角色书' ? rosterEntries : []);
+const loadedRoster = await loadWorldActorRoster();
+assert.deepEqual(Array.from(loadedRoster, item => item.name), ['栖云', '方子衿']);
+delete sandbox.getCharWorldbookNames;
+delete sandbox.getWorldbook;
+
+const hiddenPacketState = normalizeState(
+  {
+    ...rotatedRosterState,
+    actors: [
+      rosterSeed,
+      {
+        id: 'AC-remote',
+        name: '远方知县',
+        location: '邻县县衙',
+        currentAction: '复核巡防名册',
+        updatedReason: '独立推进',
+      },
+    ],
+  },
+  'roster-chat',
+);
+const hiddenPacket = {
+  offscreenMoves: ['远方知县｜邻县县衙｜复核巡防名册'],
+  npcKnowledge: [{ name: '远方知县', knows: ['本县巡防安排'], doesNotKnow: [] }],
+};
+assert.equal(filterMainModelPacket(hiddenPacketState, hiddenPacket, '玩家仍在和济堂').offscreenMoves.length, 0);
+assert.equal(
+  filterMainModelPacket(hiddenPacketState, hiddenPacket, '我去邻县拜访远方知县').offscreenMoves.length,
+  1,
+  '玩家即将与旁线人物相交时才应交接其动态状态',
+);
+
+// 2.0 角色名册与两段式隔离：第一次调用只分流正文事实，第二次调用只读取当轮人物人设。
 const secretChatId = 'two-stage-secret-chat';
 const secretBase = normalizeState(
   {
@@ -2708,7 +3045,8 @@ assert.match(activeProcessSource, /callIsolatedWorldModel/);
 assert.match(activeProcessSource, /routingFailure \? null : selectIsolationJob/);
 assert.doesNotMatch(activeProcessSource, /resolvePromptSnapshot|resolveWorldInfoSupplement|callWorldModel\(/);
 assert.match(factRoutingSystemPrompt(), /不续写剧情、不推演任何人物/);
-assert.match(isolatedSystemPrompt(remoteJob), /没有出现的事实、正文、秘密、世界书内容/);
+assert.match(isolatedSystemPrompt(remoteJob), /SELF_PROFILE.*不是本轮新消息/s);
+assert.match(isolatedSystemPrompt(remoteJob), /不能用空 changes 逃避推进/);
 
 let cancelledGenerationId = '';
 sandbox.stopGenerationById = generationId => {
@@ -2736,12 +3074,12 @@ await assert.rejects(cancelledRequest, error => error?.code === 'CWE_CANCELLED')
 assert.equal(cancelledGenerationId, cancelledJob.generationId);
 assert.equal(cancelledJob.cancelled, true);
 
-assert.match(fullSource, /const VERSION = '1\.9\.0'/);
+assert.match(fullSource, /const VERSION = '2\.0\.0'/);
 assert.match(fullSource, /requestTimeoutMs: 90000/);
 assert.match(fullSource, /data-setting="requestTimeoutSeconds"/);
 assert.match(fullSource, /data-banner-action="cancel"/);
 assert.match(fullSource, /stopGenerationById/);
 assert.doesNotMatch(fullSource, /json_schema:\s*schema/);
 console.info(
-  '天下演化测试通过：真实楼层票据、MVU 去重、假请求隔离、存储自愈、主动清空、v3 增量协议、两段式事实分流、知情单元隔离、秘密不可见、传播时限、群体匹配、空结果、请求预算、稳定 ID、主动取消与旧档迁移均已覆盖。',
+  '天下演化测试通过：真实楼层票据、MVU 去重、假请求隔离、存储自愈、主动清空、v3 增量协议、两段式事实分流、世界书角色名册、公平轮换、连续旁线、按需正文联动、秘密不可见、传播时限、群体匹配、请求预算、稳定 ID、主动取消与旧档迁移均已覆盖。',
 );
