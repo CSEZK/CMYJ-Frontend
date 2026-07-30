@@ -218,7 +218,6 @@ import { buildScenarioCharacterCatalog } from './character-catalog.js';
   function normalizeProject(raw) {
     characterCatalog = buildScenarioCharacterCatalog({
       officialCharacters: characterCatalog,
-      projectCharacters: raw?.characters,
     });
     const base = newProject();
     const next = {

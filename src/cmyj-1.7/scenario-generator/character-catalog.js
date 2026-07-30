@@ -6,9 +6,11 @@ function personaNames(entry) {
   const content = String(entry?.content || '');
   const names = [];
   for (const match of content.matchAll(/<角色设定:([^>\r\n]+?)_SFW>/gi)) names.push(match[1].trim());
-  const entryName = String(entry?.name || '').trim();
-  const nameMatch = entryName.match(/^(.+?)_SFW(?:（导入(?:\d+)?）)?$/i);
-  if (nameMatch) names.push(nameMatch[1].trim());
+  if (!names.length) {
+    const entryName = String(entry?.name || '').trim();
+    const nameMatch = entryName.match(/^(.+?)_SFW(?:（导入(?:\d+)?）)?$/i);
+    if (nameMatch) names.push(nameMatch[1].trim());
+  }
   return uniqueStrings(names);
 }
 
@@ -16,7 +18,6 @@ export function buildScenarioCharacterCatalog({
   officialCharacters = [],
   profiles = [],
   worldbookEntries = [],
-  projectCharacters = {},
 } = {}) {
   const catalog = [];
   const byName = new Map();
@@ -58,19 +59,6 @@ export function buildScenarioCharacterCatalog({
         character.worldbookEntries = uniqueStrings([...character.worldbookEntries, String(entry.name || '').trim()]);
     }
   }
-
-  for (const [name, state] of Object.entries(
-    projectCharacters && typeof projectCharacters === 'object' ? projectCharacters : {},
-  ))
-    upsert(
-      {
-        name,
-        summary: state?.identity || state?.summary,
-        personaEntries: state?.personaEntries,
-      },
-      'project',
-      '工程中保留的扩展人物',
-    );
 
   return catalog;
 }

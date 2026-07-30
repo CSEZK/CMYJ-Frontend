@@ -78,13 +78,14 @@ const dynamicCatalog = buildScenarioCharacterCatalog({
   ],
   worldbookEntries: [
     { name: '栖云_SFW', content: '<角色设定:栖云_SFW>完整人设</角色设定:栖云_SFW>' },
-    { name: '程雪_SFW', content: '<角色设定:程雪_SFW>完整人设</角色设定:程雪_SFW>' },
+    { name: '程雪新版_SFW', content: '<角色设定:程雪_SFW>完整人设</角色设定:程雪_SFW>' },
+    { name: '顾小满_SFW', content: '没有规范角色标签的人设正文' },
     { name: '普通设定', content: '不是人物人设条目' },
   ],
 });
 assert.deepEqual(
   dynamicCatalog.map(character => character.name),
-  ['栖云', '陆青', '沈青梧', '程雪'],
+  ['栖云', '陆青', '沈青梧', '程雪', '顾小满'],
   '人物名册应合并官方人物、人物管理器档案、工坊人物和完整人设条目',
 );
 assert.deepEqual(
@@ -96,6 +97,36 @@ assert.deepEqual(
   dynamicCatalog.find(character => character.name === '栖云').worldbookEntries,
   ['栖云_SFW'],
   '官方人物与世界书扫描结果应按姓名合并而不是重复显示',
+);
+assert.deepEqual(
+  dynamicCatalog.find(character => character.name === '程雪').worldbookEntries,
+  ['程雪新版_SFW'],
+  '条目改名后应以正文角色标签为准，并保留实际条目名作为人设来源',
+);
+assert.equal(
+  dynamicCatalog.some(character => character.name === '程雪新版'),
+  false,
+  '正文已有规范角色标签时，不应再从改名后的条目名生成重复人物',
+);
+assert.equal(
+  dynamicCatalog.find(character => character.name === '顾小满').source,
+  'worldbook',
+  '正文没有规范标签时，仍应允许从 _SFW 条目名兜底识别人名',
+);
+
+const catalogWithoutGhosts = buildScenarioCharacterCatalog({
+  officialCharacters: [{ name: '栖云', summary: '官方人物' }],
+  projectCharacters: {
+    已删除人物: {
+      identity: '旧工程残留身份',
+      personaEntries: ['已删除人物_SFW'],
+    },
+  },
+});
+assert.deepEqual(
+  catalogWithoutGhosts.map(character => character.name),
+  ['栖云'],
+  '旧工程人物不能在当前人物来源已消失后重新进入人物名册',
 );
 
 const era = {
@@ -222,19 +253,16 @@ assert.equal(resource.scenario.exclusiveGroup, 'player-origin');
 assert.equal(resource.scenario.allowMidChatSwitch, false);
 assert.equal(resource.scenario.newChatRequired, true);
 assert.equal(resource.openings.length, 1);
-assert.equal(resource.characterOverviews['origin-opening'].length, 3);
-assert.ok(
+assert.equal(resource.characterOverviews['origin-opening'].length, 2);
+assert.equal(
   resource.characterOverviews['origin-opening'].some(item => item.name === '沈青梧'),
-  '从人物管理器或工坊加入的扩展人物不得在工程标准化时被裁掉',
+  false,
+  '当前人物管理器和世界书均不存在的人物不能被旧工程复活',
 );
-assert.ok(
+assert.equal(
   resource.characterAdaptations.some(item => item.character === '沈青梧'),
-  '扩展人物应进入 DLC 长期人物适配',
-);
-assert.deepEqual(
-  resource.characterAdaptations.find(item => item.character === '沈青梧').personaEntries,
-  ['沈青梧_SFW（导入）'],
-  'DLC 应携带扩展人物实际关联的人设条目名，避免工坊重命名后无法安装',
+  false,
+  '来源已经消失的旧工程人物不能进入 DLC 长期人物适配',
 );
 assert.equal(resource.characterAdaptationVersion, 3);
 assert.deepEqual(resource.portraitProfiles, [], 'DLC 不应重复携带基础卡的内置立绘');
