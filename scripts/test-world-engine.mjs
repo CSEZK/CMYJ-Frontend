@@ -7,7 +7,7 @@ let source = fullSource.slice(fullSource.indexOf('(() =>'));
 const end = source.lastIndexOf('})();');
 source =
   source.slice(0, end) +
-  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, normalizeWorldChangeResult, buildTransitionFromChanges, worldChangeSystemPrompt, worldChangeOutputSchema, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, normalizeModelRequestError, cancelActiveJob, buildSceneEvidence, buildAutonomyFocus, compactStateForPrompt, buildGenerationLicense, incrementalSystemPrompt, eligibleAssistantMessage, createPendingSettlement, releasePendingSettlementAfterMvu, clearPendingSettlement, waitForStableMessage, settlePendingTicket, registerEvents, getChatState, saveChatState, deleteChatState, reconcileStateStorage, normalizeFactRoutingResult, buildFactRoutingTransition, previewTransitionState, selectIsolationJob, buildIsolatedPayload, sanitizeIsolatedResult, factRoutingSystemPrompt, isolatedSystemPrompt, runtime };\n' +
+  'globalThis.__cweTest = { normalizeIncrementalResult, buildTransitionFromOperations, normalizeWorldChangeResult, buildTransitionFromChanges, worldChangeSystemPrompt, worldChangeOutputSchema, applyTransition, callWorldModel, normalizeState, buildPersistentMainModelPacket, buildMainModelInjection, normalizeModelRequestError, cancelActiveJob, buildSceneEvidence, buildAutonomyFocus, compactStateForPrompt, buildGenerationLicense, incrementalSystemPrompt, eligibleAssistantMessage, createPendingSettlement, releasePendingSettlementAfterMvu, clearPendingSettlement, waitForStableMessage, settlePendingTicket, registerEvents, getChatState, saveChatState, deleteChatState, reconcileStateStorage, normalizeFactRoutingResult, buildFactRoutingTransition, previewTransitionState, selectIsolationJob, buildIsolationJobs, buildIsolatedPayload, sanitizeIsolatedResult, factRoutingSystemPrompt, isolatedSystemPrompt, isolatedWorldChangeOutputSchema, normalizeWorldSchedule, extractActorProfilesFromWorldbook, actorRecordFromProfile, actorInput, loadWorldActorRoster, markWorldSchedule, filterMainModelPacket, runtime };\n' +
   source.slice(end);
 
 const sandbox = {
@@ -69,10 +69,19 @@ const {
   buildFactRoutingTransition,
   previewTransitionState,
   selectIsolationJob,
+  buildIsolationJobs,
   buildIsolatedPayload,
   sanitizeIsolatedResult,
   factRoutingSystemPrompt,
   isolatedSystemPrompt,
+  isolatedWorldChangeOutputSchema,
+  normalizeWorldSchedule,
+  extractActorProfilesFromWorldbook,
+  actorRecordFromProfile,
+  actorInput,
+  loadWorldActorRoster,
+  markWorldSchedule,
+  filterMainModelPacket,
   runtime,
 } = sandbox.__cweTest;
 const emptyState = () => ({ activeEvents: [], actors: [], intelPackets: [], hooks: [], secrets: [] });
@@ -886,7 +895,11 @@ const mainModelState = normalizeState(
   },
   'test-chat',
 );
-const persistentPacket = buildPersistentMainModelPacket(mainModelState);
+const persistentPacket = buildPersistentMainModelPacket(
+  mainModelState,
+  undefined,
+  '李四正在城外粮仓清点存粮。',
+);
 assert.equal(
   persistentPacket.offscreenMoves.some(item => item.includes('张三')),
   false,
@@ -905,11 +918,11 @@ assert.equal(
 );
 assert.equal(
   persistentPacket.pendingConsequences.some(item => item.includes('持续伏线')),
-  true,
+  false,
 );
 assert.equal(
   persistentPacket.intelInTransit.some(item => item.includes('旧驿报仍在途中')),
-  true,
+  false,
 );
 assert.equal(
   persistentPacket.intelInTransit.some(item => item.includes('已经公开的旧京报')),
@@ -920,13 +933,14 @@ assert.ok(persistentPacket.offscreenMoves.length <= 4);
 const mainModelInjection = buildMainModelInjection(mainModelState, '李四正在城外粮仓清点存粮。');
 assert.match(mainModelInjection, /本轮新近变化/);
 assert.match(mainModelInjection, /持续核心状态（未在本轮更新，但仍未结束）/);
-assert.match(mainModelInjection, /张三的回报已经送达/);
+assert.doesNotMatch(mainModelInjection, /张三的回报已经送达/);
 assert.match(mainModelInjection, /城外粮价仍在上涨/);
-assert.match(mainModelInjection, /旧债主仍在寻找主角/);
+assert.doesNotMatch(mainModelInjection, /旧债主仍在寻找主角/);
 assert.match(mainModelInjection, /连夜清点存粮/);
-assert.match(mainModelInjection, /秘密与信息盲区登记簿/);
-assert.match(mainModelInjection, /账册缺页藏在李四的旧木箱中/);
+assert.doesNotMatch(mainModelInjection, /秘密与信息盲区登记簿/);
+assert.doesNotMatch(mainModelInjection, /账册缺页藏在李四的旧木箱中/);
 assert.match(mainModelInjection, /人物：李四/);
+assert.doesNotMatch(mainModelInjection, /人物：张三/);
 assert.match(mainModelInjection, /仅为怀疑：粮商可能暗中囤粮/);
 assert.match(mainModelInjection, /主观相信但未证实：粮船仍会按期抵达/);
 assert.match(mainModelInjection, /明确不知道：粮船已经改道/);
@@ -934,6 +948,10 @@ assert.match(mainModelInjection, /秘密权限：无/);
 assert.match(mainModelInjection, /合法知情者.*白名单/s);
 assert.match(mainModelInjection, /持续核心状态.*不代表.*本轮/s);
 assert.doesNotMatch(mainModelInjection, /这段平行世界正文绝不能注入主模型/);
+
+const secretFocusInjection = buildMainModelInjection(mainModelState, '玩家正在追查“缺页下落”。');
+assert.match(secretFocusInjection, /秘密与信息盲区登记簿/);
+assert.match(secretFocusInjection, /账册缺页藏在李四的旧木箱中/);
 
 // 知识与秘密只做本地因果校验：合法传播写入，模型臆造的“公开消息”直接拒绝，不增加第二次生成调用。
 const knowledgeBase = normalizeState(
@@ -2068,7 +2086,326 @@ assert.match(
   /已按天下演化请求预算省略中段/,
 );
 
-// 1.9 两段式隔离：第一次调用只分流正文事实，第二次调用看不到未授权秘密。
+// 世界书角色名册：只读取角色区间内已启用的人设，第二次调用精准携带当轮人物，公平轮换且不泄露其他人。
+const rosterEntries = [
+  { uid: 117, name: '===角色开始===', enabled: false, content: '' },
+  {
+    uid: 118,
+    name: '栖云_SFW',
+    enabled: true,
+    strategy: { keys: ['栖云', '云儿'] },
+    content:
+      '<栖云_SFW>\ncharacter: 栖云\n核心身份:\n  职业: 和济堂养女\n背景:\n  居住: |\n    桐城县和济堂后宅\n近期目标: 守住家里日常',
+  },
+  {
+    uid: 119,
+    name: '栖云_NSFW',
+    enabled: false,
+    strategy: { keys: ['栖云'] },
+    content: 'character: 栖云\n不应读取的禁用内容',
+  },
+  {
+    uid: 142,
+    name: '方子衿_SFW',
+    enabled: true,
+    strategy: { keys: ['方子衿', '子衿'] },
+    content:
+      '<方子衿_SFW>\ncharacter: 方子衿\n核心身份:\n  职业: 方氏长房嫡孙女\n背景:\n  居住: |\n    桐城县方家工坊\n近期目标: 改进纺车传动',
+  },
+  { uid: 164, name: '===角色结束===', enabled: false, content: '' },
+  {
+    uid: 170,
+    name: '[scenario_builtin]不属于角色区',
+    enabled: true,
+    content: 'character: 错误角色\n这里不应进入世界名册',
+  },
+];
+const rosterProfiles = extractActorProfilesFromWorldbook(rosterEntries, '测试角色书');
+assert.deepEqual(
+  Array.from(rosterProfiles, item => item.name),
+  ['栖云', '方子衿'],
+  '角色名册必须遵守角色区间与启用状态',
+);
+assert.doesNotMatch(JSON.stringify(rosterProfiles), /禁用内容|错误角色/);
+const rosterSeed = actorRecordFromProfile(rosterProfiles[0], 4);
+assert.equal(rosterSeed.name, '栖云');
+assert.match(rosterSeed.location, /桐城县和济堂后宅/);
+assert.ok(rosterSeed.goal);
+assert.ok(rosterSeed.nextDecision);
+assert.equal(rosterSeed.causeId, rosterSeed.id);
+const fallbackRosterSeed = actorRecordFromProfile({ name: '无显式目标人物', actorId: 'AC-fallback' }, 4);
+assert.equal(fallbackRosterSeed.location, '原有生活地点');
+assert.equal(fallbackRosterSeed.goal, '维持自身生活与未竟目标');
+assert.equal(fallbackRosterSeed.nextDecision, fallbackRosterSeed.goal);
+const fallbackRosterState = normalizeState(
+  {
+    version: 1,
+    chatId: 'fallback-roster-chat',
+    revision: 0,
+    currentWorldDays: 4,
+    actors: [fallbackRosterSeed],
+  },
+  'fallback-roster-chat',
+);
+const fallbackRosterTransition = buildTransitionFromChanges(
+  fallbackRosterState,
+  {
+    schema_version: 3,
+    base_revision: 0,
+    changes: [
+      {
+        op: 'merge',
+        target: { collection: 'actors', id: fallbackRosterSeed.id },
+        changes: {
+          currentAction: '整理自己的住处',
+          nextDecision: '整理完后出门办事',
+          updatedReason: '按原有生活节奏继续行动',
+        },
+      },
+    ],
+    scenes: [
+      {
+        based_on: [0],
+        location: '原有生活地点',
+        time: '清晨',
+        actors: ['无显式目标人物'],
+        action: '整理住处',
+        body: '天亮后，此人先收拾住处，再准备出门办自己的事。',
+      },
+    ],
+  },
+  { currentStat: {}, currentTurnText: '', enforceKnowledgeBoundary: false },
+);
+assert.equal(fallbackRosterTransition.operation_stats.rejected, 0);
+assert.equal(fallbackRosterTransition.upsert_actors.length, 1);
+assert.equal(fallbackRosterTransition.parallel_scenes.length, 1);
+const seedRoutingTransition = buildFactRoutingTransition(
+  normalizeState({ version: 1, chatId: 'seed-preview-chat', revision: 0, currentWorldDays: 4 }, 'seed-preview-chat'),
+  { schema_version: 1, facts: [], scene_entities: [], communications: [] },
+  {},
+  '',
+);
+seedRoutingTransition.upsert_actors.push(actorInput(fallbackRosterSeed, fallbackRosterSeed.id));
+const seededPreviewState = previewTransitionState(
+  normalizeState({ version: 1, chatId: 'seed-preview-chat', revision: 0, currentWorldDays: 4 }, 'seed-preview-chat'),
+  seedRoutingTransition,
+  { messageId: 2, swipeId: 0, hash: 'seed-preview' },
+  {},
+);
+const seededPreviewTransition = buildTransitionFromChanges(
+  seededPreviewState,
+  {
+    schema_version: 3,
+    base_revision: 0,
+    changes: [
+      {
+        op: 'merge',
+        target: { collection: 'actors', id: fallbackRosterSeed.id },
+        changes: {
+          currentAction: '整理自己的住处',
+          nextDecision: '整理完后出门办事',
+          updatedReason: '按原有生活节奏继续行动',
+        },
+      },
+    ],
+    scenes: [
+      {
+        based_on: [0],
+        location: '原有生活地点',
+        time: '清晨',
+        actors: ['无显式目标人物'],
+        action: '整理住处',
+        body: '天亮后，此人先收拾住处，再准备出门办自己的事。',
+      },
+    ],
+  },
+  { currentStat: {}, currentTurnText: '', enforceKnowledgeBoundary: false },
+);
+assert.equal(seededPreviewTransition.operation_stats.rejected, 0, '名册人物在同轮建档后必须能接受第二阶段 merge');
+assert.equal(seededPreviewTransition.parallel_scenes.length, 1, '同轮建档人物的合法旁线不得因预览状态而丢失');
+const liveLikeProfile = {
+  name: '翠儿',
+  actorId: 'AC-live-roster',
+  location: '后宅灶间隔壁一间巴掌大的小房，墙上挂着用了三年的笤帚。',
+  occupation: '和济堂内宅粗使丫鬟，签了死契',
+  goal: '',
+  content: 'character: 翠儿\n职业: 和济堂内宅粗使丫鬟，签了死契',
+  worldbookName: '测试角色书',
+  entryUid: 138,
+  entryName: '翠儿_SFW',
+  profileHash: 'live-like',
+};
+const liveLikeBase = normalizeState(
+  {
+    version: 1,
+    chatId: 'live-like-roster-chat',
+    revision: 1,
+    currentWorldDays: 4,
+    scenePresence: { location: '和济堂前院', actors: ['苏晚棠'] },
+  },
+  'live-like-roster-chat',
+);
+const liveLikeJob = selectIsolationJob(liveLikeBase, [], [liveLikeProfile]);
+const liveLikeRouting = buildFactRoutingTransition(
+  liveLikeBase,
+  { schema_version: 1, facts: [], scene_entities: [], communications: [] },
+  {},
+  '',
+);
+liveLikeRouting.upsert_actors.push(actorInput(liveLikeJob.record, liveLikeJob.id));
+const liveLikeRouted = previewTransitionState(
+  liveLikeBase,
+  liveLikeRouting,
+  { messageId: 4, swipeId: 0, hash: 'live-like' },
+  {},
+);
+liveLikeJob.record = liveLikeRouted.actors.find(actor => actor.id === liveLikeJob.id);
+const liveLikeSanitized = sanitizeIsolatedResult(
+  {
+    schema_version: 3,
+    base_revision: 1,
+    changes: [
+      {
+        op: 'merge',
+        target: { collection: 'actors', id: liveLikeJob.id },
+        changes: {
+          record: {
+            currentAction: '寅时起身生火烧水，清扫后宅院落',
+            nextDecision: '扫完院子后去挑满水缸',
+            updatedReason: '按她维持多年的生活节奏开始晨间劳作',
+          },
+        },
+      },
+      {
+        op: 'create',
+        target: { collection: 'events', id: 'temporary-daily-event' },
+        value: {
+          description: '翠儿开始了每日晨间劳作。',
+          location: '和济堂后宅',
+          basisIds: [liveLikeJob.id],
+        },
+      },
+    ],
+    scenes: [
+      {
+        based_on: [1],
+        location: '后宅灶间隔壁小房',
+        time: '第4日寅时',
+        actors: ['翠儿'],
+        action: '开始晨间劳作',
+        body: '天还没亮，翠儿便披衣起身，拎起水桶往井边去了。',
+      },
+    ],
+  },
+  liveLikeJob,
+  liveLikeRouted,
+);
+assert.equal(liveLikeSanitized.changes.length, 1, '字段不足的附带日常事件应静默舍弃，只保留人物核心推进');
+assert.deepEqual(Array.from(liveLikeSanitized.scenes[0].based_on), [0], '旁线应自动回挂到当轮人物 merge');
+const liveLikeEvolution = buildTransitionFromChanges(liveLikeRouted, liveLikeSanitized, {
+  currentStat: {},
+  currentTurnText: '',
+  enforceKnowledgeBoundary: false,
+});
+assert.equal(
+  liveLikeEvolution.operation_stats.rejected,
+  0,
+  `真实角色条目缺少显式目标时也不能拒绝合法 merge：${JSON.stringify({
+    actor: liveLikeJob.record,
+    sanitized: liveLikeSanitized,
+    warnings: liveLikeEvolution.operation_stats.warnings,
+  })}`,
+);
+assert.equal(liveLikeEvolution.parallel_scenes.length, 1);
+
+const rosterState = normalizeState(
+  {
+    version: 1,
+    chatId: 'roster-chat',
+    revision: 0,
+    currentWorldDays: 4,
+    scenePresence: { location: '桐城县和济堂前院', actors: ['苏晚棠'] },
+  },
+  'roster-chat',
+);
+const firstRosterJob = selectIsolationJob(rosterState, [], rosterProfiles);
+assert.equal(firstRosterJob?.label, '栖云', '当地且从未推进的角色应先进入世界心跳');
+assert.equal(firstRosterJob?.isRosterSeed, true);
+const firstRosterPayload = buildIsolatedPayload(rosterState, firstRosterJob);
+assert.match(firstRosterPayload.SELF_PROFILE.content, /character: 栖云/);
+assert.doesNotMatch(JSON.stringify(firstRosterPayload), /方子衿|改进纺车/);
+assert.equal(isolatedWorldChangeOutputSchema(firstRosterJob).value.properties.changes.minItems, 1);
+assert.equal(isolatedWorldChangeOutputSchema(firstRosterJob).value.properties.scenes.minItems, 1);
+
+const rosterScheduleAfterFirst = markWorldSchedule(rosterState, firstRosterJob, 1);
+const rotatedRosterState = normalizeState(
+  {
+    ...rosterState,
+    revision: 1,
+    worldSchedule: rosterScheduleAfterFirst,
+    actors: [rosterSeed],
+    scenePresence: { location: '桐城县和济堂前院', actors: ['苏晚棠'] },
+  },
+  'roster-chat',
+);
+const secondRosterJob = selectIsolationJob(rotatedRosterState, [], rosterProfiles);
+assert.equal(secondRosterJob?.label, '方子衿', '已经推进过的人物不得霸占下一次人物轮换');
+const eventFairState = normalizeState(
+  {
+    ...rotatedRosterState,
+    worldSchedule: { ...rotatedRosterState.worldSchedule, laneCursor: 2 },
+    activeEvents: [
+      {
+        id: 'EV-fair',
+        title: '桐城米价波动',
+        stage: '萌芽',
+        status: 'active',
+        location: '桐城县粮市',
+        actors: ['米商'],
+        summary: '粮市米价开始缓慢上涨',
+        nextTrigger: '下一次粮船抵达',
+      },
+    ],
+  },
+  'roster-chat',
+);
+assert.equal(selectIsolationJob(eventFairState, [], rosterProfiles)?.type, 'event', '世事轮次不得被人物永久挤占');
+
+sandbox.getCharWorldbookNames = () => ({ primary: '测试角色书', additional: [] });
+sandbox.getWorldbook = async name => (name === '测试角色书' ? rosterEntries : []);
+const loadedRoster = await loadWorldActorRoster();
+assert.deepEqual(Array.from(loadedRoster, item => item.name), ['栖云', '方子衿']);
+delete sandbox.getCharWorldbookNames;
+delete sandbox.getWorldbook;
+
+const hiddenPacketState = normalizeState(
+  {
+    ...rotatedRosterState,
+    actors: [
+      rosterSeed,
+      {
+        id: 'AC-remote',
+        name: '远方知县',
+        location: '邻县县衙',
+        currentAction: '复核巡防名册',
+        updatedReason: '独立推进',
+      },
+    ],
+  },
+  'roster-chat',
+);
+const hiddenPacket = {
+  offscreenMoves: ['远方知县｜邻县县衙｜复核巡防名册'],
+  npcKnowledge: [{ name: '远方知县', knows: ['本县巡防安排'], doesNotKnow: [] }],
+};
+assert.equal(filterMainModelPacket(hiddenPacketState, hiddenPacket, '玩家仍在和济堂').offscreenMoves.length, 0);
+assert.equal(
+  filterMainModelPacket(hiddenPacketState, hiddenPacket, '我去邻县拜访远方知县').offscreenMoves.length,
+  1,
+  '玩家即将与旁线人物相交时才应交接其动态状态',
+);
+
+// 2.0 角色名册与两段式隔离：第一次调用只分流正文事实，第二次调用只读取当轮人物人设。
 const secretChatId = 'two-stage-secret-chat';
 const secretBase = normalizeState(
   {
@@ -2223,7 +2560,168 @@ assert.ok(
   '保留私密事实不应放宽 NPC 知情边界',
 );
 assert.equal(ledgerRoutingTransition.knowledge_updates.length, 0);
-assert.match(ledgerRoutingTransition.operation_stats.warnings.join('\n'), /自动对齐/);
+assert.equal(ledgerRoutingTransition.operation_stats.warnings.length, 0, '自动对齐属于正常归一化，不应显示为警告');
+
+// 真实酒馆日志回归：{{user}}、称谓替换和省略号证据不能触发第二轮字面相似度误杀。
+const realLogText = [
+  '那挑棍不偏不倚，正中{{user}}后脑勺！围观人群爆发出一阵惊叫。只见{{user}}身子猛地一僵，“嘭”地一声，直挺挺地扑倒在青石板上，登时没了动静。',
+  '众人正自慌乱，忽见那地上的{{user}}身子一挺，“呼”地一声坐直了身子！他冲着街面上的人怒吼：“谁把老子弄到横店来了？你们当老子是群演呢？”',
+  '门外探出赵砚的脑袋，苦着脸道：“林记米铺的周家婶子正逼着娘退婚呢！”',
+  '苏晚月站在门槛外头道：“衙门那边你再不露面，人家正好换个不挨闷棍的顶你的缺。”',
+  '只见堂屋里，苏晚棠和周氏正叉着腰对阵。',
+  '周氏把桌案一拍，大声道：“我林知夏如花似玉，难道要嫁给一个傻子不成？今日这婚，不退也得退！”',
+  '苏晚棠把脸一沉，冷笑道：“周家妹子，你这算盘打得倒精！当年你们林记周转不开，是我家借银救急。”',
+  '周氏尖声道：“今日这庚帖你不退，明日我便找媒婆来，把我闺女另许人家！”',
+  '{{user}}在后宅的雕花木床上躺了三日，将这具身子残存的记忆理了个七七八八，头上的伤也好了大半，只结了一块铜钱大的血痂。',
+].join('\n');
+const realLogTransition = buildFactRoutingTransition(
+  secretBase,
+  normalizeFactRoutingResult({
+    schema_version: 1,
+    facts: [
+      {
+        local_id: 'fact_assault_and_injury_0702',
+        content: '周氏长子被沈大柱用木棍击中后脑，当场昏迷。',
+        evidence: '那挑棍不偏不倚，正中{{user}}后脑勺！……直挺挺地扑倒在青石板上，登时没了动静。',
+        physical_result: '周氏长子后脑受伤并昏迷',
+        location: '桐城县西街',
+        visibility: 'local_public',
+        witnesses: [],
+        witness_evidence: [],
+        target_groups: [],
+        traces: [],
+        discovery_conditions: [],
+      },
+      {
+        local_id: 'fact_bizarre_behavior_0702',
+        content: '周氏长子苏醒后言语怪异，提及横店和群演。',
+        evidence: '地上的{{user}}身子一挺坐直了身子！……谁把老子弄到横店来了？……你们当老子是群演呢？',
+        physical_result: '街面百姓听见了怪异言语',
+        location: '桐城县西街',
+        visibility: 'local_public',
+        witnesses: [],
+        witness_evidence: [],
+        target_groups: [],
+        traces: [],
+        discovery_conditions: [],
+      },
+      {
+        local_id: 'fact_engagement_dispute_0705',
+        content: '周氏登门要求退还庚帖并取消婚约，与苏晚棠激烈争吵。',
+        evidence: '林记米铺的周家婶子正逼着娘退婚呢！……今日这婚，不退也得退！',
+        physical_result: '堂屋内发生退婚争执',
+        location: '和济堂药铺前院堂屋',
+        visibility: 'witnessed',
+        witnesses: ['苏晚棠', '周氏'],
+        witness_evidence: [
+          {
+            name: '苏晚棠',
+            evidence: '你这算盘打得倒精！当年你们林记周转不开，是我家借银救急。',
+          },
+        ],
+        target_groups: [],
+        traces: [],
+        discovery_conditions: [],
+      },
+      {
+        local_id: 'fact_medical_leave_0702_0705',
+        content: '周氏长子受伤后在和济堂后宅静养三日并逐渐恢复。',
+        evidence:
+          '{{user}}在后宅的雕花木床上躺了三日，将这具身子残存的记忆理了个七七八八，头上的伤也好了大半，只结了一块铜钱大的血痂。',
+        physical_result: '后脑伤口已经结痂',
+        location: '和济堂药铺后宅卧室',
+        visibility: 'private',
+        witnesses: [],
+        witness_evidence: [],
+        target_groups: [],
+        traces: [],
+        discovery_conditions: [],
+      },
+    ],
+    scene_entities: [
+      {
+        name: '周氏',
+        location: '和济堂药铺前院堂屋',
+        public_role: '林记米铺东家娘子',
+        apparent_goal: '要求退婚',
+        current_action: '与苏晚棠争吵',
+        evidence: '只见堂屋里，苏晚棠和周氏正叉着腰对阵。',
+      },
+      {
+        name: '苏晚棠',
+        location: '和济堂药铺前院堂屋',
+        public_role: '和济堂主母',
+        apparent_goal: '拒绝退婚',
+        current_action: '与周氏争吵',
+        evidence: '只见堂屋里，苏晚棠和周氏正叉着腰对阵。',
+      },
+    ],
+    communications: [
+      {
+        fact_refs: ['fact_engagement_dispute_0705'],
+        evidence: '今日这庚帖你不退，明日我便找媒婆来，把我闺女另许人家！',
+        sender: '周氏',
+        recipients: ['苏晚棠'],
+        origin: '和济堂药铺前院堂屋',
+        destination: '和济堂药铺前院堂屋',
+        channel: 'face_to_face',
+        target_groups: [],
+        distance_band: 'same_place',
+        visibility: 'restricted',
+      },
+      {
+        fact_refs: ['fact_medical_leave_0702_0705'],
+        evidence: '衙门那边你再不露面，人家正好换个不挨闷棍的顶你的缺。',
+        sender: '苏晚月',
+        recipients: ['CURRENT_VIEWPOINT'],
+        origin: '和济堂药铺后宅门口',
+        destination: '和济堂药铺后宅卧室',
+        channel: '口头告诫',
+        target_groups: [],
+        distance_band: 'same_place',
+        visibility: 'restricted',
+      },
+      {
+        fact_refs: ['fact_engagement_dispute_0705'],
+        evidence: '林记米铺的周家婶子正逼着娘退婚呢！',
+        sender: '赵砚',
+        recipients: ['CURRENT_VIEWPOINT'],
+        origin: '和济堂药铺后宅门口',
+        destination: '和济堂药铺后宅卧室',
+        channel: '口信报告',
+        target_groups: [],
+        distance_band: 'same_place',
+        visibility: 'restricted',
+      },
+    ],
+  }),
+  {
+    世界运转: { 当前地点: '和济堂药铺前院堂屋', 世界运转天数: 12 },
+    人物: {
+      周氏: { 姓名: '周氏', 是否在场: true },
+      苏晚棠: { 姓名: '苏晚棠', 是否在场: true },
+    },
+  },
+  realLogText,
+);
+assert.equal(realLogTransition.turn_facts.length, 4, '真实日志中的四条事实应全部直接入账');
+assert.equal(realLogTransition.operation_stats.rejected, 0, '称谓和措辞差异不应触发事实复审');
+assert.doesNotMatch(realLogTransition.operation_stats.warnings.join('\n'), /缺少可核对关系/);
+assert.deepEqual(Array.from(realLogTransition.turn_facts[2].witnesses), ['苏晚棠']);
+assert.equal(realLogTransition.knowledge_updates.length, 3, '目击、发送者自知和当面告知应正常写入知识账');
+assert.ok(
+  realLogTransition.knowledge_updates.some(
+    update => update.sourceType === 'told_by_actor' && update.sourceActorName === '周氏',
+  ),
+  '正文中明确归属于周氏的当面发言应直接证明发送者知情，不要求模型重复把周氏列为目击者',
+);
+assert.ok(
+  realLogTransition.knowledge_updates.some(
+    update => update.sourceType === 'observation' && update.actorName === '周氏' && update.content.includes('取消婚约'),
+  ),
+  '说话人自己的事实权限也应同步写入知情账，供后续隔离推演使用',
+);
+assert.equal(realLogTransition.operation_stats.warnings.length, 0, '通信候选的正常归一化不应显示成警告');
 
 const hallucinatedRoutingTransition = buildFactRoutingTransition(
   secretBase,
@@ -2312,12 +2810,85 @@ const sanitizedGeographicResult = sanitizeIsolatedResult(
   secretRoutedState,
 );
 assert.equal(sanitizedGeographicResult.changes.length, 1, '越权来源 ID 必须在机械层被拒绝');
-assert.equal(
-  Object.hasOwn(sanitizedGeographicResult.changes[0].changes, 'location'),
-  false,
-  '隔离人物不得瞬移到异地',
-);
+assert.equal(Object.hasOwn(sanitizedGeographicResult.changes[0].changes, 'location'), false, '隔离人物不得瞬移到异地');
 assert.equal(sanitizedGeographicResult.scenes.length, 0, '隔离人物的旁线不得直接发生在异地');
+
+// 第二次调用只做结构归一化和权限裁剪，不应因常见别名字段再次否定合法演化。
+const sanitizedAliasResult = sanitizeIsolatedResult(
+  {
+    schema_version: 3,
+    base_revision: secretRoutedState.revision,
+    changes: [
+      {
+        op: 'create',
+        target: { collection: 'events', id: 'temp-event' },
+        value: {
+          type: 'event',
+          label: '巡防名册复核',
+          description: '远方知县继续在本县复核巡防名册。',
+          stage: '萌芽',
+          location: '邻县县衙',
+          actors: ['远方知县'],
+          next_trigger: '次日点卯',
+          causeId: remoteJob.id,
+          basisIds: [remoteJob.id],
+        },
+      },
+      {
+        op: 'create',
+        target: { collection: 'hooks', id: 'temp-hook' },
+        value: {
+          type: 'hook',
+          label: '巡防名册疑点',
+          description: '名册中有一处班次空缺。',
+          stage: '萌芽',
+          trigger: '再次核对名册',
+          fail_condition: '班次空缺被补齐',
+          causeId: remoteJob.id,
+          basisIds: [remoteJob.id],
+        },
+      },
+    ],
+    scenes: [],
+  },
+  remoteJob,
+  secretRoutedState,
+);
+assert.equal(sanitizedAliasResult.changes.length, 2, '合法演化不得因别名字段被整段丢弃');
+assert.deepEqual(
+  JSON.parse(JSON.stringify(sanitizedAliasResult.changes[0].value)),
+  {
+    title: '巡防名册复核',
+    stage: '萌芽',
+    location: '邻县县衙',
+    actors: ['远方知县'],
+    summary: '远方知县继续在本县复核巡防名册。',
+    nextTrigger: '次日点卯',
+    sourceFactIds: [remoteJob.id],
+  },
+  '第二次调用的事件字段应归一化为正式协议',
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(sanitizedAliasResult.changes[1].value)),
+  {
+    title: '巡防名册疑点',
+    stage: '萌芽',
+    summary: '名册中有一处班次空缺。',
+    trigger: '再次核对名册',
+    failCondition: '班次空缺被补齐',
+    sourceFactIds: [remoteJob.id],
+  },
+  '第二次调用的伏线字段应归一化为正式协议',
+);
+const aliasTransition = buildTransitionFromChanges(secretRoutedState, sanitizedAliasResult, {
+  currentStat: secretStat,
+  currentTurnText: '',
+  enforceKnowledgeBoundary: false,
+});
+assert.equal(aliasTransition.operation_stats.accepted, 2);
+assert.equal(aliasTransition.operation_stats.rejected, 0);
+assert.equal(aliasTransition.upsert_events.length, 1);
+assert.equal(aliasTransition.upsert_hooks.length, 1);
 
 const falsePublicText = '城中官府仍在筹备明日巡防。';
 const falsePublicTransition = buildFactRoutingTransition(
@@ -2346,7 +2917,7 @@ const falsePublicTransition = buildFactRoutingTransition(
   falsePublicText,
 );
 assert.equal(falsePublicTransition.turn_facts[0].visibility, 'private', '没有公开传播措辞时不得接受 local_public');
-assert.match(falsePublicTransition.operation_stats.warnings.join('\n'), /没有明确公开传播证据/);
+assert.equal(falsePublicTransition.operation_stats.warnings.length, 0, '保守降级属于正常归一化，不应显示成警告');
 
 const explicitPublicText = '官府将巡防告示张贴在城门，围观百姓议论纷纷。';
 const explicitPublicTransition = buildFactRoutingTransition(
@@ -2474,7 +3045,8 @@ assert.match(activeProcessSource, /callIsolatedWorldModel/);
 assert.match(activeProcessSource, /routingFailure \? null : selectIsolationJob/);
 assert.doesNotMatch(activeProcessSource, /resolvePromptSnapshot|resolveWorldInfoSupplement|callWorldModel\(/);
 assert.match(factRoutingSystemPrompt(), /不续写剧情、不推演任何人物/);
-assert.match(isolatedSystemPrompt(remoteJob), /没有出现的事实、正文、秘密、世界书内容/);
+assert.match(isolatedSystemPrompt(remoteJob), /SELF_PROFILE.*不是本轮新消息/s);
+assert.match(isolatedSystemPrompt(remoteJob), /不能用空 changes 逃避推进/);
 
 let cancelledGenerationId = '';
 sandbox.stopGenerationById = generationId => {
@@ -2502,12 +3074,12 @@ await assert.rejects(cancelledRequest, error => error?.code === 'CWE_CANCELLED')
 assert.equal(cancelledGenerationId, cancelledJob.generationId);
 assert.equal(cancelledJob.cancelled, true);
 
-assert.match(fullSource, /const VERSION = '1\.9\.0'/);
+assert.match(fullSource, /const VERSION = '2\.0\.0'/);
 assert.match(fullSource, /requestTimeoutMs: 90000/);
 assert.match(fullSource, /data-setting="requestTimeoutSeconds"/);
 assert.match(fullSource, /data-banner-action="cancel"/);
 assert.match(fullSource, /stopGenerationById/);
 assert.doesNotMatch(fullSource, /json_schema:\s*schema/);
 console.info(
-  '天下演化测试通过：真实楼层票据、MVU 去重、假请求隔离、存储自愈、主动清空、v3 增量协议、两段式事实分流、知情单元隔离、秘密不可见、传播时限、群体匹配、空结果、请求预算、稳定 ID、主动取消与旧档迁移均已覆盖。',
+  '天下演化测试通过：真实楼层票据、MVU 去重、假请求隔离、存储自愈、主动清空、v3 增量协议、两段式事实分流、世界书角色名册、公平轮换、连续旁线、按需正文联动、秘密不可见、传播时限、群体匹配、请求预算、稳定 ID、主动取消与旧档迁移均已覆盖。',
 );
