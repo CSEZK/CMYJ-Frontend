@@ -275,6 +275,13 @@ assert.ok(
 assert.doesNotMatch(JSON.stringify(originalTongchengRelationshipGraph.nodes), /约?[一二三四五六七八九十]+岁/);
 assert.match(releaseStatusbarSource, /ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH/);
 assert.match(releaseStatusbarSource, /relationshipGraphVersion/);
+assert.match(releaseStatusbarSource, /function syncActiveDlcRelationshipGraph\(context = ACTIVE_DLC_CONTEXT\)/);
+assert.doesNotMatch(releaseStatusbarSource, /const GRAPH_(?:CATEGORIES|NODES|LINKS)\s*=/);
+assert.equal(
+  [...releaseStatusbarSource.matchAll(/syncActiveDlcRelationshipGraph\((?:context|null)\)/g)].length,
+  3,
+  '身份 DLC 安装、修复和卸载必须同步刷新人物谱系',
+);
 assert.match(JSON.stringify(originalTongchengRelationshipGraph), /未婚夫妻/);
 assert.match(releaseStatusbarSource, /east_asia_1634_provinces/);
 assert.doesNotMatch(releaseStatusbarSource, /GooYi-C\/History@main\/world_1629\.js/);

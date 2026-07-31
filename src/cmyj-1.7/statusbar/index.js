@@ -851,7 +851,7 @@ function getShopItems() {
 }
 
 // ============================================================
-// 人物谱系图 —— 硬编码数据（不读变量，固定关系）
+// 人物谱系图 —— 跟随当前身份 DLC 上下文（不读取会随剧情变化的 MVU 变量）
 // ============================================================
 function activeDlcStorage() {
   try {
@@ -903,25 +903,34 @@ let ACTIVE_DLC_CONTEXT = (() => {
     return null;
   }
 })();
-const DLC_RELATIONSHIP_GRAPH = ACTIVE_DLC_CONTEXT?.ui?.relationshipGraph;
 
-const GRAPH_CATEGORIES = Array.isArray(DLC_RELATIONSHIP_GRAPH?.categories)
-  ? DLC_RELATIONSHIP_GRAPH.categories
-  : [{ name: '未安装身份DLC', color: '#8b8178', symbol: 'circle' }];
-const GRAPH_NODES =
-  Array.isArray(DLC_RELATIONSHIP_GRAPH?.nodes) && DLC_RELATIONSHIP_GRAPH.nodes.length > 0
-    ? DLC_RELATIONSHIP_GRAPH.nodes
-    : [
-        {
-          id: '主角',
-          name: '主角',
-          category: 0,
-          symbolSize: 64,
-          symbol: 'circle',
-          desc: '尚未安装身份 DLC；主角身份、关系与开场均未定义。',
-        },
-      ];
-const GRAPH_LINKS = Array.isArray(DLC_RELATIONSHIP_GRAPH?.links) ? DLC_RELATIONSHIP_GRAPH.links : [];
+function resolveDlcRelationshipGraph(context = ACTIVE_DLC_CONTEXT) {
+  const graph = context?.ui?.relationshipGraph;
+  return {
+    categories: Array.isArray(graph?.categories)
+      ? graph.categories
+      : [{ name: '未安装身份DLC', color: '#8b8178', symbol: 'circle' }],
+    nodes:
+      Array.isArray(graph?.nodes) && graph.nodes.length > 0
+        ? graph.nodes
+        : [
+            {
+              id: '主角',
+              name: '主角',
+              category: 0,
+              symbolSize: 64,
+              symbol: 'circle',
+              desc: '尚未安装身份 DLC；主角身份、关系与开场均未定义。',
+            },
+          ],
+    links: Array.isArray(graph?.links) ? graph.links : [],
+  };
+}
+
+const INITIAL_RELATIONSHIP_GRAPH = resolveDlcRelationshipGraph();
+let GRAPH_CATEGORIES = INITIAL_RELATIONSHIP_GRAPH.categories;
+let GRAPH_NODES = INITIAL_RELATIONSHIP_GRAPH.nodes;
+let GRAPH_LINKS = INITIAL_RELATIONSHIP_GRAPH.links;
 
 const STAT_DATA_SHELL = {
   世界运转: {},
@@ -979,6 +988,25 @@ const pendingDeletedPaths = new Set();
 let settleSessionId = ''; // 会话标记：换档时清空 pendingDeletedPaths
 let mapMode = loadStorage('mapMode', 'status');
 let marketTransactionPending = false;
+
+function syncActiveDlcRelationshipGraph(context = ACTIVE_DLC_CONTEXT) {
+  const graph = resolveDlcRelationshipGraph(context);
+  GRAPH_CATEGORIES = graph.categories;
+  GRAPH_NODES = graph.nodes;
+  GRAPH_LINKS = graph.links;
+  if (!GRAPH_NODES.some(node => node.id === graphSelected || node.name === graphSelected)) {
+    graphSelected = GRAPH_NODES.find(node => node.id === '主角')?.id || GRAPH_NODES[0]?.id || '主角';
+  }
+  graphSearch = '';
+  if (echartsGraphInstance) {
+    try {
+      echartsGraphInstance.dispose();
+    } catch {
+      /* ignore */
+    }
+    echartsGraphInstance = null;
+  }
+}
 
 // ============================================================
 // 东亚 GeoJSON 子集 —— 从 WORLD_1634 筛选
@@ -4477,6 +4505,8 @@ async function repairBuiltinTongchengCharacterProfiles() {
   writeActiveDlcContext(characterName, context);
   globalThis.__CMYJ_DLC_CONTEXT_V1__ = context;
   ACTIVE_DLC_CONTEXT = context;
+  syncActiveDlcRelationshipGraph(context);
+  renderStatusbarBehindWorkshop();
   await syncPortraitIllustrationRule();
   return {
     scenarioId: extension.id,
@@ -4761,6 +4791,8 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
   writeActiveDlcContext(characterName, context);
   globalThis.__CMYJ_DLC_CONTEXT_V1__ = context;
   ACTIVE_DLC_CONTEXT = context;
+  syncActiveDlcRelationshipGraph(context);
+  renderStatusbarBehindWorkshop();
   getPortraitLibrary();
   getCharacterProfiles();
   await syncPortraitIllustrationRule();
@@ -4960,6 +4992,7 @@ async function uninstallWorkshopInstall(delta = {}) {
           delete globalThis.__CMYJ_DLC_CONTEXT_V1__;
         } catch {}
         ACTIVE_DLC_CONTEXT = null;
+        syncActiveDlcRelationshipGraph(null);
         getPortraitLibrary();
         getCharacterProfiles();
       }
