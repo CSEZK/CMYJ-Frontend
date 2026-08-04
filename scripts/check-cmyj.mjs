@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const channels = ['cmyj-1.6', 'cmyj-1.7-beta', 'cmyj-1.7'];
+const channels = ['cmyj-1.6', 'cmyj-1.7-beta', 'cmyj-1.7', 'cmyj-1.8'];
 const trees = channels.flatMap(channel => [path.join(root, 'src', channel), path.join(root, 'dist', channel)]);
 
 async function collect(directory) {
@@ -38,4 +38,4 @@ if (worldEngineTest.status !== 0) {
 }
 if (worldEngineTest.stdout) process.stdout.write(worldEngineTest.stdout);
 
-console.info('残明余烬 1.6、DLC 测试版与 1.7 正式版均通过语法检查，天下演化真实载荷回归通过。');
+console.info('残明余烬 1.6、DLC 测试版、1.7 正式版与 1.8 均通过语法检查，天下演化真实载荷回归通过。');
