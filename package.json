@@ -4,6 +4,7 @@
     "build:dev": "webpack --mode development",
     "build": "webpack --mode production",
     "build:beta": "node scripts/build-channel.mjs cmyj-1.7-beta",
+    "build:1.8": "node scripts/build-channel.mjs cmyj-1.8",
     "build:pages": "pnpm build && node scripts/prepare-pages.mjs",
     "watch": "webpack --mode development --watch --progress",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,css,scss,html,vue}\" --no-error-on-unmatched-pattern",

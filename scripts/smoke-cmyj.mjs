@@ -21,6 +21,13 @@ const originalTongchengAdaptations = JSON.parse(
     'utf8',
   ),
 );
+const v18Loader = await readFile(path.join(root, 'dist', 'cmyj-1.8', 'loader', 'index.js'), 'utf8');
+const v18SchemaSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'schema', 'definition.js'), 'utf8');
+const v18GeneratorSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'generator', 'index.js'), 'utf8');
+const v18ScenarioSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'scenario-generator', 'index.js'), 'utf8');
+const v18StatusbarSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'statusbar', 'index.js'), 'utf8');
+const v18WorkshopSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'workshop', 'index.js'), 'utf8');
+const v18WorldEngineSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'world-engine', 'index.js'), 'utf8');
 
 assert.ok(loader.length > 300_000, '共享加载器未包含完整脚本集');
 assert.match(loader, /CanmingWorkshop/);
@@ -144,4 +151,31 @@ for (const [name, anchor] of Object.entries(experienceAnchors)) {
   assert.match(JSON.stringify(adaptation), new RegExp(anchor), `${name} 缺少正式版关键经历「${anchor}」`);
 }
 
-console.info('稳定版与 DLC 测试版加载器、环境隔离及脚本模块均已接入。');
+assert.match(v18Loader, /__CMYJRemoteScriptsV18/);
+assert.match(v18StatusbarSource, /STATUSBAR_VERSION = '1\.8\.0'/);
+assert.match(v18StatusbarSource, /canming-afterglow-1\.8:statusbar:/);
+assert.match(v18StatusbarSource, /__CMYJWorkshopNoticeRuntimeV18/);
+assert.doesNotMatch(v18StatusbarSource, /canming-afterglow-statusbar:/);
+assert.match(v18GeneratorSource, /canming-1\.8:generator:api/);
+assert.doesNotMatch(v18GeneratorSource, /canming-dlc-staging:generator:/);
+assert.match(v18ScenarioSource, /canming-1\.8:scenario-generator:project:v1/);
+assert.match(v18ScenarioSource, /canming-1\.8:generator:api/);
+assert.match(v18WorldEngineSource, /__CMYJWorldEngineV18/);
+assert.match(v18WorldEngineSource, /cmyj_world_engine_v18/);
+assert.match(v18WorldEngineSource, /canming-world-engine-1\.8:/);
+assert.doesNotMatch(v18WorldEngineSource, /canming-world-engine:/);
+assert.match(v18WorkshopSource, /canming-workshop-1\.8:publish-v3/);
+assert.match(v18WorkshopSource, /canming-workshop-1\.8:installs-v1/);
+assert.match(v18WorkshopSource, /canming-workshop-staging:token/);
+assert.match(v18WorkshopSource, /canming-workshop-staging:user/);
+assert.match(v18SchemaSource, /粮秣流水/);
+assert.match(v18SchemaSource, /装备编制/);
+assert.match(v18SchemaSource, /欠饷月数/);
+assert.match(v18SchemaSource, /军令记录/);
+assert.match(v18StatusbarSource, /function buildMilitaryCommandQuote/);
+assert.match(v18StatusbarSource, /function advanceMilitaryOrders/);
+assert.match(v18StatusbarSource, /function appendGrainTransaction/);
+assert.match(v18StatusbarSource, /data-action="open-military-command"/);
+assert.match(v18StatusbarSource, /军府签押/);
+
+console.info('稳定版、DLC 测试版与 1.8 加载器、状态隔离及脚本模块均已接入。');
