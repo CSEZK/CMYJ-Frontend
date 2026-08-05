@@ -1,7 +1,7 @@
 import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.8.4';
+const STATUSBAR_VERSION = '1.8.5';
 const STORAGE_PREFIX = 'canming-afterglow-1.8:statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
@@ -55,8 +55,8 @@ const BUILTIN_TONGCHENG_WORLDBOOK_ENTRIES = Object.freeze([
 ]);
 
 const STATUSBAR_SCRIPT_SRC = document.currentScript?.src || '';
-const WORKSHOP_API = 'https://cm-yj-workshop-staging.canming-cloud.workers.dev';
-const WORKSHOP_TOKEN_KEY = 'canming-workshop-staging:token';
+const WORKSHOP_API = 'https://cm-yj-workshop.canming-cloud.workers.dev';
+const WORKSHOP_TOKEN_KEY = 'canming-workshop:token';
 const WORKSHOP_NOTICE_INTERVAL_MS = 10 * 60 * 1000;
 const WORKSHOP_NOTICE_RESUME_THROTTLE_MS = 15000;
 const WORKSHOP_NOTICE_RUNTIME_KEY = '__CMYJWorkshopNoticeRuntimeV18';
