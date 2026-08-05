@@ -1,7 +1,7 @@
 import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.8.0';
+const STATUSBAR_VERSION = '1.8.1';
 const STORAGE_PREFIX = 'canming-afterglow-1.8:statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
@@ -42,6 +42,17 @@ const BUILTIN_TONGCHENG_OPENINGS = [
     subtitle: '崇祯八年正月 · 桐城快班班头',
   },
 ];
+
+const BUILTIN_TONGCHENG_WORLDBOOK_ENTRIES = Object.freeze([
+  { source: '[scenario_resource]桐城及周边概览', name: '桐城及周边概览' },
+  { source: '[scenario_resource]桐城本地势力', name: '桐城本地势力' },
+  { source: '[scenario_resource]安庆及周边', name: '安庆及周边' },
+  { source: '[scenario_resource]周边军事势力', name: '周边军事势力' },
+  { source: '[scenario_resource]区域经济', name: '区域经济' },
+  { source: '[scenario_resource]桐城民变', name: '[mvu_plot]桐城民变' },
+  { source: '[scenario_resource]黄文鼎', name: '黄文鼎' },
+  { source: '[scenario_resource]汪国华', name: '汪国华' },
+]);
 
 const STATUSBAR_SCRIPT_SRC = document.currentScript?.src || '';
 const WORKSHOP_API = 'https://cm-yj-workshop-staging.canming-cloud.workers.dev';
@@ -4789,7 +4800,7 @@ function nextImportedName(base, usedNames) {
   return name;
 }
 
-async function importWorldbookWorkshopPackage(bundle) {
+async function importWorldbookWorkshopPackage(bundle, options = {}) {
   const workshop = getCanmingWorkshop();
   const checked = typeof workshop?.validatePackage === 'function' ? workshop.validatePackage(bundle) : bundle;
   if (checked?.format !== WORKSHOP_PACKAGE_FORMAT) throw new Error('不是有效的世界书作品包。');
@@ -4806,8 +4817,8 @@ async function importWorldbookWorkshopPackage(bundle) {
   const worldbookName = getWorldbookName();
   const current = [...((await worldbook(worldbookName)) || [])];
   const conflicts = entries.filter(entry => current.some(item => item.name === entry.name));
-  let mode = 'append';
-  if (conflicts.length) {
+  let mode = options.conflictMode || 'append';
+  if (conflicts.length && mode === 'append') {
     const names = conflicts.map(entry => entry.name).join('、');
     if (
       await canmingUiDialog(`世界书中已存在：${names}\n\n是否覆盖同名条目？`, {
@@ -5018,6 +5029,18 @@ _%>
   };
 }
 
+function builtinTongchengWorldbookEntries(entries) {
+  return BUILTIN_TONGCHENG_WORLDBOOK_ENTRIES.map(definition => {
+    const source = entries.find(entry => entry?.name === definition.source);
+    if (!source?.content) throw new Error(`基础卡缺少内置资源「${definition.source}」，请重新同步角色卡。`);
+    const entry = JSON.parse(JSON.stringify(source));
+    delete entry.uid;
+    entry.name = definition.name;
+    entry.enabled = true;
+    return entry;
+  });
+}
+
 async function getInstalledScenarioInfo() {
   const getCurrentName = getWorkshopApi('getCurrentCharacterName');
   const getCharacter = getWorkshopApi('getCharacter');
@@ -5030,6 +5053,7 @@ async function getInstalledScenarioInfo() {
     id: installed.id,
     name: installed.name || installed.id,
     version: installed.version || '',
+    worldbookEntries: Array.isArray(installed.worldbookEntries) ? [...installed.worldbookEntries] : [],
     context: installed.context || readActiveDlcContext(characterName) || null,
   };
 }
@@ -5090,11 +5114,21 @@ async function installBuiltinTongchengScenario() {
     const installedAdaptationCount = Array.isArray(installed?.context?.characterAdaptations)
       ? installed.context.characterAdaptations.length
       : 0;
-    if (installed?.id === 'cmyj.original.tongcheng' && installedAdaptationCount >= originalAdaptationCount) {
+    const requiredWorldbookNames = new Set([
+      '人物概览',
+      ...BUILTIN_TONGCHENG_WORLDBOOK_ENTRIES.map(entry => entry.name),
+    ]);
+    const installedWorldbookNames = new Set(installed?.worldbookEntries || []);
+    const hasCompleteWorldbook = [...requiredWorldbookNames].every(name => installedWorldbookNames.has(name));
+    if (
+      installed?.id === 'cmyj.original.tongcheng' &&
+      installedAdaptationCount >= originalAdaptationCount &&
+      hasCompleteWorldbook
+    ) {
       showToast('原版桐城开局已经安装，无需重复安装。', 'ok');
       return { scenarioId: installed.id, alreadyInstalled: true };
     }
-    if (installed?.id === 'cmyj.original.tongcheng') {
+    if (installed?.id === 'cmyj.original.tongcheng' && hasCompleteWorldbook) {
       const repaired = await repairBuiltinTongchengCharacterAdaptations();
       showToast(`✓ 已补全原版桐城开局的 ${repaired.characterAdaptationCount} 名角色人设`, 'ok');
       return repaired;
@@ -5197,13 +5231,14 @@ async function installBuiltinTongchengScenario() {
     const overviews = Object.fromEntries(
       openings.map(opening => [opening.id, (overviewNames[opening.id] || []).map(name => peopleByName[name])]),
     );
+    const scenarioWorldbookEntries = builtinTongchengWorldbookEntries(entries);
     const resource = {
       id: 'cmyj.original.tongcheng',
       kind: 'scenario',
       name: '原版·桐城皂隶篇',
       scenario: {
         id: 'cmyj.original.tongcheng',
-        version: '1.0.1',
+        version: '1.1.0',
         baseCard: 'cmyj.base',
         minBaseVersion: STATUSBAR_VERSION,
         exclusiveGroup: 'player-origin',
@@ -5211,7 +5246,7 @@ async function installBuiltinTongchengScenario() {
         newChatRequired: true,
       },
       openings,
-      worldbookEntries: [builtinTongchengOverviewEntry(overviews)],
+      worldbookEntries: [...scenarioWorldbookEntries, builtinTongchengOverviewEntry(overviews)],
       initialRelationships: [],
       portraitProfiles: [],
       characterOverviewVersion: 1,
@@ -5227,7 +5262,7 @@ async function installBuiltinTongchengScenario() {
       createdAt: new Date().toISOString(),
       metadata: {
         title: resource.name,
-        summary: '内置原版桐城身份与三条经典开场。',
+        summary: '内置原版桐城身份、三条经典开场与完整的桐城地方设定。',
         tags: ['残明余烬', '桐城', '原版开局'],
         categories: ['剧情扩展'],
         coverUrl: '',
@@ -5333,7 +5368,7 @@ async function importScenarioWorkshopPackage(bundle) {
       },
     ],
   };
-  await importWorldbookWorkshopPackage(worldbookBundle);
+  await importWorldbookWorkshopPackage(worldbookBundle, { conflictMode: 'overwrite' });
   if (
     staleInstalledWorldbookNames.size &&
     typeof getWorldbook === 'function' &&
@@ -5402,16 +5437,25 @@ async function snapshotWorkshopInstallState() {
   }
   const generator = getCharacterGenerator();
   let activeScenario = null;
+  let characterName = '';
+  let characterId = '';
+  let characterVersion = '';
   try {
     const getCurrentName = getWorkshopApi('getCurrentCharacterName');
+    const getCurrentId = getWorkshopApi('getCurrentCharacterId');
     const getCharacter = getWorkshopApi('getCharacter');
-    const characterName = typeof getCurrentName === 'function' ? getCurrentName() : '';
+    characterName = typeof getCurrentName === 'function' ? getCurrentName() || '' : '';
+    characterId = typeof getCurrentId === 'function' ? getCurrentId() || '' : '';
     const character = characterName && typeof getCharacter === 'function' ? await getCharacter(characterName) : null;
+    characterVersion = String(character?.version || '');
     activeScenario = character?.extensions?.canming_dlc?.id || null;
   } catch {
     /* ignore */
   }
   return {
+    characterName,
+    characterId,
+    characterVersion,
     characters: getCharacterProfiles()
       .profiles.map(item => item.id)
       .filter(Boolean),
