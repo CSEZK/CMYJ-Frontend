@@ -968,6 +968,7 @@ let activeDifficulty = loadStorage('difficulty', 'normal');
 let worldbookSyncing = false;
 let shopEnabled = loadStorage('shop_enabled', '1') === '1';
 let illustrationsEnabled = loadStorage('illustrations_enabled', '1') === '1';
+let privateViewEnabled = loadStorage('private_view_enabled', '0') === '1';
 let refreshTimer;
 let lastMessageId = null;
 let dragState = null;
@@ -6567,6 +6568,15 @@ function bindFrameEvents() {
       return;
     }
 
+    // 切换私密视角开关
+    const togglePrivate = target.closest('[data-action="toggle-private-view"]');
+    if (togglePrivate) {
+      event.preventDefault();
+      event.stopPropagation();
+      togglePrivateView();
+      return;
+    }
+
     // 风月阁购买物品
     const buyBtn = target.closest('[data-action="shop-buy"]');
     if (buyBtn) {
@@ -8109,6 +8119,11 @@ function renderSettingsModal() {
               <span class="cm-diff-desc">允许 AI 在正文中生成场景插图</span>
               <span class="cm-diff-check">${illustrationsEnabled ? '开' : '关'}</span>
             </button>
+            <button class="cm-diff-btn${privateViewEnabled ? ' active' : ''}" data-action="toggle-private-view">
+              <span class="cm-diff-name">🌸 私密视角</span>
+              <span class="cm-diff-desc">允许 AI 描写女角色独处与闺阁私密时刻；关闭后历史内容同步隐藏</span>
+              <span class="cm-diff-check">${privateViewEnabled ? '开' : '关'}</span>
+            </button>
           </div>
         </div>
       </section>
@@ -8228,6 +8243,30 @@ async function syncWorldbookSettings() {
       saveStorage('illustrations_enabled', illustrationsEnabled ? '1' : '0');
     }
 
+    // 私密视角：以世界书条目的 enabled 为准
+    const privateEntry = entries.find(entry => (entry.name || '').includes('私密视角-输出规则'));
+    if (privateEntry && privateViewEnabled !== !!privateEntry.enabled) {
+      privateViewEnabled = !!privateEntry.enabled;
+      saveStorage('private_view_enabled', privateViewEnabled ? '1' : '0');
+      // 同步正则，避免条目状态与美化/隐藏正则错位
+      try {
+        const getter = globalThis.getTavernRegexes ?? window.parent?.getTavernRegexes;
+        const replacer = globalThis.replaceTavernRegexes ?? window.parent?.replaceTavernRegexes;
+        if (typeof getter === 'function' && typeof replacer === 'function') {
+          const regexes = getter({ type: 'character', name: 'current' }) || [];
+          const updated = regexes.map(regex => {
+            const name = regex.script_name || '';
+            if (name.includes('私密视角美化')) return { ...regex, enabled: privateViewEnabled };
+            if (name.includes('私密视角隐藏')) return { ...regex, enabled: !privateViewEnabled };
+            return regex;
+          });
+          await replacer(updated, { type: 'character', name: 'current' });
+        }
+      } catch (error) {
+        console.warn('[状态栏] 同步私密视角正则失败:', error);
+      }
+    }
+
     if (modalState?.type === 'settings') render();
   } catch (error) {
     console.warn('[状态栏] 同步世界书设置失败:', error);
@@ -8308,6 +8347,60 @@ async function toggleIllustrations() {
   } catch (error) {
     console.error('[状态栏] 插图切换失败:', error);
     showToast(`✗ 切换失败：${error.message || '未知错误'}`, 'err');
+  }
+  render();
+}
+
+async function togglePrivateView() {
+  const newState = !privateViewEnabled;
+  const errors = [];
+
+  // 1) 切换世界书条目：开启则启用输出规则，关闭则停用
+  try {
+    const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
+    const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
+    if (typeof worldbook === 'function' && typeof replaceWorldbook === 'function') {
+      const entries = (await worldbook(getWorldbookName())) || [];
+      const hasEntry = entries.some(entry => (entry.name || '').includes('私密视角-输出规则'));
+      if (hasEntry) {
+        const updated = entries.map(entry =>
+          (entry.name || '').includes('私密视角-输出规则') ? { ...entry, enabled: newState } : entry,
+        );
+        await replaceWorldbook(getWorldbookName(), updated, { render: 'immediate' });
+      } else {
+        errors.push('世界书缺少「私密视角-输出规则」条目');
+      }
+    }
+  } catch (error) {
+    errors.push(error?.message || '世界书切换失败');
+  }
+
+  // 2) 切换正则：开启时启用美化、停用隐藏；关闭时启用隐藏、停用美化
+  const getter = globalThis.getTavernRegexes ?? window.parent?.getTavernRegexes;
+  const replacer = globalThis.replaceTavernRegexes ?? window.parent?.replaceTavernRegexes;
+  if (typeof getter === 'function' && typeof replacer === 'function') {
+    try {
+      const regexes = getter({ type: 'character', name: 'current' }) || [];
+      const updated = regexes.map(regex => {
+        const name = regex.script_name || '';
+        if (name.includes('私密视角美化')) return { ...regex, enabled: newState };
+        if (name.includes('私密视角隐藏')) return { ...regex, enabled: !newState };
+        return regex;
+      });
+      await replacer(updated, { type: 'character', name: 'current' });
+    } catch (error) {
+      errors.push(error?.message || '正则切换失败');
+    }
+  } else {
+    errors.push('正则接口不可用');
+  }
+
+  privateViewEnabled = newState;
+  saveStorage('private_view_enabled', newState ? '1' : '0');
+  if (errors.length) {
+    showToast(`✗ 私密视角切换未完全生效：${errors.join('；')}`, 'err');
+  } else {
+    showToast(`✓ 私密视角已${newState ? '开启' : '关闭'}`, 'ok');
   }
   render();
 }
