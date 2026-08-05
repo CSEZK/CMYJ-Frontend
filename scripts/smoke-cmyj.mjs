@@ -152,7 +152,22 @@ for (const [name, anchor] of Object.entries(experienceAnchors)) {
 }
 
 assert.match(v18Loader, /__CMYJRemoteScriptsV18/);
-assert.match(v18StatusbarSource, /STATUSBAR_VERSION = '1\.8\.0'/);
+assert.match(v18StatusbarSource, /STATUSBAR_VERSION = '1\.8\.\d+'/);
+assert.match(v18StatusbarSource, /version: '1\.1\.0'/);
+assert.match(v18StatusbarSource, /builtinTongchengWorldbookEntries\(entries\)/);
+assert.match(v18StatusbarSource, /conflictMode: 'overwrite'/);
+for (const entryName of [
+  '桐城及周边概览',
+  '桐城本地势力',
+  '安庆及周边',
+  '周边军事势力',
+  '区域经济',
+  '[mvu_plot]桐城民变',
+  '黄文鼎',
+  '汪国华',
+]) {
+  assert.match(v18StatusbarSource, new RegExp(entryName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+}
 assert.match(v18StatusbarSource, /canming-afterglow-1\.8:statusbar:/);
 assert.match(v18StatusbarSource, /__CMYJWorkshopNoticeRuntimeV18/);
 assert.doesNotMatch(v18StatusbarSource, /canming-afterglow-statusbar:/);
@@ -168,6 +183,23 @@ assert.match(v18WorkshopSource, /canming-workshop-1\.8:publish-v3/);
 assert.match(v18WorkshopSource, /canming-workshop-1\.8:installs-v1/);
 assert.match(v18WorkshopSource, /canming-workshop-staging:token/);
 assert.match(v18WorkshopSource, /canming-workshop-staging:user/);
+assert.match(v18WorkshopSource, /'worldbook','scenario','generator'/);
+assert.match(v18WorkshopSource, /data-collection-scenario-file/);
+assert.match(v18WorkshopSource, /collectionScenarioBundle/);
+assert.match(v18WorkshopSource, /开场白与初始变量、人物关系、世界书、人物志及角色适配/);
+assert.match(v18WorkshopSource, /合集安装时仍遵守一局一身份/);
+assert.match(v18WorkshopSource, /showWorkshopSessionExpired/);
+assert.match(v18WorkshopSource, /workshopStoredTokenExpired/);
+assert.match(v18WorkshopSource, /data-a="session-expired-login"/);
+assert.match(v18WorkshopSource, /新的登录凭证有效期为 <b>72 小时<\/b>/);
+assert.match(v18WorkshopSource, /r\.status===401&&t&&!path\.startsWith\('\/api\/auth\/'\)/);
+assert.match(v18WorkshopSource, /saveInstallSnapshot\(record\.id,snapshot\)/);
+assert.match(v18WorkshopSource, /__installOptions=\{enabled:/);
+assert.match(v18WorkshopSource, /applyInstalledWorkToCurrentCard/);
+assert.match(v18WorkshopSource, /targetCharacterId:after\.characterId/);
+assert.match(v18WorkshopSource, /data-apply-install/);
+assert.match(v18StatusbarSource, /getCurrentCharacterId/);
+assert.match(v18StatusbarSource, /characterId,/);
 assert.match(v18SchemaSource, /粮秣流水/);
 assert.match(v18SchemaSource, /装备编制/);
 assert.match(v18SchemaSource, /欠饷月数/);
