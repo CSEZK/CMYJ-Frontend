@@ -1,7 +1,7 @@
 import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.8.3';
+const STATUSBAR_VERSION = '1.8.4';
 const STORAGE_PREFIX = 'canming-afterglow-1.8:statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
