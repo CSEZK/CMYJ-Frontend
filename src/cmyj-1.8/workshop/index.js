@@ -1,5 +1,5 @@
 (()=>{'use strict';
-const API='https://cm-yj-workshop-staging.canming-cloud.workers.dev',F='canming-workshop-package',R='canming-workshop-root',TK='canming-workshop-staging:token',UK='canming-workshop-staging:user',DK='canming-workshop-1.8:publish-v3',PK='canming-workshop-staging:pending-auth',WV='1.8.0-dev-20260804';
+const API='https://cm-yj-workshop.canming-cloud.workers.dev',F='canming-workshop-package',R='canming-workshop-root',TK='canming-workshop:token',UK='canming-workshop:user',DK='canming-workshop-1.8:publish-v3',PK='canming-workshop:pending-auth',WV='1.8-production-20260805';
 const K={character:['角色档案','角色资料、立绘与关联条目'],worldbook:['世界书条目','完整保留关键词、蓝绿灯和插入配置'],generator:['万象生成器','共享自定义生成器定义，不再依赖文件导入导出'],scenario:['身份 DLC','开场白、初始变量、主角身份与关系世界书'],regex:['正则规则','下载后可导入当前角色卡'],script:['角色卡脚本','默认关闭，需用户确认启用'],'fengyue-item':['风月阁物品','自定义物品，下载后进入云端藏品货架'],collection:['合集','多个资源共同作为一个作品发布']},C=['人物','势力','地点','物品','事件','历史设定','世界规则','剧情扩展','界面美化','功能工具'];
 let o={},d=document,root,view='discover',step=1,work=null,draft,catalogInitialType='',publishing=false,publishError='';
 const h=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),store=()=>{try{return(window.parent||window).localStorage}catch{}try{return d.defaultView?.localStorage||localStorage}catch{return localStorage}},me=()=>{try{let u=JSON.parse(store().getItem(UK)||'null');return u?.verified?u:null}catch{return null}},say=(x,t='info')=>o.toast?.(x,t),type=k=>K[k]?.[0]||'资源';
@@ -440,6 +440,11 @@ const shellWithCompactScenarioHeader=shell;
 shell=function(body){
   shellWithCompactScenarioHeader(body);
   root.insertAdjacentHTML('afterbegin',`<style>#${R} .scenario-hero{min-height:0;padding:0 2px 14px;border:0;border-bottom:1px solid var(--line);border-radius:0;background:none;box-shadow:none;overflow:visible}#${R} .scenario-hero:before{display:none}#${R} .scenario-hero-copy{display:grid;grid-template-areas:'eyebrow eyebrow' 'title description';grid-template-columns:auto minmax(240px,1fr);align-items:baseline;column-gap:22px}#${R} .scenario-hero-copy .eyebrow{grid-area:eyebrow}#${R} .scenario-hero h1{grid-area:title;margin:3px 0 0;font-size:clamp(25px,2.8vw,34px);white-space:nowrap}#${R} .scenario-hero p{grid-area:description;max-width:none;margin:0;font-size:12px}#${R} .scenario-rule{gap:8px;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:color-mix(in srgb,var(--card) 68%,transparent)}#${R} .scenario-rule i{width:28px;height:28px;border-width:1px;font-size:14px}#${R} .scenario-rule b{font-size:11px}#${R} .scenario-rule small{display:none}#${R} .scenario-desk{margin-top:14px}@media(max-width:700px){#${R} .scenario-hero{display:flex;align-items:flex-end;gap:12px;padding:0 0 11px}#${R} .scenario-hero-copy{display:block;min-width:0;flex:1}#${R} .scenario-hero h1{font-size:25px;white-space:normal}#${R} .scenario-hero p{margin-top:3px;font-size:10px;line-height:1.55}#${R} .scenario-rule{flex:0 0 auto;padding:5px}#${R} .scenario-rule span{display:none}}</style>`);
+};
+const shellWithAlignedScenarioDesk=shell;
+shell=function(body){
+  shellWithAlignedScenarioDesk(body);
+  root.insertAdjacentHTML('beforeend',`<style>#${R} .scenario-desk{align-items:stretch;margin-top:0}#${R} .scenario-desk>.scenario-current,#${R} .scenario-desk>.scenario-maker{align-self:stretch;height:100%;margin-top:0}@media(max-width:900px){#${R} .scenario-desk>.scenario-current,#${R} .scenario-desk>.scenario-maker{height:auto}}</style>`);
 };
 const scenarioHubWithCreator=scenarioHub;
 scenarioHub=async function(){
