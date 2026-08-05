@@ -1,4 +1,4 @@
-import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
+﻿import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
 const STATUSBAR_VERSION = '1.8.7';
@@ -6568,7 +6568,7 @@ function bindFrameEvents() {
       return;
     }
 
-    // 切换私密视角开关
+    // 切换绣阁余声开关
     const togglePrivate = target.closest('[data-action="toggle-private-view"]');
     if (togglePrivate) {
       event.preventDefault();
@@ -8120,8 +8120,8 @@ function renderSettingsModal() {
               <span class="cm-diff-check">${illustrationsEnabled ? '开' : '关'}</span>
             </button>
             <button class="cm-diff-btn${privateViewEnabled ? ' active' : ''}" data-action="toggle-private-view">
-              <span class="cm-diff-name">🌸 私密视角</span>
-              <span class="cm-diff-desc">允许 AI 描写女角色独处与闺阁私密时刻；关闭后历史内容同步隐藏</span>
+              <span class="cm-diff-name">🪡 绣阁余声</span>
+              <span class="cm-diff-desc">侧写女角色独自一人时的绣阁余声；关闭后历史内容同步隐藏</span>
               <span class="cm-diff-check">${privateViewEnabled ? '开' : '关'}</span>
             </button>
           </div>
@@ -8243,8 +8243,11 @@ async function syncWorldbookSettings() {
       saveStorage('illustrations_enabled', illustrationsEnabled ? '1' : '0');
     }
 
-    // 私密视角：以世界书条目的 enabled 为准
-    const privateEntry = entries.find(entry => (entry.name || '').includes('私密视角-输出规则'));
+    // 绣阁余声：以世界书条目的 enabled 为准
+    const privateEntry = entries.find(
+      entry =>
+        (entry.name || '').includes('绣阁余声-输出规则') || (entry.name || '').includes('私密视角-输出规则'),
+    );
     if (privateEntry && privateViewEnabled !== !!privateEntry.enabled) {
       privateViewEnabled = !!privateEntry.enabled;
       saveStorage('private_view_enabled', privateViewEnabled ? '1' : '0');
@@ -8256,14 +8259,14 @@ async function syncWorldbookSettings() {
           const regexes = getter({ type: 'character', name: 'current' }) || [];
           const updated = regexes.map(regex => {
             const name = regex.script_name || '';
-            if (name.includes('私密视角美化')) return { ...regex, enabled: privateViewEnabled };
-            if (name.includes('私密视角隐藏')) return { ...regex, enabled: !privateViewEnabled };
+            if (name.includes('绣阁余声美化') || name.includes('私密视角美化')) return { ...regex, enabled: privateViewEnabled };
+            if (name.includes('绣阁余声隐藏') || name.includes('私密视角隐藏')) return { ...regex, enabled: !privateViewEnabled };
             return regex;
           });
           await replacer(updated, { type: 'character', name: 'current' });
         }
       } catch (error) {
-        console.warn('[状态栏] 同步私密视角正则失败:', error);
+        console.warn('[状态栏] 同步绣阁余声正则失败:', error);
       }
     }
 
@@ -8361,14 +8364,19 @@ async function togglePrivateView() {
     const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
     if (typeof worldbook === 'function' && typeof replaceWorldbook === 'function') {
       const entries = (await worldbook(getWorldbookName())) || [];
-      const hasEntry = entries.some(entry => (entry.name || '').includes('私密视角-输出规则'));
+      const hasEntry = entries.some(
+        entry =>
+          (entry.name || '').includes('绣阁余声-输出规则') || (entry.name || '').includes('私密视角-输出规则'),
+      );
       if (hasEntry) {
         const updated = entries.map(entry =>
-          (entry.name || '').includes('私密视角-输出规则') ? { ...entry, enabled: newState } : entry,
+          (entry.name || '').includes('绣阁余声-输出规则') || (entry.name || '').includes('私密视角-输出规则')
+            ? { ...entry, enabled: newState }
+            : entry,
         );
         await replaceWorldbook(getWorldbookName(), updated, { render: 'immediate' });
       } else {
-        errors.push('世界书缺少「私密视角-输出规则」条目');
+        errors.push('世界书缺少「绣阁余声-输出规则」条目');
       }
     }
   } catch (error) {
@@ -8383,8 +8391,8 @@ async function togglePrivateView() {
       const regexes = getter({ type: 'character', name: 'current' }) || [];
       const updated = regexes.map(regex => {
         const name = regex.script_name || '';
-        if (name.includes('私密视角美化')) return { ...regex, enabled: newState };
-        if (name.includes('私密视角隐藏')) return { ...regex, enabled: !newState };
+            if (name.includes('绣阁余声美化') || name.includes('私密视角美化')) return { ...regex, enabled: newState };
+            if (name.includes('绣阁余声隐藏') || name.includes('私密视角隐藏')) return { ...regex, enabled: !newState };
         return regex;
       });
       await replacer(updated, { type: 'character', name: 'current' });
@@ -8398,9 +8406,9 @@ async function togglePrivateView() {
   privateViewEnabled = newState;
   saveStorage('private_view_enabled', newState ? '1' : '0');
   if (errors.length) {
-    showToast(`✗ 私密视角切换未完全生效：${errors.join('；')}`, 'err');
+    showToast(`✗ 绣阁余声切换未完全生效：${errors.join('；')}`, 'err');
   } else {
-    showToast(`✓ 私密视角已${newState ? '开启' : '关闭'}`, 'ok');
+    showToast(`✓ 绣阁余声已${newState ? '开启' : '关闭'}`, 'ok');
   }
   render();
 }
