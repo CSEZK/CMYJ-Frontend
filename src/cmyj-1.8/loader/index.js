@@ -1,13 +1,6 @@
-import '../schema/index.js';
-import '../legacy/index.js';
-import '../workshop/index.js';
-import '../generator/index.js';
-import '../scenario-generator/index.js';
-import '../variable-editor/index.js';
-import '../world-engine/index.js';
-import '../statusbar/index.js';
-
 const RUNTIME_KEY = '__CMYJRemoteScriptsV18';
+const RUNTIME_REVISION = 2;
+const REMOTE_ROOT = 'https://cmyj-frontend.pages.dev/cmyj-1.8/';
 
 const ROLE_FILES = Object.freeze({
   schema: 'schema',
@@ -17,12 +10,8 @@ const ROLE_FILES = Object.freeze({
   generator: 'generator',
   'scenario-generator': 'scenario-generator',
   'variable-editor': 'variable-editor',
+  timeline: 'timeline',
   'world-engine': 'world-engine',
-});
-
-const ROLE_DEPENDENCIES = Object.freeze({
-  legacy: ['schema'],
-  statusbar: ['schema', 'legacy', 'workshop', 'generator', 'scenario-generator', 'variable-editor'],
 });
 
 function getHostWindow() {
@@ -34,19 +23,21 @@ function getHostWindow() {
 }
 
 const host = getHostWindow();
-const state = host[RUNTIME_KEY] ?? {
+const realm = globalThis;
+const existingState = realm[RUNTIME_KEY];
+const state = existingState?.revision === RUNTIME_REVISION ? existingState : {
   version: '1.8',
+  revision: RUNTIME_REVISION,
   promises: Object.create(null),
   loaded: Object.create(null),
 };
 
 async function importRole(role) {
-  const dependencies = ROLE_DEPENDENCIES[role] ?? [];
-  for (const dependency of dependencies) await boot(dependency);
+  const roleFile = ROLE_FILES[role];
+  if (!roleFile) throw new Error(`未知的残明余烬远程脚本：${role}`);
 
-  if (!ROLE_FILES[role]) throw new Error(`未知的残明余烬远程脚本：${role}`);
-
-  // 模板会把当前通道的功能模块静态打包到共享入口；实际注册在模块求值时已完成。
+  const roleUrl = `${REMOTE_ROOT}${roleFile}/index.js`;
+  await import(/* webpackIgnore: true */ roleUrl);
   state.loaded[role] = true;
   return true;
 }
@@ -67,9 +58,10 @@ export function boot(role) {
 const runtime = Object.assign(state, {
   boot,
   roles: ROLE_FILES,
-  baseUrl: new URL('.', import.meta.url).href,
+  baseUrl: REMOTE_ROOT,
 });
 
+realm[RUNTIME_KEY] = runtime;
+realm.__CMYJRemoteScripts = runtime;
 host[RUNTIME_KEY] = runtime;
 host.__CMYJRemoteScripts = runtime;
-globalThis.__CMYJRemoteScripts = runtime;
