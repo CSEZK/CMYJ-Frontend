@@ -1,7 +1,7 @@
 import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.8.1';
+const STATUSBAR_VERSION = '1.8.2';
 const STORAGE_PREFIX = 'canming-afterglow-1.8:statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
 const CHARACTER_GENERATOR_FILE = '万象生成器.js';
@@ -5437,6 +5437,7 @@ async function snapshotWorkshopInstallState() {
   }
   const generator = getCharacterGenerator();
   let activeScenario = null;
+  let activeScenarioDetails = null;
   let characterName = '';
   let characterId = '';
   let characterVersion = '';
@@ -5448,7 +5449,20 @@ async function snapshotWorkshopInstallState() {
     characterId = typeof getCurrentId === 'function' ? getCurrentId() || '' : '';
     const character = characterName && typeof getCharacter === 'function' ? await getCharacter(characterName) : null;
     characterVersion = String(character?.version || '');
-    activeScenario = character?.extensions?.canming_dlc?.id || null;
+    const installedScenario = character?.extensions?.canming_dlc || null;
+    activeScenario = installedScenario?.id || null;
+    if (installedScenario) {
+      const scenarioContext = installedScenario.context || {};
+      activeScenarioDetails = {
+        id: installedScenario.id,
+        name: installedScenario.name || '',
+        version: installedScenario.version || '',
+        subtitle: scenarioContext.openings?.[0]?.subtitle || '',
+        openingCount: Number(scenarioContext.openings?.length || installedScenario.originalFirstMessages?.length || 0),
+        worldbookCount: Number(installedScenario.worldbookEntries?.length || 0),
+        peopleCount: Number(scenarioContext.characterAdaptations?.length || 0),
+      };
+    }
   } catch {
     /* ignore */
   }
@@ -5456,6 +5470,7 @@ async function snapshotWorkshopInstallState() {
     characterName,
     characterId,
     characterVersion,
+    scenarioDetails: activeScenarioDetails,
     characters: getCharacterProfiles()
       .profiles.map(item => item.id)
       .filter(Boolean),
