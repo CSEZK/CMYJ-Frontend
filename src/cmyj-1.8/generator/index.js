@@ -1,3 +1,10 @@
+import {
+  deepSeekJsonSchemaPrompt,
+  isOfficialDeepSeekApi,
+  normalizeApiRequestError,
+  shouldRetryApiRequest,
+} from '../shared/api-compat.js';
+
 (() => {
   'use strict';
 
@@ -1525,7 +1532,10 @@ TA不想被碰触的点——不是身体部位，是心理上的。什么事会
       statusEl.className = `ccg-status ${type === 'err' ? 'ccg-error' : ''}`;
       notifyTimer = setTimeout(() => {
         const el = root?.querySelector('.ccg-status');
-        if (el) { el.textContent = ''; el.className = 'ccg-status'; }
+        if (el) {
+          el.textContent = state.error || '';
+          el.className = `ccg-status ${state.error ? 'ccg-error' : ''}`;
+        }
         notifyTimer = null;
       }, 3000);
     }
@@ -1660,18 +1670,42 @@ ${r.nsfwContent || '（无）'}
     const generateRaw = api('generateRaw'), generate = api('generate');
     if (typeof generateRaw !== 'function' && typeof generate !== 'function') throw new Error('未找到 generateRaw/generate 接口。');
     const customApi = buildCustomApiConfig();
-    const config = { should_silence: true, ordered_prompts: [{ role: 'system', content: genericSystemPrompt() }, { role: 'user', content: genericUserPrompt() }], json_schema: genericSchema() };
+    const schema = genericSchema();
+    const usePromptJsonSchema = isOfficialDeepSeekApi(customApi);
+    const schemaPrompt = usePromptJsonSchema ? deepSeekJsonSchemaPrompt(schema) : '';
+    const config = {
+      should_silence: true,
+      ordered_prompts: [
+        { role: 'system', content: genericSystemPrompt() },
+        { role: 'user', content: `${genericUserPrompt()}${schemaPrompt}` },
+      ],
+      ...(usePromptJsonSchema ? {} : { json_schema: schema }),
+    };
     if (customApi) config.custom_api = customApi;
 
     let lastError;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const raw = typeof generateRaw === 'function' ? await generateRaw(config) : await generate({ should_silence: true, user_input: `${genericSystemPrompt()}\n\n${genericUserPrompt()}`, json_schema: genericSchema() });
+        const raw = typeof generateRaw === 'function'
+          ? await generateRaw(config)
+          : await generate({
+              should_silence: true,
+              user_input: `${genericSystemPrompt()}\n\n${genericUserPrompt()}${schemaPrompt}`,
+              ...(usePromptJsonSchema ? {} : { json_schema: schema }),
+              ...(customApi ? { custom_api: customApi } : {}),
+            });
         return parseAiResult(raw);
       } catch (e) {
-        lastError = e;
+        lastError = normalizeApiRequestError(e, { provider: usePromptJsonSchema ? 'DeepSeek' : 'AI 接口' });
+        if (!shouldRetryApiRequest(e)) break;
         if (attempt === 0) {
-          config.ordered_prompts = [{ role: 'system', content: buildSystemPromptForRetry() }, { role: 'user', content: genericUserPrompt() + '\n\n（上次输出不是合法 JSON，请严格只输出 JSON 对象。）' }];
+          config.ordered_prompts = [
+            { role: 'system', content: buildSystemPromptForRetry() },
+            {
+              role: 'user',
+              content: `${genericUserPrompt()}${schemaPrompt}\n\n（上次输出不是合法 JSON，请严格只输出 JSON 对象。）`,
+            },
+          ];
         }
       }
     }
@@ -1682,20 +1716,41 @@ ${r.nsfwContent || '（无）'}
     const generateRaw = api('generateRaw'), generate = api('generate');
     if (typeof generateRaw !== 'function' && typeof generate !== 'function') throw new Error('未找到 generateRaw/generate 接口。');
     const customApi = buildCustomApiConfig();
-    const config = { should_silence: true, ordered_prompts: [{ role: 'system', content: buildSystemPrompt() }, { role: 'user', content: buildUserPrompt(mode) }], json_schema: resultSchema() };
+    const schema = resultSchema();
+    const usePromptJsonSchema = isOfficialDeepSeekApi(customApi);
+    const schemaPrompt = usePromptJsonSchema ? deepSeekJsonSchemaPrompt(schema) : '';
+    const config = {
+      should_silence: true,
+      ordered_prompts: [
+        { role: 'system', content: buildSystemPrompt() },
+        { role: 'user', content: `${buildUserPrompt(mode)}${schemaPrompt}` },
+      ],
+      ...(usePromptJsonSchema ? {} : { json_schema: schema }),
+    };
     if (customApi) config.custom_api = customApi;
 
     let lastError;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const raw = typeof generateRaw === 'function' ? await generateRaw(config) : await generate({ should_silence: true, user_input: `${buildSystemPrompt()}\n\n${buildUserPrompt(mode)}`, json_schema: resultSchema() });
+        const raw = typeof generateRaw === 'function'
+          ? await generateRaw(config)
+          : await generate({
+              should_silence: true,
+              user_input: `${buildSystemPrompt()}\n\n${buildUserPrompt(mode)}${schemaPrompt}`,
+              ...(usePromptJsonSchema ? {} : { json_schema: schema }),
+              ...(customApi ? { custom_api: customApi } : {}),
+            });
         return parseAiResult(raw);
       } catch (e) {
-        lastError = e;
+        lastError = normalizeApiRequestError(e, { provider: usePromptJsonSchema ? 'DeepSeek' : 'AI 接口' });
+        if (!shouldRetryApiRequest(e)) break;
         if (attempt === 0) {
           config.ordered_prompts = [
             { role: 'system', content: buildSystemPromptForRetry() },
-            { role: 'user', content: buildUserPrompt(mode) + '\n\n（上次输出不是合法 JSON——必须严格输出 JSON，所有字符串内的双引号和换行都要转义。）' },
+            {
+              role: 'user',
+              content: `${buildUserPrompt(mode)}${schemaPrompt}\n\n（上次输出不是合法 JSON——必须严格输出 JSON，所有字符串内的双引号和换行都要转义。）`,
+            },
           ];
         }
       }

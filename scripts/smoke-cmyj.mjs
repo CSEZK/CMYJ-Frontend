@@ -50,12 +50,18 @@ const originalTongchengRelationshipGraph = JSON.parse(
   await readFile(path.join(root, 'src', 'cmyj-1.7', 'statusbar', 'original-tongcheng-relationship-graph.json'), 'utf8'),
 );
 const v18Loader = await readFile(path.join(root, 'dist', 'cmyj-1.8', 'loader', 'index.js'), 'utf8');
+const v18LoaderSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'loader', 'index.js'), 'utf8');
 const v18SchemaSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'schema', 'definition.js'), 'utf8');
 const v18GeneratorSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'generator', 'index.js'), 'utf8');
 const v18ScenarioSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'scenario-generator', 'index.js'), 'utf8');
 const v18StatusbarSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'statusbar', 'index.js'), 'utf8');
 const v18WorkshopSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'workshop', 'index.js'), 'utf8');
 const v18WorldEngineSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'world-engine', 'index.js'), 'utf8');
+const v18ApiCompatSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'shared', 'api-compat.js'), 'utf8');
+const v18CharacterCatalogSource = await readFile(
+  path.join(root, 'src', 'cmyj-1.8', 'scenario-generator', 'character-catalog.js'),
+  'utf8',
+);
 
 assert.ok(loader.length > 300_000, '共享加载器未包含完整脚本集');
 assert.match(loader, /CanmingWorkshop/);
@@ -444,6 +450,8 @@ for (const source of [
 }
 
 assert.match(v18Loader, /__CMYJRemoteScriptsV18/);
+assert.match(v18LoaderSource, /RUNTIME_REVISION = 2/);
+assert.match(v18LoaderSource, /REMOTE_ROOT = 'https:\/\/cmyj-frontend\.pages\.dev\/cmyj-1\.8\/'/);
 assert.match(v18StatusbarSource, /STATUSBAR_VERSION = '1\.8\.\d+'/);
 assert.match(v18StatusbarSource, /version: '1\.1\.0'/);
 assert.match(v18StatusbarSource, /builtinTongchengWorldbookEntries\(entries\)/);
@@ -465,12 +473,25 @@ assert.match(v18StatusbarSource, /__CMYJWorkshopNoticeRuntimeV18/);
 assert.doesNotMatch(v18StatusbarSource, /canming-afterglow-statusbar:/);
 assert.match(v18GeneratorSource, /canming-1\.8:generator:api/);
 assert.doesNotMatch(v18GeneratorSource, /canming-dlc-staging:generator:/);
+assert.match(v18GeneratorSource, /deepSeekJsonSchemaPrompt/);
+assert.match(v18GeneratorSource, /normalizeApiRequestError/);
 assert.match(v18ScenarioSource, /canming-1\.8:scenario-generator:project:v1/);
 assert.match(v18ScenarioSource, /canming-1\.8:generator:api/);
+assert.match(v18ScenarioSource, /canming-afterglow-1\.8:character-profiles-v1/);
+assert.match(v18ScenarioSource, /buildScenarioCharacterCatalog/);
+assert.match(v18CharacterCatalogSource, /profiles = \[\]/);
+assert.match(v18CharacterCatalogSource, /worldbookEntries = \[\]/);
+assert.match(v18ApiCompatSource, /deepSeekJsonSchemaPrompt/);
 assert.match(v18WorldEngineSource, /__CMYJWorldEngineV18/);
 assert.match(v18WorldEngineSource, /cmyj_world_engine_v18/);
 assert.match(v18WorldEngineSource, /canming-world-engine-1\.8:/);
 assert.doesNotMatch(v18WorldEngineSource, /canming-world-engine:/);
+assert.match(v18WorldEngineSource, /VERSION = '2\.0\.0'/);
+assert.match(v18WorldEngineSource, /cmyj_world_engine_backups_v18/);
+assert.match(v18WorldEngineSource, /callFactRouter/);
+assert.match(v18WorldEngineSource, /incrementalOutputSchema/);
+assert.match(v18WorldEngineSource, /KNOWLEDGE_SOURCE_TYPES/);
+assert.match(v18WorldEngineSource, /schedulePendingSettlement/);
 assert.match(v18WorkshopSource, /canming-workshop-1\.8:publish-v3/);
 assert.match(v18WorkshopSource, /canming-workshop-1\.8:installs-v1/);
 assert.match(v18WorkshopSource, /https:\/\/cm-yj-workshop\.canming-cloud\.workers\.dev/);
@@ -503,6 +524,11 @@ assert.match(v18WorkshopSource, /管理与修复/);
 assert.doesNotMatch(v18WorkshopSource, /先领一纸身份/);
 assert.match(v18WorkshopSource, /scenario-hub"><section class="scenario-desk/);
 assert.match(v18WorkshopSource, /shellWithAlignedScenarioDesk/);
+assert.match(v18WorkshopSource, /function textCoverMarkup/);
+assert.match(v18WorkshopSource, /text-cover-host/);
+assert.match(v18WorkshopSource, /function revealTextCover/);
+assert.match(v18WorkshopSource, /detail-text-cover/);
+assert.match(v18WorkshopSource, /function workshopAuthOrigin/);
 assert.match(v18SchemaSource, /粮秣流水/);
 assert.match(v18SchemaSource, /装备编制/);
 assert.match(v18SchemaSource, /欠饷月数/);
@@ -512,5 +538,10 @@ assert.match(v18StatusbarSource, /function advanceMilitaryOrders/);
 assert.match(v18StatusbarSource, /function appendGrainTransaction/);
 assert.match(v18StatusbarSource, /data-action="open-military-command"/);
 assert.match(v18StatusbarSource, /军府签押/);
+assert.match(v18StatusbarSource, /syncActiveDlcRelationshipGraph/);
+assert.match(v18StatusbarSource, /WORLD_1634_OVERVIEW/);
+assert.match(v18StatusbarSource, /east_asia_1634_provinces/);
+assert.match(v18StatusbarSource, /initEChartsDetailMap/);
+assert.doesNotMatch(v18StatusbarSource, /WORLD_1629/);
 
 console.info('1.6 兼容版、1.7 测试版、1.7 正式版与 1.8 的加载器、环境隔离及脚本模块均已接入。');
