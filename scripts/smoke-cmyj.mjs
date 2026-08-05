@@ -205,6 +205,7 @@ assert.match(v18WorkshopSource, /选择你的来历/);
 assert.match(v18WorkshopSource, /scenario-desk/);
 assert.match(v18WorkshopSource, /管理与修复/);
 assert.doesNotMatch(v18WorkshopSource, /先领一纸身份/);
+assert.match(v18WorkshopSource, /shellWithCompactScenarioHeader/);
 assert.match(v18SchemaSource, /粮秣流水/);
 assert.match(v18SchemaSource, /装备编制/);
 assert.match(v18SchemaSource, /欠饷月数/);
