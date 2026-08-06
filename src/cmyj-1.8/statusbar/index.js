@@ -7,6 +7,7 @@ import {
   injectCharacterAdaptation,
   restoreCharacterAdaptation,
 } from '../shared/character-adaptation.js';
+import { normalizeTechnologyCollection } from '../shared/technology.js';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
 const STATUSBAR_VERSION = '1.8.8';
@@ -2192,6 +2193,7 @@ function gregorianYearFromDate(value) {
 function normalizeStatDataKeys(data) {
   if (!data || typeof data !== 'object') return false;
   let changed = false;
+  if (normalizeTechnologyCollection(data.科技) > 0) changed = true;
   const gregorianYear = gregorianYearFromDate(_.get(data, '世界运转.当前日期'));
   if (gregorianYear && _.get(data, '世界运转.公元年份') !== gregorianYear) {
     _.set(data, '世界运转.公元年份', gregorianYear);
@@ -3905,8 +3907,7 @@ function renderTech() {
         name,
         `${tag(tech.进度 || '未开始')}`,
         `<article class="cm-item">
-      <p>效果：${html(tech.效果 || '未载')}</p>
-      <small>${html(tech.描述 || '')}</small>
+      <p>现状：${html(tech.现状 || '未载')}</p>
     </article>`,
       ),
     '暂无技术条目。',

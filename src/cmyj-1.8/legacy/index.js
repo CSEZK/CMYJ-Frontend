@@ -1,4 +1,6 @@
-const MIGRATION_VERSION = 3;
+import { normalizeTechnologyCollection } from '../shared/technology.js';
+
+const MIGRATION_VERSION = 4;
 const MIGRATION_MARKER = '_残明余烬旧档迁移版本';
 
 const INTERPERSONAL_CATEGORIES = ['上司', '故友与同僚', '下属与幕僚', '三教九流', '仇敌', '亲属', '私帷'];
@@ -304,6 +306,13 @@ function migrateGregorianYear(data, stats) {
   return true;
 }
 
+function migrateTechnologyStatus(data, stats) {
+  const changed = normalizeTechnologyCollection(data.科技);
+  if (!changed) return false;
+  stats.technologyStatus += changed;
+  return true;
+}
+
 function migrateStatData(data, stats) {
   if (!data || typeof data !== 'object') return false;
   let changed = false;
@@ -315,6 +324,7 @@ function migrateStatData(data, stats) {
   changed = migrateReproductiveData(data, stats) || changed;
   changed = migrateMilitaryOperations(data, stats) || changed;
   changed = migrateGregorianYear(data, stats) || changed;
+  changed = migrateTechnologyStatus(data, stats) || changed;
   return changed;
 }
 
@@ -340,6 +350,7 @@ async function runLegacyMigrations() {
     reproductive: 0,
     militaryOperations: 0,
     gregorianYear: 0,
+    technologyStatus: 0,
   };
 
   for (let messageId = 0; messageId <= maxId; messageId++) {

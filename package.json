@@ -21,6 +21,7 @@
     "test:scenario-generator": "node scripts/test-scenario-generator.mjs cmyj-1.7-beta",
     "test:scenario-generator:release": "node scripts/test-scenario-generator.mjs cmyj-1.7",
     "test:scenario-generator:1.8": "node scripts/test-scenario-generator.mjs cmyj-1.8",
+    "test:technology": "node scripts/test-technology.mjs",
     "package:release-card": "node scripts/package-release-card.mjs",
     "check:release-card": "node scripts/package-release-card.mjs --check"
   },
