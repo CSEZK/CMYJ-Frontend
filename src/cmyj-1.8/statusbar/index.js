@@ -7,6 +7,11 @@ import {
   injectCharacterAdaptation,
   restoreCharacterAdaptation,
 } from '../shared/character-adaptation.js';
+import {
+  hasScenarioOpeningMessages,
+  planScenarioWorldbookCleanup,
+  scenarioWorldbookSignature,
+} from '../shared/scenario-cleanup.js';
 import { normalizeTechnologyCollection } from '../shared/technology.js';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
@@ -5127,7 +5132,7 @@ async function applyScenarioCharacterAdaptations(adaptations, version = 2) {
   return backups;
 }
 
-async function restoreScenarioCharacterAdaptations(backups) {
+async function restoreScenarioCharacterAdaptations(backups, options = {}) {
   if (!Array.isArray(backups) || !backups.length) return;
   const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
   const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
@@ -5142,8 +5147,11 @@ async function restoreScenarioCharacterAdaptations(backups) {
         entry => entry?.name === item.entryName && CHARACTER_ADAPTATION_PATTERN.test(String(entry.content || '')),
       ),
   );
-  if (missing.length)
+  if (missing.length && !options.allowMissing)
     throw new Error(`无法恢复角色适配：${missing.map(item => item.entryName).join('、')} 缺少条目或标记。`);
+  const missingNames = new Set(missing.map(item => item.entryName));
+  for (const name of missingNames) backupMap.delete(name);
+  if (!backupMap.size) return { restored: 0, skipped: missing.length };
   const next = current.map(entry => {
     if (!backupMap.has(entry?.name)) return entry;
     const restored = restoreCharacterAdaptation(entry.content, backupMap.get(entry.name));
@@ -5153,6 +5161,7 @@ async function restoreScenarioCharacterAdaptations(backups) {
     };
   });
   await replaceWorldbook(worldbookName, next, { render: 'immediate' });
+  return { restored: backupMap.size, skipped: missing.length };
 }
 
 function normalizeOriginalCharacterProfiles(profiles) {
@@ -5197,7 +5206,7 @@ async function applyScenarioCharacterProfiles(profiles) {
   return backups;
 }
 
-async function restoreScenarioCharacterProfiles(backups) {
+async function restoreScenarioCharacterProfiles(backups, options = {}) {
   if (!Array.isArray(backups) || !backups.length) return;
   const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
   const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
@@ -5210,12 +5219,20 @@ async function restoreScenarioCharacterProfiles(backups) {
       .filter(item => item?.entryName && typeof item?.previousContent === 'string')
       .map(item => [item.entryName, item.previousContent]),
   );
-  const missing = [...backupMap.keys()].filter(name => !current.some(entry => entry?.name === name));
-  if (missing.length) throw new Error(`无法恢复动态人设：基础卡缺少 ${missing.join('、')}。`);
+  const expectedContents = options.expectedContents || {};
+  const currentByName = new Map(current.map(entry => [entry?.name, String(entry?.content || '')]));
+  const unavailable = [...backupMap.keys()].filter(
+    name => !currentByName.has(name) || (expectedContents[name] != null && currentByName.get(name) !== expectedContents[name]),
+  );
+  if (unavailable.length && !options.allowMissing)
+    throw new Error(`无法恢复动态人设：基础卡缺少或已改写 ${unavailable.join('、')}。`);
+  unavailable.forEach(name => backupMap.delete(name));
+  if (!backupMap.size) return { restored: 0, skipped: unavailable.length };
   const next = current.map(entry =>
     backupMap.has(entry?.name) ? { ...entry, content: backupMap.get(entry.name) } : entry,
   );
   await replaceWorldbook(worldbookName, next, { render: 'immediate' });
+  return { restored: backupMap.size, skipped: unavailable.length };
 }
 
 function builtinTongchengOverviewEntry() {
@@ -5648,9 +5665,12 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
       );
     }
     if (previous?.characterProfileBackups?.length)
-      await restoreScenarioCharacterProfiles(previous.characterProfileBackups);
+      await restoreScenarioCharacterProfiles(previous.characterProfileBackups, {
+        allowMissing: true,
+        expectedContents: previous.characterProfileSignatures,
+      });
     if (previous?.characterAdaptationBackups?.length)
-      await restoreScenarioCharacterAdaptations(previous.characterAdaptationBackups);
+      await restoreScenarioCharacterAdaptations(previous.characterAdaptationBackups, { allowMissing: true });
     const characterAdaptationBackups = await applyScenarioCharacterAdaptations(
       resource.characterAdaptations || [],
       resource.characterAdaptationVersion || 2,
@@ -5684,9 +5704,17 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
       exclusiveGroup: resource.scenario.exclusiveGroup,
       originalFirstMessages,
       worldbookEntries: (resource.worldbookEntries || []).map(entry => entry.name),
+      worldbookEntrySignatures: Object.fromEntries(
+        (resource.worldbookEntries || []).filter(entry => entry?.name).map(entry => [entry.name, scenarioWorldbookSignature(entry)]),
+      ),
       worldbookEntryBackups,
       characterAdaptationBackups,
       characterProfileBackups,
+      characterProfileSignatures: Object.fromEntries(
+        (resource.originalCharacterProfiles || [])
+          .filter(profile => profile?.entryName)
+          .map(profile => [profile.entryName, String(profile.content || '')]),
+      ),
       context,
     };
     try {
@@ -5929,25 +5957,24 @@ async function uninstallWorkshopInstall(delta = {}) {
       const character = await getCharacter(characterName);
       const installed = character?.extensions?.canming_dlc;
       if (installed?.id && scenarioIds.has(installed.id)) {
-        await restoreScenarioCharacterProfiles(installed.characterProfileBackups || []);
-        await restoreScenarioCharacterAdaptations(installed.characterAdaptationBackups || []);
+        await restoreScenarioCharacterProfiles(installed.characterProfileBackups || [], {
+          allowMissing: true,
+          expectedContents: installed.characterProfileSignatures,
+        });
+        await restoreScenarioCharacterAdaptations(installed.characterAdaptationBackups || [], { allowMissing: true });
         const installedWorldbookNames = new Set((installed.worldbookEntries || []).filter(Boolean));
         const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
         const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
         if (installedWorldbookNames.size && typeof worldbook === 'function' && typeof replaceWorldbook === 'function') {
           const current = (await worldbook(getWorldbookName())) || [];
-          const restored = current.filter(entry => !installedWorldbookNames.has(entry?.name));
-          for (const backup of [...(installed.worldbookEntryBackups || [])].sort(
-            (left, right) => Number(left?.index || 0) - Number(right?.index || 0),
-          )) {
-            if (!backup?.entry?.name) continue;
-            restored.splice(Math.min(Math.max(Number(backup.index) || 0, 0), restored.length), 0, backup.entry);
-          }
-          await replaceWorldbook(getWorldbookName(), restored, { render: 'immediate' });
+          const cleanup = planScenarioWorldbookCleanup(current, installed);
+          if (cleanup.removedNames.length)
+            await replaceWorldbook(getWorldbookName(), cleanup.entries, { render: 'immediate' });
         }
-        character.first_messages = JSON.parse(
-          JSON.stringify(installed.originalFirstMessages || character.first_messages || []),
-        );
+        if (hasScenarioOpeningMessages(character.first_messages, installed))
+          character.first_messages = JSON.parse(
+            JSON.stringify(installed.originalFirstMessages || character.first_messages || []),
+          );
         // 酒馆助手在写回角色卡时会合并 extensions；直接 delete 只会让本次
         // 请求缺少该字段，服务端原有的 canming_dlc 反而会被保留下来。
         // 用 null 作为明确的清除值，之后安装新 DLC 时会正常覆盖它。
@@ -5956,6 +5983,9 @@ async function uninstallWorkshopInstall(delta = {}) {
         const verifiedCharacter = await getCharacter(characterName);
         if (verifiedCharacter?.extensions?.canming_dlc?.id)
           throw new Error('角色卡中的身份 DLC 安装标记未能清除，请重试。');
+      }
+      const cached = readActiveDlcContext(characterName);
+      if (cached?.id && scenarioIds.has(cached.id)) {
         removeActiveDlcContext(characterName);
         try {
           delete globalThis.__CMYJ_DLC_CONTEXT_V1__;
@@ -5985,7 +6015,9 @@ async function uninstallCurrentScenario() {
     const characterName = typeof getCurrentName === 'function' ? getCurrentName() : '';
     if (!characterName || typeof getCharacter !== 'function') throw new Error('请先打开《残明余烬》基础卡。');
     const character = await getCharacter(characterName);
-    const installed = character?.extensions?.canming_dlc;
+    const installed = character?.extensions?.canming_dlc?.id
+      ? character.extensions.canming_dlc
+      : readActiveDlcContext(characterName);
     if (!installed?.id) throw new Error('当前没有已安装的身份 DLC。');
     const name = installed.name || installed.id;
     await uninstallWorkshopInstall({ scenarios: [installed.id] });
