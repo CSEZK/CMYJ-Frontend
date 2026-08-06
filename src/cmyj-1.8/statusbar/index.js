@@ -1,7 +1,15 @@
-﻿import ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS from './original-tongcheng-character-adaptations.json';
+import ORIGINAL_TONGCHENG_CHARACTER_PROFILES from './original-tongcheng-character-profiles.json';
+import ORIGINAL_TONGCHENG_CHARACTER_OVERVIEW from './original-tongcheng-character-overview.json';
+import ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH from './original-tongcheng-relationship-graph.json';
+import {
+  CHARACTER_ADAPTATION_PATTERN,
+  findCharacterAdaptationEntryIndex,
+  injectCharacterAdaptation,
+  restoreCharacterAdaptation,
+} from '../shared/character-adaptation.js';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.8.7';
+const STATUSBAR_VERSION = '1.8.8';
 const MAP_ASSET_REVISION = 'd697affd3ed71c09e8278cc2ac37b5d3b5dc2ded';
 const STORAGE_PREFIX = 'canming-afterglow-1.8:statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
@@ -900,6 +908,15 @@ function removeActiveDlcContext(characterName) {
   }
 }
 
+function refreshDlcLanding() {
+  try {
+    const refresh = (window.parent ?? window).__CMYJRefreshDlcLandingV18;
+    if (typeof refresh === 'function') void refresh();
+  } catch {
+    /* 角色卡介绍页可能尚未挂载 */
+  }
+}
+
 let ACTIVE_DLC_CONTEXT = (() => {
   const runtimeContext = globalThis.__CMYJ_DLC_CONTEXT_V1__;
   if (runtimeContext && typeof runtimeContext === 'object') return runtimeContext;
@@ -1022,22 +1039,44 @@ function syncActiveDlcRelationshipGraph(context = ACTIVE_DLC_CONTEXT) {
 
 /** WORLD_1634 的明代府州 source_id → 残明区域。 */
 const MING_REGION_SOURCE_IDS = {
-  云南: new Set([220761, 220767, 220770, 220774, 220783, 220793, 220796, 220799, 220801, 220803, 220807, 220810, 220818, 220826, 220844, 220847, 220850, 220856, 220861, 220866, 220871, 220880, 220883, 220885, 220895, 220896, 220899, 220919, 220927, 220934, 220940, 220944, 220946, 220947, 220950]),
+  云南: new Set([
+    220761, 220767, 220770, 220774, 220783, 220793, 220796, 220799, 220801, 220803, 220807, 220810, 220818, 220826,
+    220844, 220847, 220850, 220856, 220861, 220866, 220871, 220880, 220883, 220885, 220895, 220896, 220899, 220919,
+    220927, 220934, 220940, 220944, 220946, 220947, 220950,
+  ]),
   北直隶: new Set([220257, 220263, 220291, 220297, 220335, 220343, 220365]),
-  南直隶: new Set([90206, 90245, 90261, 90271, 90267, 90528, 90531, 90541, 90575, 90581, 91116, 91126, 91134, 91195, 91142, 91143, 91192, 91145]),
-  四川: new Set([220649, 220656, 220662, 220664, 220665, 220669, 220674, 220683, 220694, 220721, 220726, 220727, 220743, 220749, 220752, 220756, 220759, 220791]),
+  南直隶: new Set([
+    90206, 90245, 90261, 90271, 90267, 90528, 90531, 90541, 90575, 90581, 91116, 91126, 91134, 91195, 91142, 91143,
+    91192, 91145,
+  ]),
+  四川: new Set([
+    220649, 220656, 220662, 220664, 220665, 220669, 220674, 220683, 220694, 220721, 220726, 220727, 220743, 220749,
+    220752, 220756, 220759, 220791,
+  ]),
   宁夏: new Set([220593, 220596, 220597]),
   山东: new Set([220358, 220377, 220389, 220399, 220405]),
   山西: new Set([220022, 221238, 221256, 221249, 221252, 221276, 221265, 221279, 220250]),
   广东: new Set([97703, 97726, 97739, 97766, 97770, 97780, 97795, 97805, 97808, 97822]),
-  广西: new Set([93741, 93698, 93701, 93692, 93706, 93711, 93718, 93789, 221220, 221184, 221185, 93754, 221192, 221197, 221200, 93762, 97714]),
+  广西: new Set([
+    93741, 93698, 93701, 93692, 93706, 93711, 93718, 93789, 221220, 221184, 221185, 93754, 221192, 221197, 221200,
+    93762, 97714,
+  ]),
   江西: new Set([97101, 97119, 97123, 97133, 97159, 97166, 97216, 97232, 97241, 97252, 97259, 97280, 97106]),
   河南: new Set([220269, 220274, 220433, 220437, 220446, 220453, 220459, 220467, 220474, 220477, 220480]),
   浙江: new Set([90118, 90120, 90347, 90348, 90461, 90413, 90439, 90368, 90384, 90423, 90119]),
-  湖广: new Set([97830, 97831, 97836, 97865, 97880, 97892, 97907, 97917, 97304, 97309, 97315, 97325, 97330, 97339, 97346, 97379, 97389, 221224, 97919]),
+  湖广: new Set([
+    97830, 97831, 97836, 97865, 97880, 97892, 97907, 97917, 97304, 97309, 97315, 97325, 97330, 97339, 97346, 97379,
+    97389, 221224, 97919,
+  ]),
   福建: new Set([90024, 90050, 90005, 90002, 90010, 90009, 90021, 90026, 90013]),
-  贵州: new Set([220965, 220971, 220986, 221070, 220995, 221002, 221005, 221008, 221014, 221019, 221022, 221025, 221026, 221028, 221037, 221043, 221041, 221066, 221189, 97398]),
-  陕西: new Set([220496, 220504, 220516, 220526, 220527, 220536, 220544, 220568, 220577, 220581, 220587, 220588, 220603, 220604, 220610, 220615, 220618, 220625, 220628, 220634, 220643]),
+  贵州: new Set([
+    220965, 220971, 220986, 221070, 220995, 221002, 221005, 221008, 221014, 221019, 221022, 221025, 221026, 221028,
+    221037, 221043, 221041, 221066, 221189, 97398,
+  ]),
+  陕西: new Set([
+    220496, 220504, 220516, 220526, 220527, 220536, 220544, 220568, 220577, 220581, 220587, 220588, 220603, 220604,
+    220610, 220615, 220618, 220625, 220628, 220634, 220643,
+  ]),
 };
 
 const MING_SOURCE_ID_TO_REGION = (() => {
@@ -4945,9 +4984,6 @@ async function importWorldbookWorkshopPackage(bundle, options = {}) {
   return { worldbookName, count: entries.length, mode };
 }
 
-const CHARACTER_ADAPTATION_PATTERN =
-  /(<!-- CANMING_CHARACTER_ADAPTATION_START -->)([\s\S]*?)(<!-- CANMING_CHARACTER_ADAPTATION_END -->)/;
-
 function normalizeUserReference(value) {
   const sentinel = '\u0000CMYJ_USER_TOKEN\u0000';
   return String(value || '')
@@ -5035,19 +5071,17 @@ async function applyScenarioCharacterAdaptations(adaptations, version = 2) {
   const updates = new Map();
   const backups = [];
   for (const adaptation of adaptations) {
-    const candidates = [`${adaptation.character}_SFW`, adaptation.character];
-    const index = current.findIndex(entry => candidates.includes(entry?.name));
-    if (index < 0) throw new Error(`基础卡缺少角色条目「${adaptation.character}」。`);
+    const index = findCharacterAdaptationEntryIndex(current, adaptation);
+    if (index < 0)
+      throw new Error(
+        `找不到角色「${adaptation.character}」关联的完整人设。请先在“角色与立绘管理器”中关联世界书条目。`,
+      );
     const content = String(current[index].content || '');
-    const match = content.match(CHARACTER_ADAPTATION_PATTERN);
-    if (!match) throw new Error(`角色「${adaptation.character}」缺少动态人设标记，请更新基础卡。`);
-    backups.push({ entryName: current[index].name, previousBlock: match[2] });
+    const injected = injectCharacterAdaptation(content, characterAdaptationBody(adaptation, version));
+    backups.push({ entryName: current[index].name, ...injected.backup });
     updates.set(index, {
       ...current[index],
-      content: content.replace(
-        CHARACTER_ADAPTATION_PATTERN,
-        (_match, start, _previous, end) => `${start}${characterAdaptationBody(adaptation, version)}${end}`,
-      ),
+      content: injected.content,
     });
   }
   const next = current.map((entry, index) => updates.get(index) || entry);
@@ -5063,7 +5097,7 @@ async function restoreScenarioCharacterAdaptations(backups) {
     throw new Error('角色适配恢复需要世界书读写接口。');
   const worldbookName = getWorldbookName();
   const current = (await worldbook(worldbookName)) || [];
-  const backupMap = new Map(backups.map(item => [item.entryName, item.previousBlock]));
+  const backupMap = new Map(backups.map(item => [item.entryName, item]));
   const missing = backups.filter(
     item =>
       !current.some(
@@ -5074,41 +5108,111 @@ async function restoreScenarioCharacterAdaptations(backups) {
     throw new Error(`无法恢复角色适配：${missing.map(item => item.entryName).join('、')} 缺少条目或标记。`);
   const next = current.map(entry => {
     if (!backupMap.has(entry?.name)) return entry;
+    const restored = restoreCharacterAdaptation(entry.content, backupMap.get(entry.name));
     return {
       ...entry,
-      content: String(entry.content || '').replace(
-        CHARACTER_ADAPTATION_PATTERN,
-        (_match, start, _previous, end) => `${start}${backupMap.get(entry.name)}${end}`,
-      ),
+      content: restored,
     };
   });
   await replaceWorldbook(worldbookName, next, { render: 'immediate' });
 }
 
-function builtinTongchengOverviewEntry(overviews) {
-  const data = JSON.stringify(overviews, null, 2);
+function normalizeOriginalCharacterProfiles(profiles) {
+  if (!Array.isArray(profiles) || !profiles.length) return [];
+  const normalized = profiles.map(profile => ({
+    entryName: String(profile?.entryName || '').trim(),
+    content: String(profile?.content || ''),
+  }));
+  const invalid = normalized.filter(profile => !profile.entryName || !profile.content.trim());
+  if (invalid.length) throw new Error('原版完整人设资源不完整，请更新 1.7 正式脚本。');
+  const names = normalized.map(profile => profile.entryName);
+  if (new Set(names).size !== names.length) throw new Error('原版完整人设资源包含重复条目。');
+  return normalized;
+}
+
+function hasScenarioCharacterProfiles(entries, profiles) {
+  const normalized = normalizeOriginalCharacterProfiles(profiles);
+  const contentByName = new Map((entries || []).map(entry => [entry?.name, String(entry?.content || '')]));
+  return normalized.every(profile => contentByName.get(profile.entryName) === profile.content);
+}
+
+async function applyScenarioCharacterProfiles(profiles) {
+  const normalized = normalizeOriginalCharacterProfiles(profiles);
+  if (!normalized.length) return [];
+  const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
+  const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
+  if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function')
+    throw new Error('完整人设切换需要世界书读写接口。');
+  const worldbookName = getWorldbookName();
+  const current = (await worldbook(worldbookName)) || [];
+  const profileMap = new Map(normalized.map(profile => [profile.entryName, profile.content]));
+  const missing = normalized.filter(profile => !current.some(entry => entry?.name === profile.entryName));
+  if (missing.length)
+    throw new Error(`无法安装原版完整人设：基础卡缺少 ${missing.map(item => item.entryName).join('、')}。`);
+  const backups = current
+    .filter(entry => profileMap.has(entry?.name))
+    .map(entry => ({ entryName: entry.name, previousContent: String(entry.content || '') }));
+  const next = current.map(entry =>
+    profileMap.has(entry?.name) ? { ...entry, content: profileMap.get(entry.name) } : entry,
+  );
+  await replaceWorldbook(worldbookName, next, { render: 'immediate' });
+  return backups;
+}
+
+async function restoreScenarioCharacterProfiles(backups) {
+  if (!Array.isArray(backups) || !backups.length) return;
+  const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
+  const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
+  if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function')
+    throw new Error('完整人设恢复需要世界书读写接口。');
+  const worldbookName = getWorldbookName();
+  const current = (await worldbook(worldbookName)) || [];
+  const backupMap = new Map(
+    backups
+      .filter(item => item?.entryName && typeof item?.previousContent === 'string')
+      .map(item => [item.entryName, item.previousContent]),
+  );
+  const missing = [...backupMap.keys()].filter(name => !current.some(entry => entry?.name === name));
+  if (missing.length) throw new Error(`无法恢复动态人设：基础卡缺少 ${missing.join('、')}。`);
+  const next = current.map(entry =>
+    backupMap.has(entry?.name) ? { ...entry, content: backupMap.get(entry.name) } : entry,
+  );
+  await replaceWorldbook(worldbookName, next, { render: 'immediate' });
+}
+
+function builtinTongchengOverviewEntry() {
   return {
-    name: '人物概览',
+    name: ORIGINAL_TONGCHENG_CHARACTER_OVERVIEW.entryName,
     enabled: true,
-    content: `@@preprocessing
-<%_
-var characterOverviews = ${data};
-var openingId = getvar('stat_data.世界运转._开场标识', { defaults: '' });
-var people = characterOverviews[openingId] || [];
-if (people.length > 0) {
-_%>
-<人物概览>
-<%_ for (var i = 0; i < people.length; i++) { _%>
-- <%- people[i].name %>：<%- people[i].summary %>
-<%_ } _%>
-</人物概览>
-<%_ } _%>`,
+    content: ORIGINAL_TONGCHENG_CHARACTER_OVERVIEW.content,
     strategy: { type: 'constant', keys: [], keys_secondary: { logic: 'and_any', keys: [] } },
     position: { type: 'after_character_definition', role: 'system', depth: 0, order: 0 },
     recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
     probability: 100,
     effect: { sticky: null, cooldown: null, delay: null },
   };
+}
+
+function hasBuiltinTongchengOverview(entries) {
+  const expected = builtinTongchengOverviewEntry();
+  return (entries || []).some(
+    entry => entry?.name === expected.name && String(entry?.content || '') === expected.content,
+  );
+}
+
+async function upsertBuiltinTongchengOverview() {
+  const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
+  const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
+  if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function')
+    throw new Error('原版人物概览更新需要世界书读写接口。');
+  const worldbookName = getWorldbookName();
+  const current = (await worldbook(worldbookName)) || [];
+  const expected = builtinTongchengOverviewEntry();
+  const index = current.findIndex(entry => entry?.name === expected.name);
+  const next = [...current];
+  if (index >= 0) next[index] = expected;
+  else next.push(expected);
+  await replaceWorldbook(worldbookName, next, { render: 'immediate' });
 }
 
 function builtinTongchengWorldbookEntries(entries) {
@@ -5121,6 +5225,27 @@ function builtinTongchengWorldbookEntries(entries) {
     entry.enabled = true;
     return entry;
   });
+}
+
+function hasBuiltinTongchengWorldbooks(entries) {
+  const expected = builtinTongchengWorldbookEntries(entries);
+  const contentByName = new Map((entries || []).map(entry => [entry?.name, String(entry?.content || '')]));
+  return expected.every(entry => contentByName.get(entry.name) === String(entry.content || ''));
+}
+
+async function upsertBuiltinTongchengWorldbooks() {
+  const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
+  const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
+  if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function')
+    throw new Error('原版桐城世界书更新需要世界书读写接口。');
+  const worldbookName = getWorldbookName();
+  const current = (await worldbook(worldbookName)) || [];
+  const expected = builtinTongchengWorldbookEntries(current);
+  const expectedByName = new Map(expected.map(entry => [entry.name, entry]));
+  const next = current.map(entry => expectedByName.get(entry?.name) || entry);
+  for (const entry of expected) if (!current.some(item => item?.name === entry.name)) next.push(entry);
+  await replaceWorldbook(worldbookName, next, { render: 'immediate' });
+  return expected.map(entry => entry.name);
 }
 
 async function getInstalledScenarioInfo() {
@@ -5140,7 +5265,7 @@ async function getInstalledScenarioInfo() {
   };
 }
 
-async function repairBuiltinTongchengCharacterAdaptations() {
+async function repairBuiltinTongchengCharacterProfiles() {
   const getCurrentName = getWorkshopApi('getCurrentCharacterName');
   const getCharacter = getWorkshopApi('getCharacter');
   const replaceCharacter = getWorkshopApi('replaceCharacter');
@@ -5155,71 +5280,148 @@ async function repairBuiltinTongchengCharacterAdaptations() {
   const character = await getCharacter(characterName);
   const extension = character?.extensions?.canming_dlc;
   if (extension?.id !== 'cmyj.original.tongcheng') throw new Error('当前安装的不是原版桐城开局。');
+  const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
+  const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
+  if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function')
+    throw new Error('原版开局修复需要世界书读写接口。');
+  const worldbookName = getWorldbookName();
+  const repairSnapshot = {
+    character: JSON.parse(JSON.stringify(character)),
+    worldbookEntries: JSON.parse(JSON.stringify((await worldbook(worldbookName)) || [])),
+    context: readActiveDlcContext(characterName),
+  };
 
-  if (extension.characterAdaptationBackups?.length)
-    await restoreScenarioCharacterAdaptations(extension.characterAdaptationBackups);
-  const characterAdaptationBackups = await applyScenarioCharacterAdaptations(
-    ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS,
-    3,
+  try {
+    if (extension.characterProfileBackups?.length)
+      await restoreScenarioCharacterProfiles(extension.characterProfileBackups);
+    if (extension.characterAdaptationBackups?.length)
+      await restoreScenarioCharacterAdaptations(extension.characterAdaptationBackups);
+    const characterProfileBackups = await applyScenarioCharacterProfiles(
+      ORIGINAL_TONGCHENG_CHARACTER_PROFILES.profiles,
+    );
+    const repairedWorldbookNames = await upsertBuiltinTongchengWorldbooks();
+    await upsertBuiltinTongchengOverview();
+    const context = {
+      ...(extension.context || {}),
+      characterAdaptations: [],
+      characterOverviewVersion: ORIGINAL_TONGCHENG_CHARACTER_OVERVIEW.version,
+      characterOverviews: {},
+      relationshipGraphVersion: ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH.version,
+      ui: {
+        ...(extension.context?.ui || {}),
+        relationshipGraph: ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH,
+      },
+      originalCharacterProfileVersion: ORIGINAL_TONGCHENG_CHARACTER_PROFILES.version,
+      originalCharacterProfileCount: ORIGINAL_TONGCHENG_CHARACTER_PROFILES.profiles.length,
+    };
+    extension.characterAdaptationBackups = [];
+    extension.characterProfileBackups = characterProfileBackups;
+    extension.version = '1.3.0';
+    extension.worldbookEntries = [
+      ...new Set([
+        ...(extension.worldbookEntries || []),
+        ...repairedWorldbookNames,
+        builtinTongchengOverviewEntry().name,
+      ]),
+    ];
+    extension.context = context;
+    character.extensions.canming_dlc = extension;
+    try {
+      await replaceCharacter(characterName, character, { render: 'immediate' });
+    } catch (error) {
+      await restoreScenarioCharacterProfiles(characterProfileBackups);
+      throw error;
+    }
+    const verifiedCharacter = await getCharacter(characterName);
+    if (
+      verifiedCharacter?.extensions?.canming_dlc?.context?.originalCharacterProfileVersion !==
+        ORIGINAL_TONGCHENG_CHARACTER_PROFILES.version ||
+      verifiedCharacter?.extensions?.canming_dlc?.characterProfileBackups?.length !==
+        ORIGINAL_TONGCHENG_CHARACTER_PROFILES.profiles.length
+    )
+      throw new Error('原版桐城完整人设写入后校验失败，请重试。');
+    writeActiveDlcContext(characterName, context);
+    globalThis.__CMYJ_DLC_CONTEXT_V1__ = context;
+    ACTIVE_DLC_CONTEXT = context;
+    syncActiveDlcRelationshipGraph(context);
+    renderStatusbarBehindWorkshop();
+    refreshDlcLanding();
+    await syncPortraitIllustrationRule();
+    return {
+      scenarioId: extension.id,
+      repaired: true,
+      characterProfileCount: ORIGINAL_TONGCHENG_CHARACTER_PROFILES.profiles.length,
+    };
+  } catch (error) {
+    const rollbackErrors = [];
+    try {
+      await replaceWorldbook(worldbookName, repairSnapshot.worldbookEntries, { render: 'immediate' });
+    } catch (rollbackError) {
+      rollbackErrors.push(`世界书：${rollbackError?.message || rollbackError}`);
+    }
+    try {
+      await replaceCharacter(characterName, repairSnapshot.character, { render: 'immediate' });
+    } catch (rollbackError) {
+      rollbackErrors.push(`角色卡：${rollbackError?.message || rollbackError}`);
+    }
+    if (repairSnapshot.context) writeActiveDlcContext(characterName, repairSnapshot.context);
+    else removeActiveDlcContext(characterName);
+    ACTIVE_DLC_CONTEXT = repairSnapshot.context || null;
+    syncActiveDlcRelationshipGraph(ACTIVE_DLC_CONTEXT);
+    if (rollbackErrors.length)
+      throw new Error(`原版开局修复失败：${error?.message || error}；自动回滚不完整（${rollbackErrors.join('；')}）`);
+    throw new Error(`原版开局修复失败，已恢复修复前状态：${error?.message || error}`);
+  }
+}
+
+async function readCurrentPrimaryWorldbook() {
+  const readWorldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
+  if (typeof readWorldbook !== 'function') throw new Error('世界书读取接口不可用。');
+
+  const worldbookName = getWorldbookName();
+  const entries = (await readWorldbook(worldbookName)) || [];
+  const requiredNames = BUILTIN_TONGCHENG_OPENINGS.map(opening => opening.entry);
+  const missing = requiredNames.filter(
+    requiredName => !entries.some(entry => entry?.name === requiredName && String(entry.content || '').trim()),
   );
-  const context = {
-    ...(extension.context || {}),
-    characterAdaptationVersion: 3,
-    characterAdaptations: JSON.parse(JSON.stringify(ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS)),
-  };
-  extension.characterAdaptationBackups = characterAdaptationBackups;
-  extension.context = context;
-  character.extensions.canming_dlc = extension;
-  await replaceCharacter(characterName, character, { render: 'immediate' });
-  const verifiedCharacter = await getCharacter(characterName);
-  if (
-    !Array.isArray(verifiedCharacter?.extensions?.canming_dlc?.context?.characterAdaptations) ||
-    verifiedCharacter.extensions.canming_dlc.context.characterAdaptations.length <
-      ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS.length
-  )
-    throw new Error('原版桐城角色人设写入后校验失败，请重试。');
-  writeActiveDlcContext(characterName, context);
-  globalThis.__CMYJ_DLC_CONTEXT_V1__ = context;
-  ACTIVE_DLC_CONTEXT = context;
-  syncActiveDlcRelationshipGraph(context);
-  renderStatusbarBehindWorkshop();
-  await syncPortraitIllustrationRule();
-  return {
-    scenarioId: extension.id,
-    repaired: true,
-    characterAdaptationCount: ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS.length,
-  };
+  if (missing.length)
+    throw new Error(
+      `当前角色卡绑定的主世界书「${worldbookName}」缺少内置资源：${missing.join('、')}。请确认绑定的是完整的《残明余烬》世界书。`,
+    );
+
+  return entries;
 }
 
 async function installBuiltinTongchengScenario() {
   try {
+    const entries = await readCurrentPrimaryWorldbook();
     const installed = await getInstalledScenarioInfo();
-    const originalAdaptationCount = ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS.length;
-    const installedAdaptationCount = Array.isArray(installed?.context?.characterAdaptations)
-      ? installed.context.characterAdaptations.length
-      : 0;
-    const requiredWorldbookNames = new Set([
-      '人物概览',
+    const originalProfileCount = ORIGINAL_TONGCHENG_CHARACTER_PROFILES.profiles.length;
+    const installedProfileCount = Number(installed?.context?.originalCharacterProfileCount || 0);
+    const requiredWorldbookNames = [
       ...BUILTIN_TONGCHENG_WORLDBOOK_ENTRIES.map(entry => entry.name),
-    ]);
+      builtinTongchengOverviewEntry().name,
+    ];
     const installedWorldbookNames = new Set(installed?.worldbookEntries || []);
-    const hasCompleteWorldbook = [...requiredWorldbookNames].every(name => installedWorldbookNames.has(name));
     if (
       installed?.id === 'cmyj.original.tongcheng' &&
-      installedAdaptationCount >= originalAdaptationCount &&
-      hasCompleteWorldbook
+      installed?.context?.originalCharacterProfileVersion === ORIGINAL_TONGCHENG_CHARACTER_PROFILES.version &&
+      installedProfileCount === originalProfileCount &&
+      hasScenarioCharacterProfiles(entries, ORIGINAL_TONGCHENG_CHARACTER_PROFILES.profiles) &&
+      installed?.context?.characterOverviewVersion === ORIGINAL_TONGCHENG_CHARACTER_OVERVIEW.version &&
+      hasBuiltinTongchengOverview(entries) &&
+      installed?.context?.relationshipGraphVersion === ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH.version &&
+      requiredWorldbookNames.every(name => installedWorldbookNames.has(name)) &&
+      hasBuiltinTongchengWorldbooks(entries)
     ) {
       showToast('原版桐城开局已经安装，无需重复安装。', 'ok');
       return { scenarioId: installed.id, alreadyInstalled: true };
     }
-    if (installed?.id === 'cmyj.original.tongcheng' && hasCompleteWorldbook) {
-      const repaired = await repairBuiltinTongchengCharacterAdaptations();
-      showToast(`✓ 已补全原版桐城开局的 ${repaired.characterAdaptationCount} 名角色人设`, 'ok');
+    if (installed?.id === 'cmyj.original.tongcheng') {
+      const repaired = await repairBuiltinTongchengCharacterProfiles();
+      showToast(`✓ 已切换 ${repaired.characterProfileCount} 份完整人设并补全原版人物概览`, 'ok');
       return repaired;
     }
-    const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
-    if (typeof worldbook !== 'function') throw new Error('世界书读取接口不可用。');
-    const entries = (await worldbook(getWorldbookName())) || [];
     const openings = BUILTIN_TONGCHENG_OPENINGS.map(definition => {
       const entry = entries.find(item => item?.name === definition.entry);
       if (!entry?.content) throw new Error(`基础卡缺少内置资源「${definition.entry}」，请重新同步角色卡。`);
@@ -5229,100 +5431,13 @@ async function installBuiltinTongchengScenario() {
       );
       return { id: definition.id, name: definition.name, subtitle: definition.subtitle, content };
     });
-    const peopleByName = Object.fromEntries(
-      [
-        ['苏晚棠', '和济堂当家妇人，栖云、栖月与赵砚的养母。'],
-        ['栖云', '苏晚棠养女、栖月的双胞胎姐姐，沉稳护家。'],
-        ['栖月', '苏晚棠养女、栖云的双胞胎妹妹，心细寡言。'],
-        ['赵砚', '苏晚棠养子，机灵沉默而重情。'],
-        ['苏元庆', '苏家长辈，在桐城经营家业与人情往来。'],
-        ['苏晚月', '苏晚棠之妹，嘴利手稳的边镇遗孀。'],
-        ['林知夏', '林记米铺独女，活泼温善。'],
-        ['翠儿', '贫家出身的年轻丫鬟，嘴碎心热。'],
-        ['常彪', '桐城快班捕役，莽直仗义。'],
-        ['顾明远', '落魄秀才，言辞刻薄而心思缜密。'],
-        ['沈清晏', '沈家独女，嘴利心细，擅长识字记账。'],
-        ['沈大柱', '沈记肉铺屠户，沈清晏之父。'],
-        ['柳氏', '沈大柱之妻、沈清晏之母。'],
-        ['周氏', '林记米铺女掌柜，林知夏之母。'],
-        ['陈茂林', '桐城市井人物，熟悉本地门路与消息。'],
-        ['方仲嘉', '桐城方氏子弟，牵涉地方士绅事务。'],
-        ['杨尔铭', '年少谨慎的桐城知县。'],
-        ['方孔炤', '桐城方氏仕宦，方子衿之父。'],
-        ['周拥田', '桐城地方人物，与城中差役事务有关。'],
-        ['赵老六', '桐城基层差役，熟悉衙门与街面。'],
-        ['马会', '桐城基层差役，参与城中巡捕事务。'],
-        ['方应乾', '桐城方氏人物，卷入凤阳惊变前后的地方局势。'],
-      ].map(([name, summary]) => [name, { name, summary }]),
-    );
-    const overviewNames = {
-      'tongcheng-rebirth': [
-        '苏晚棠',
-        '栖云',
-        '栖月',
-        '赵砚',
-        '苏元庆',
-        '苏晚月',
-        '林知夏',
-        '翠儿',
-        '常彪',
-        '顾明远',
-        '沈清晏',
-        '沈大柱',
-        '柳氏',
-        '周氏',
-        '陈茂林',
-      ],
-      'tongcheng-yunjisi': [
-        '苏晚棠',
-        '栖云',
-        '栖月',
-        '赵砚',
-        '苏元庆',
-        '苏晚月',
-        '林知夏',
-        '翠儿',
-        '常彪',
-        '顾明远',
-        '沈清晏',
-        '沈大柱',
-        '柳氏',
-        '周氏',
-        '陈茂林',
-        '方仲嘉',
-        '杨尔铭',
-        '方孔炤',
-      ],
-      'tongcheng-fengyang': [
-        '杨尔铭',
-        '苏晚棠',
-        '苏元庆',
-        '栖云',
-        '栖月',
-        '赵砚',
-        '林知夏',
-        '翠儿',
-        '常彪',
-        '顾明远',
-        '周拥田',
-        '赵老六',
-        '马会',
-        '沈清晏',
-        '方仲嘉',
-        '方应乾',
-      ],
-    };
-    const overviews = Object.fromEntries(
-      openings.map(opening => [opening.id, (overviewNames[opening.id] || []).map(name => peopleByName[name])]),
-    );
-    const scenarioWorldbookEntries = builtinTongchengWorldbookEntries(entries);
     const resource = {
       id: 'cmyj.original.tongcheng',
       kind: 'scenario',
       name: '原版·桐城皂隶篇',
       scenario: {
         id: 'cmyj.original.tongcheng',
-        version: '1.1.0',
+        version: '1.3.0',
         baseCard: 'cmyj.base',
         minBaseVersion: STATUSBAR_VERSION,
         exclusiveGroup: 'player-origin',
@@ -5330,14 +5445,19 @@ async function installBuiltinTongchengScenario() {
         newChatRequired: true,
       },
       openings,
-      worldbookEntries: [...scenarioWorldbookEntries, builtinTongchengOverviewEntry(overviews)],
+      worldbookEntries: [...builtinTongchengWorldbookEntries(entries), builtinTongchengOverviewEntry()],
       initialRelationships: [],
       portraitProfiles: [],
-      characterOverviewVersion: 1,
-      characterOverviews: overviews,
+      characterOverviewVersion: ORIGINAL_TONGCHENG_CHARACTER_OVERVIEW.version,
+      characterOverviews: {},
       characterAdaptationVersion: 3,
-      characterAdaptations: ORIGINAL_TONGCHENG_CHARACTER_ADAPTATIONS,
-      ui: {},
+      characterAdaptations: [],
+      originalCharacterProfileVersion: ORIGINAL_TONGCHENG_CHARACTER_PROFILES.version,
+      originalCharacterProfiles: ORIGINAL_TONGCHENG_CHARACTER_PROFILES.profiles,
+      relationshipGraphVersion: ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH.version,
+      ui: {
+        relationshipGraph: ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH,
+      },
     };
     const bundle = {
       format: WORKSHOP_PACKAGE_FORMAT,
@@ -5346,7 +5466,7 @@ async function installBuiltinTongchengScenario() {
       createdAt: new Date().toISOString(),
       metadata: {
         title: resource.name,
-        summary: '内置原版桐城身份、三条经典开场与完整的桐城地方设定。',
+        summary: '内置原版桐城身份与三条经典开场。',
         tags: ['残明余烬', '桐城', '原版开局'],
         categories: ['剧情扩展'],
         coverUrl: '',
@@ -5354,9 +5474,14 @@ async function installBuiltinTongchengScenario() {
       resources: [resource],
     };
     if (installed?.id) {
-      const hostWindow = window.parent ?? window;
-      const confirmed = hostWindow.confirm(
+      const confirmed = await canmingUiDialog(
         `角色卡中仍记录着身份 DLC「${installed.name}」。\n\n是否先彻底卸载它，再安装原版桐城开局？当前聊天不会回滚，完成后必须新建聊天。`,
+        {
+          title: '替换身份开场',
+          confirmText: '卸载并安装',
+          cancelText: '保留当前开场',
+          danger: true,
+        },
       );
       if (!confirmed) {
         const cancelled = new Error('已取消替换当前身份 DLC。');
@@ -5369,7 +5494,7 @@ async function installBuiltinTongchengScenario() {
         bridge: createWorkshopBridge(),
       });
     }
-    return await importScenarioWorkshopPackage(bundle);
+    return await importScenarioWorkshopPackage(bundle, { showSuccessDialog: true });
   } catch (error) {
     if (error?.code !== 'SCENARIO_REPLACE_CANCELLED')
       showToast(`✗ 原版桐城开局安装失败：${error?.message || '未知错误'}`, 'err');
@@ -5377,7 +5502,7 @@ async function installBuiltinTongchengScenario() {
   }
 }
 
-async function importScenarioWorkshopPackage(bundle) {
+async function importScenarioWorkshopPackage(bundle, options = {}) {
   const workshop = getCanmingWorkshop();
   const checked = typeof workshop?.validatePackage === 'function' ? workshop.validatePackage(bundle) : bundle;
   const resource = checked?.version === 2 ? checked.resources?.find(item => item.kind === 'scenario') : null;
@@ -5399,118 +5524,197 @@ async function importScenarioWorkshopPackage(bundle) {
   if (!characterName) throw new Error('请先打开《残明余烬》基础卡。');
   let character = await getCharacter(characterName);
   character.extensions = character.extensions && typeof character.extensions === 'object' ? character.extensions : {};
-  let previous = character.extensions.canming_dlc;
-  if (previous?.id && previous.id !== resource.scenario.id) {
-    const confirmed = (window.parent ?? window).confirm(
-      `检测到尚未卸载的身份 DLC「${previous.name || previous.id}」。\n\n每张基础卡只能启用一个身份 DLC。是否先卸载旧 DLC，再安装「${resource.name}」？完成后必须新建聊天。`,
-    );
-    if (!confirmed) {
-      const cancelled = new Error('已取消替换当前身份 DLC。');
-      cancelled.code = 'SCENARIO_REPLACE_CANCELLED';
-      throw cancelled;
-    }
-    await uninstallWorkshopInstall({ scenarios: [previous.id] });
-    await workshop?.forgetScenarioInstall?.(previous.id, {
-      cleanup: true,
-      bridge: createWorkshopBridge(),
-    });
-    character = await getCharacter(characterName);
-    character.extensions = character.extensions && typeof character.extensions === 'object' ? character.extensions : {};
-    previous = character.extensions.canming_dlc;
-  }
-
-  const scenarioWorldbookNames = new Set((resource.worldbookEntries || []).map(entry => entry?.name).filter(Boolean));
   const getWorldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
-  const replaceWorldbook = globalThis.replaceWorldbook ?? window.parent?.replaceWorldbook;
-  const staleInstalledWorldbookNames = new Set(
-    previous?.id === resource.scenario.id
-      ? (previous.worldbookEntries || []).filter(name => name && !scenarioWorldbookNames.has(name))
-      : [],
-  );
-  const worldbookEntryBackups = previous?.id
-    ? Array.isArray(previous.worldbookEntryBackups)
-      ? JSON.parse(JSON.stringify(previous.worldbookEntryBackups))
-      : []
-    : typeof getWorldbook === 'function'
-      ? ((await getWorldbook(getWorldbookName())) || [])
-          .map((entry, index) => ({ entry, index }))
-          .filter(item => scenarioWorldbookNames.has(item.entry?.name))
-          .map(item => JSON.parse(JSON.stringify(item)))
-      : [];
-
-  const worldbookBundle = {
-    format: WORKSHOP_PACKAGE_FORMAT,
-    version: 2,
-    kind: 'worldbook',
-    metadata: checked.metadata,
-    resources: [
-      {
-        id: `${resource.id}-worldbook`,
-        kind: 'worldbook',
-        name: resource.name,
-        entries: resource.worldbookEntries || [],
-      },
-    ],
+  const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
+  if (typeof getWorldbook !== 'function' || typeof replaceWorldbook !== 'function')
+    throw new Error('身份 DLC 安装需要世界书读写接口。');
+  const worldbookName = getWorldbookName();
+  const transactionSnapshot = {
+    character: JSON.parse(JSON.stringify(character)),
+    worldbookEntries: JSON.parse(JSON.stringify((await getWorldbook(worldbookName)) || [])),
+    context: readActiveDlcContext(characterName),
   };
-  await importWorldbookWorkshopPackage(worldbookBundle, { conflictMode: 'overwrite' });
-  if (
-    staleInstalledWorldbookNames.size &&
-    typeof getWorldbook === 'function' &&
-    typeof replaceWorldbook === 'function'
-  ) {
-    const current = (await getWorldbook(getWorldbookName())) || [];
-    await replaceWorldbook(
-      getWorldbookName(),
-      current.filter(entry => !staleInstalledWorldbookNames.has(entry?.name)),
-      { render: 'immediate' },
+  let transactionMutated = false;
+  try {
+    let previous = character.extensions.canming_dlc;
+    if (previous?.id && previous.id !== resource.scenario.id) {
+      const confirmed = await canmingUiDialog(
+        `检测到尚未卸载的身份 DLC「${previous.name || previous.id}」。\n\n每张基础卡只能启用一个身份 DLC。是否先卸载旧 DLC，再安装「${resource.name}」？完成后必须新建聊天。`,
+        {
+          title: '替换身份开场',
+          confirmText: '卸载并安装',
+          cancelText: '保留当前开场',
+          danger: true,
+        },
+      );
+      if (!confirmed) {
+        const cancelled = new Error('已取消替换当前身份 DLC。');
+        cancelled.code = 'SCENARIO_REPLACE_CANCELLED';
+        throw cancelled;
+      }
+      transactionMutated = true;
+      await uninstallWorkshopInstall({ scenarios: [previous.id] });
+      await workshop?.forgetScenarioInstall?.(previous.id, {
+        cleanup: true,
+        bridge: createWorkshopBridge(),
+      });
+      character = await getCharacter(characterName);
+      character.extensions =
+        character.extensions && typeof character.extensions === 'object' ? character.extensions : {};
+      previous = character.extensions.canming_dlc;
+    }
+
+    const scenarioWorldbookNames = new Set((resource.worldbookEntries || []).map(entry => entry?.name).filter(Boolean));
+    const staleInstalledWorldbookNames = new Set(
+      previous?.id === resource.scenario.id
+        ? (previous.worldbookEntries || []).filter(name => name && !scenarioWorldbookNames.has(name))
+        : [],
     );
-  }
-  if (previous?.characterAdaptationBackups?.length)
-    await restoreScenarioCharacterAdaptations(previous.characterAdaptationBackups);
-  const characterAdaptationBackups = await applyScenarioCharacterAdaptations(
-    resource.characterAdaptations || [],
-    resource.characterAdaptationVersion || 2,
-  );
+    const worldbookEntryBackups = previous?.id
+      ? Array.isArray(previous.worldbookEntryBackups)
+        ? JSON.parse(JSON.stringify(previous.worldbookEntryBackups))
+        : []
+      : typeof getWorldbook === 'function'
+        ? ((await getWorldbook(getWorldbookName())) || [])
+            .map((entry, index) => ({ entry, index }))
+            .filter(item => scenarioWorldbookNames.has(item.entry?.name))
+            .map(item => JSON.parse(JSON.stringify(item)))
+        : [];
 
-  const originalFirstMessages =
-    previous?.originalFirstMessages || JSON.parse(JSON.stringify(character.first_messages || []));
-  const baseIntroduction = originalFirstMessages[0] || character.first_messages?.[0] || '';
-  character.first_messages = [baseIntroduction, ...resource.openings.map(opening => opening.content)];
-  const context = {
-    id: resource.scenario.id,
-    name: resource.name,
-    version: resource.scenario.version,
-    scenario: resource.scenario,
-    openings: resource.openings.map(({ id, name, subtitle }) => ({ id, name, subtitle })),
-    initialRelationships: resource.initialRelationships || [],
-    portraitProfiles: resource.portraitProfiles || [],
-    characterOverviewVersion: resource.characterOverviewVersion || 0,
-    characterOverviews: resource.characterOverviews || {},
-    characterAdaptations: resource.characterAdaptations || [],
-    ui: resource.ui || {},
-  };
-  character.extensions.canming_dlc = {
-    id: resource.scenario.id,
-    name: resource.name,
-    version: resource.scenario.version,
-    exclusiveGroup: resource.scenario.exclusiveGroup,
-    originalFirstMessages,
-    worldbookEntries: (resource.worldbookEntries || []).map(entry => entry.name),
-    worldbookEntryBackups,
-    characterAdaptationBackups,
-    context,
-  };
-  await replaceCharacter(characterName, character, { render: 'immediate' });
-  writeActiveDlcContext(characterName, context);
-  globalThis.__CMYJ_DLC_CONTEXT_V1__ = context;
-  ACTIVE_DLC_CONTEXT = context;
-  syncActiveDlcRelationshipGraph(context);
-  renderStatusbarBehindWorkshop();
-  getPortraitLibrary();
-  getCharacterProfiles();
-  await syncPortraitIllustrationRule();
-  showToast(`✓ 已安装身份 DLC「${resource.name}」；请新建聊天后选择开场`, 'ok');
-  return { scenarioId: resource.scenario.id, characterName, openingCount: resource.openings.length };
+    const worldbookBundle = {
+      format: WORKSHOP_PACKAGE_FORMAT,
+      version: 2,
+      kind: 'worldbook',
+      metadata: checked.metadata,
+      resources: [
+        {
+          id: `${resource.id}-worldbook`,
+          kind: 'worldbook',
+          name: resource.name,
+          entries: resource.worldbookEntries || [],
+        },
+      ],
+    };
+    transactionMutated = true;
+    await importWorldbookWorkshopPackage(worldbookBundle, { conflictMode: 'overwrite' });
+    if (
+      staleInstalledWorldbookNames.size &&
+      typeof getWorldbook === 'function' &&
+      typeof replaceWorldbook === 'function'
+    ) {
+      const current = (await getWorldbook(getWorldbookName())) || [];
+      await replaceWorldbook(
+        getWorldbookName(),
+        current.filter(entry => !staleInstalledWorldbookNames.has(entry?.name)),
+        { render: 'immediate' },
+      );
+    }
+    if (previous?.characterProfileBackups?.length)
+      await restoreScenarioCharacterProfiles(previous.characterProfileBackups);
+    if (previous?.characterAdaptationBackups?.length)
+      await restoreScenarioCharacterAdaptations(previous.characterAdaptationBackups);
+    const characterAdaptationBackups = await applyScenarioCharacterAdaptations(
+      resource.characterAdaptations || [],
+      resource.characterAdaptationVersion || 2,
+    );
+    const characterProfileBackups = await applyScenarioCharacterProfiles(resource.originalCharacterProfiles || []);
+
+    const originalFirstMessages =
+      previous?.originalFirstMessages || JSON.parse(JSON.stringify(character.first_messages || []));
+    const baseIntroduction = originalFirstMessages[0] || character.first_messages?.[0] || '';
+    character.first_messages = [baseIntroduction, ...resource.openings.map(opening => opening.content)];
+    const context = {
+      id: resource.scenario.id,
+      name: resource.name,
+      version: resource.scenario.version,
+      scenario: resource.scenario,
+      openings: resource.openings.map(({ id, name, subtitle }) => ({ id, name, subtitle })),
+      initialRelationships: resource.initialRelationships || [],
+      portraitProfiles: resource.portraitProfiles || [],
+      characterOverviewVersion: resource.characterOverviewVersion || 0,
+      characterOverviews: resource.characterOverviews || {},
+      relationshipGraphVersion: resource.relationshipGraphVersion || 0,
+      characterAdaptations: resource.characterAdaptations || [],
+      originalCharacterProfileVersion: resource.originalCharacterProfileVersion || 0,
+      originalCharacterProfileCount: (resource.originalCharacterProfiles || []).length,
+      ui: resource.ui || {},
+    };
+    character.extensions.canming_dlc = {
+      id: resource.scenario.id,
+      name: resource.name,
+      version: resource.scenario.version,
+      exclusiveGroup: resource.scenario.exclusiveGroup,
+      originalFirstMessages,
+      worldbookEntries: (resource.worldbookEntries || []).map(entry => entry.name),
+      worldbookEntryBackups,
+      characterAdaptationBackups,
+      characterProfileBackups,
+      context,
+    };
+    try {
+      await replaceCharacter(characterName, character, { render: 'immediate' });
+    } catch (error) {
+      try {
+        await restoreScenarioCharacterProfiles(characterProfileBackups);
+      } catch (rollbackError) {
+        console.error('[残明余烬] 完整人设安装回滚失败', rollbackError);
+      }
+      try {
+        await restoreScenarioCharacterAdaptations(characterAdaptationBackups);
+      } catch (rollbackError) {
+        console.error('[残明余烬] 动态人设安装回滚失败', rollbackError);
+      }
+      throw error;
+    }
+    writeActiveDlcContext(characterName, context);
+    globalThis.__CMYJ_DLC_CONTEXT_V1__ = context;
+    ACTIVE_DLC_CONTEXT = context;
+    syncActiveDlcRelationshipGraph(context);
+    renderStatusbarBehindWorkshop();
+    refreshDlcLanding();
+    getPortraitLibrary();
+    getCharacterProfiles();
+    await syncPortraitIllustrationRule();
+    showToast(`✓ 已安装身份 DLC「${resource.name}」；请新建聊天后选择开场`, 'ok');
+    if (options.showSuccessDialog) {
+      await canmingUiDialog(
+        `身份 DLC「${resource.name}」已经安装完成。\n\n新开场不会写入当前聊天。请新建聊天，再从开场列表中选择要使用的开局。`,
+        {
+          kind: 'alert',
+          title: '身份开场安装成功',
+          confirmText: '我知道了',
+        },
+      );
+    }
+    return { scenarioId: resource.scenario.id, characterName, openingCount: resource.openings.length };
+  } catch (error) {
+    if (!transactionMutated || error?.code === 'SCENARIO_REPLACE_CANCELLED') throw error;
+    const rollbackErrors = [];
+    try {
+      await replaceWorldbook(worldbookName, transactionSnapshot.worldbookEntries, { render: 'immediate' });
+    } catch (rollbackError) {
+      rollbackErrors.push(`世界书：${rollbackError?.message || rollbackError}`);
+    }
+    try {
+      await replaceCharacter(characterName, transactionSnapshot.character, { render: 'immediate' });
+    } catch (rollbackError) {
+      rollbackErrors.push(`角色卡：${rollbackError?.message || rollbackError}`);
+    }
+    try {
+      if (transactionSnapshot.context) writeActiveDlcContext(characterName, transactionSnapshot.context);
+      else removeActiveDlcContext(characterName);
+      ACTIVE_DLC_CONTEXT = transactionSnapshot.context || null;
+      if (transactionSnapshot.context) globalThis.__CMYJ_DLC_CONTEXT_V1__ = transactionSnapshot.context;
+      else delete globalThis.__CMYJ_DLC_CONTEXT_V1__;
+      syncActiveDlcRelationshipGraph(ACTIVE_DLC_CONTEXT);
+      renderStatusbarBehindWorkshop();
+    } catch (rollbackError) {
+      rollbackErrors.push(`身份上下文：${rollbackError?.message || rollbackError}`);
+    }
+    if (rollbackErrors.length)
+      throw new Error(`身份 DLC 安装失败：${error?.message || error}；自动回滚不完整（${rollbackErrors.join('；')}）`);
+    throw new Error(`身份 DLC 安装失败，已恢复安装前状态：${error?.message || error}`);
+  }
 }
 
 async function snapshotWorkshopInstallState() {
@@ -5687,6 +5891,7 @@ async function uninstallWorkshopInstall(delta = {}) {
       const character = await getCharacter(characterName);
       const installed = character?.extensions?.canming_dlc;
       if (installed?.id && scenarioIds.has(installed.id)) {
+        await restoreScenarioCharacterProfiles(installed.characterProfileBackups || []);
         await restoreScenarioCharacterAdaptations(installed.characterAdaptationBackups || []);
         const installedWorldbookNames = new Set((installed.worldbookEntries || []).filter(Boolean));
         const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
@@ -5721,6 +5926,7 @@ async function uninstallWorkshopInstall(delta = {}) {
         }
         ACTIVE_DLC_CONTEXT = null;
         syncActiveDlcRelationshipGraph(null);
+        refreshDlcLanding();
         getPortraitLibrary();
         getCharacterProfiles();
       }
@@ -6000,12 +6206,10 @@ function loadIframeScripts() {
 
   script1.onload = () => {
     const script2 = doc.createElement('script');
-    script2.src =
-      `https://testingcf.jsdelivr.net/gh/CSEZK/CMYJ-Frontend@${MAP_ASSET_REVISION}/assets/maps/world_1634.js`;
+    script2.src = `https://testingcf.jsdelivr.net/gh/CSEZK/CMYJ-Frontend@${MAP_ASSET_REVISION}/assets/maps/world_1634.js`;
     script2.onload = () => {
       const script3 = doc.createElement('script');
-      script3.src =
-        `https://testingcf.jsdelivr.net/gh/CSEZK/CMYJ-Frontend@${MAP_ASSET_REVISION}/assets/maps/world_1634_overview.js`;
+      script3.src = `https://testingcf.jsdelivr.net/gh/CSEZK/CMYJ-Frontend@${MAP_ASSET_REVISION}/assets/maps/world_1634_overview.js`;
       script3.onload = () => {
         echartsReady = true;
         // 如果已在地图标签页，初始化
@@ -8202,9 +8406,12 @@ function updatePortraitOverlay() {
 }
 
 function getWorldbookName() {
-  const charWb = getCharWorldbookNames('current');
-  if (!charWb?.primary) throw new Error('当前角色卡未绑定世界书');
-  return charWb.primary;
+  const getNames = globalThis.getCharWorldbookNames ?? window.parent?.getCharWorldbookNames;
+  if (typeof getNames !== 'function') throw new Error('角色卡世界书绑定读取接口不可用');
+  const binding = getNames('current') || {};
+  const primary = String(binding.primary || '').trim();
+  if (!primary) throw new Error('当前角色卡未绑定主世界书');
+  return primary;
 }
 
 async function syncWorldbookSettings() {
@@ -8245,8 +8452,7 @@ async function syncWorldbookSettings() {
 
     // 绣阁余声：以世界书条目的 enabled 为准
     const privateEntry = entries.find(
-      entry =>
-        (entry.name || '').includes('绣阁余声-输出规则') || (entry.name || '').includes('私密视角-输出规则'),
+      entry => (entry.name || '').includes('绣阁余声-输出规则') || (entry.name || '').includes('私密视角-输出规则'),
     );
     if (privateEntry && privateViewEnabled !== !!privateEntry.enabled) {
       privateViewEnabled = !!privateEntry.enabled;
@@ -8259,8 +8465,10 @@ async function syncWorldbookSettings() {
           const regexes = getter({ type: 'character', name: 'current' }) || [];
           const updated = regexes.map(regex => {
             const name = regex.script_name || '';
-            if (name.includes('绣阁余声美化') || name.includes('私密视角美化')) return { ...regex, enabled: privateViewEnabled };
-            if (name.includes('绣阁余声隐藏') || name.includes('私密视角隐藏')) return { ...regex, enabled: !privateViewEnabled };
+            if (name.includes('绣阁余声美化') || name.includes('私密视角美化'))
+              return { ...regex, enabled: privateViewEnabled };
+            if (name.includes('绣阁余声隐藏') || name.includes('私密视角隐藏'))
+              return { ...regex, enabled: !privateViewEnabled };
             return regex;
           });
           await replacer(updated, { type: 'character', name: 'current' });
@@ -8365,8 +8573,7 @@ async function togglePrivateView() {
     if (typeof worldbook === 'function' && typeof replaceWorldbook === 'function') {
       const entries = (await worldbook(getWorldbookName())) || [];
       const hasEntry = entries.some(
-        entry =>
-          (entry.name || '').includes('绣阁余声-输出规则') || (entry.name || '').includes('私密视角-输出规则'),
+        entry => (entry.name || '').includes('绣阁余声-输出规则') || (entry.name || '').includes('私密视角-输出规则'),
       );
       if (hasEntry) {
         const updated = entries.map(entry =>
@@ -8391,8 +8598,8 @@ async function togglePrivateView() {
       const regexes = getter({ type: 'character', name: 'current' }) || [];
       const updated = regexes.map(regex => {
         const name = regex.script_name || '';
-            if (name.includes('绣阁余声美化') || name.includes('私密视角美化')) return { ...regex, enabled: newState };
-            if (name.includes('绣阁余声隐藏') || name.includes('私密视角隐藏')) return { ...regex, enabled: !newState };
+        if (name.includes('绣阁余声美化') || name.includes('私密视角美化')) return { ...regex, enabled: newState };
+        if (name.includes('绣阁余声隐藏') || name.includes('私密视角隐藏')) return { ...regex, enabled: !newState };
         return regex;
       });
       await replacer(updated, { type: 'character', name: 'current' });

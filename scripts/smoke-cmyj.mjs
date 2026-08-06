@@ -58,6 +58,19 @@ const v18StatusbarSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'st
 const v18WorkshopSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'workshop', 'index.js'), 'utf8');
 const v18WorldEngineSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'world-engine', 'index.js'), 'utf8');
 const v18ApiCompatSource = await readFile(path.join(root, 'src', 'cmyj-1.8', 'shared', 'api-compat.js'), 'utf8');
+const v18CharacterAdaptationSource = await readFile(
+  path.join(root, 'src', 'cmyj-1.8', 'shared', 'character-adaptation.js'),
+  'utf8',
+);
+const v18OriginalProfiles = JSON.parse(
+  await readFile(path.join(root, 'src', 'cmyj-1.8', 'statusbar', 'original-tongcheng-character-profiles.json'), 'utf8'),
+);
+const v18OriginalOverview = JSON.parse(
+  await readFile(path.join(root, 'src', 'cmyj-1.8', 'statusbar', 'original-tongcheng-character-overview.json'), 'utf8'),
+);
+const v18OriginalGraph = JSON.parse(
+  await readFile(path.join(root, 'src', 'cmyj-1.8', 'statusbar', 'original-tongcheng-relationship-graph.json'), 'utf8'),
+);
 const v18CharacterCatalogSource = await readFile(
   path.join(root, 'src', 'cmyj-1.8', 'scenario-generator', 'character-catalog.js'),
   'utf8',
@@ -372,10 +385,7 @@ assert.doesNotMatch(releaseWorldEngineSource, /shortText\(event\.summary/);
 assert.doesNotMatch(releaseWorldEngineSource, /shortText\(hook\.summary/);
 assert.match(releaseWorldEngineStyle, /\.cwe-event-location-full/);
 assert.match(releaseWorldEngineStyle, /-webkit-line-clamp: unset/);
-assert.match(
-  releaseWorldEngineStyle,
-  /\.cwe-content-overview\s+\.cwe-ledger-layout\s*\{[^}]*padding-left:\s*0;/s,
-);
+assert.match(releaseWorldEngineStyle, /\.cwe-content-overview\s+\.cwe-ledger-layout\s*\{[^}]*padding-left:\s*0;/s);
 assert.match(
   releaseWorldEngineStyle,
   /\.cwe-header\s*>\s*\.cwe-header-actions\s*>\s*\.cwe-close-button\s*\{[^}]*right:\s*-20px;/s,
@@ -452,8 +462,8 @@ for (const source of [
 assert.match(v18Loader, /__CMYJRemoteScriptsV18/);
 assert.match(v18LoaderSource, /RUNTIME_REVISION = 2/);
 assert.match(v18LoaderSource, /REMOTE_ROOT = 'https:\/\/cmyj-frontend\.pages\.dev\/cmyj-1\.8\/'/);
-assert.match(v18StatusbarSource, /STATUSBAR_VERSION = '1\.8\.\d+'/);
-assert.match(v18StatusbarSource, /version: '1\.1\.0'/);
+assert.match(v18StatusbarSource, /STATUSBAR_VERSION = '1\.8\.8'/);
+assert.match(v18StatusbarSource, /version: '1\.3\.0'/);
 assert.match(v18StatusbarSource, /builtinTongchengWorldbookEntries\(entries\)/);
 assert.match(v18StatusbarSource, /conflictMode: 'overwrite'/);
 for (const entryName of [
@@ -539,6 +549,19 @@ assert.match(v18StatusbarSource, /function appendGrainTransaction/);
 assert.match(v18StatusbarSource, /data-action="open-military-command"/);
 assert.match(v18StatusbarSource, /军府签押/);
 assert.match(v18StatusbarSource, /syncActiveDlcRelationshipGraph/);
+assert.match(v18StatusbarSource, /ORIGINAL_TONGCHENG_CHARACTER_PROFILES/);
+assert.match(v18StatusbarSource, /ORIGINAL_TONGCHENG_CHARACTER_OVERVIEW/);
+assert.match(v18StatusbarSource, /ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH/);
+assert.match(v18StatusbarSource, /applyScenarioCharacterProfiles/);
+assert.match(v18StatusbarSource, /restoreScenarioCharacterProfiles/);
+assert.match(v18StatusbarSource, /characterProfileBackups/);
+assert.match(v18StatusbarSource, /version: '1\.3\.0'/);
+assert.match(v18StatusbarSource, /自动回滚不完整/);
+assert.match(v18StatusbarSource, /refreshDlcLanding/);
+assert.match(v18CharacterAdaptationSource, /findCharacterAdaptationEntryIndex/);
+assert.ok(v18OriginalProfiles.profiles.length >= 15, '1.8 缺少原版完整人物档案');
+assert.ok(v18OriginalOverview.content.includes('<原版人物概览>'), '1.8 缺少原版人物概览模板');
+assert.ok(v18OriginalGraph.nodes.length >= 10, '1.8 缺少原版人物关系图');
 assert.match(v18StatusbarSource, /WORLD_1634_OVERVIEW/);
 assert.match(v18StatusbarSource, /east_asia_1634_provinces/);
 assert.match(v18StatusbarSource, /initEChartsDetailMap/);
