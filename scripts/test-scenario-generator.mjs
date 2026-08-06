@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import lodash from 'lodash';
 import YAML from 'yaml';
 import {
   deepSeekJsonSchemaPrompt,
@@ -12,9 +13,10 @@ import { buildScenarioCharacterCatalog } from '../src/cmyj-1.7/scenario-generato
 globalThis.window = {};
 window.parent = window;
 globalThis.document = {};
+globalThis._ = lodash;
 
 const channel = process.argv[2] || 'cmyj-1.7-beta';
-if (!['cmyj-1.7-beta', 'cmyj-1.7'].includes(channel)) throw new Error(`不支持的开局生成器通道：${channel}`);
+if (!['cmyj-1.7-beta', 'cmyj-1.7', 'cmyj-1.8'].includes(channel)) throw new Error(`不支持的开局生成器通道：${channel}`);
 await import(`../src/${channel}/scenario-generator/index.js`);
 
 assert.equal(isOfficialDeepSeekApi({ apiurl: 'https://api.deepseek.com' }), true);
@@ -296,6 +298,7 @@ for (const transientField of ['openingExperience', 'currentGoals', 'knownInforma
 }
 assert.equal(initvar.人际网络.亲属.栖云.是否在场, false);
 assert.equal(initvar.人际网络.亲属.栖云.好感度, 37);
+if (channel === 'cmyj-1.8') assert.equal(initvar.世界运转.公元年份, 1634);
 if (channel === 'cmyj-1.7') {
   assert.equal(initvar.人际网络.私帷.栖月.生育.是否处女, true);
   assert.equal(initvar.人际网络.私帷.栖月.生育.同房次数, 0);

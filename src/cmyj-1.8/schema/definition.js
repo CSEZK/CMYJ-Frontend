@@ -86,6 +86,10 @@ export const Schema = z.object({
     .object({
       _开场标识: z.string().prefault(''),
       当前日期: z.string().prefault('崇祯七年三月初一'),
+      公元年份: z.coerce
+        .number()
+        .transform(v => Math.trunc(_.clamp(v, 1600, 1700)))
+        .prefault(1634),
       十二时辰: z
         .object({
           时辰: z

@@ -2157,9 +2157,46 @@ function reconcileGrainLedger(data) {
   return ledger.本月结余;
 }
 
+const REIGN_YEAR_OFFSETS = Object.freeze({
+  崇祯: 1627,
+  弘光: 1644,
+  隆武: 1644,
+  绍武: 1645,
+  永历: 1646,
+  顺治: 1643,
+  监国鲁: 1645,
+  鲁监国: 1645,
+});
+
+function parseChineseYearNumber(value) {
+  const raw = String(value ?? '').trim();
+  if (raw === '元') return 1;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  const digits = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  if (raw === '十') return 10;
+  if (raw.includes('十')) {
+    const [tens, units] = raw.split('十');
+    return (tens ? digits[tens] : 1) * 10 + (units ? digits[units] : 0);
+  }
+  if ([...raw].every(char => char in digits)) return Number([...raw].map(char => digits[char]).join(''));
+  return NaN;
+}
+
+function gregorianYearFromDate(value) {
+  const match = String(value ?? '').match(/(崇祯|弘光|隆武|绍武|永历|顺治|监国鲁|鲁监国)([元一二两三四五六七八九十〇零\d]+)年/);
+  if (!match) return null;
+  const year = parseChineseYearNumber(match[2]);
+  return Number.isFinite(year) ? REIGN_YEAR_OFFSETS[match[1]] + year : null;
+}
+
 function normalizeStatDataKeys(data) {
   if (!data || typeof data !== 'object') return false;
   let changed = false;
+  const gregorianYear = gregorianYearFromDate(_.get(data, '世界运转.当前日期'));
+  if (gregorianYear && _.get(data, '世界运转.公元年份') !== gregorianYear) {
+    _.set(data, '世界运转.公元年份', gregorianYear);
+    changed = true;
+  }
   const reputation = Number(_.get(data, '主角.声望'));
   const stage = computeReputationStage(reputation);
   if (stage && _.get(data, '主角.声望阶段') !== stage) {
@@ -3385,7 +3422,7 @@ function renderOverview() {
     <div class="cm-hero">
       <div>
         <h2>${html(get(statData, '世界运转.当前日期', '未载日期'))}</h2>
-        <p>${html(formatTime())} · ${html(get(statData, '世界运转.天气', '未载天气'))} · ${tag(scene, sceneTone(scene))}</p>
+        <p>公元${html(get(statData, '世界运转.公元年份', '未载'))}年 · ${html(formatTime())} · ${html(get(statData, '世界运转.天气', '未载天气'))} · ${tag(scene, sceneTone(scene))}</p>
         <p class="cm-place">${html(get(statData, '世界运转.当前地点', '未载地点'))}</p>
       </div>
     </div>

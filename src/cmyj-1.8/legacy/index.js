@@ -1,4 +1,4 @@
-const MIGRATION_VERSION = 2;
+const MIGRATION_VERSION = 3;
 const MIGRATION_MARKER = '_残明余烬旧档迁移版本';
 
 const INTERPERSONAL_CATEGORIES = ['上司', '故友与同僚', '下属与幕僚', '三教九流', '仇敌', '亲属', '私帷'];
@@ -27,6 +27,38 @@ const LOCAL_REGIONS = new Set([
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+const REIGN_YEAR_OFFSETS = Object.freeze({
+  崇祯: 1627,
+  弘光: 1644,
+  隆武: 1644,
+  绍武: 1645,
+  永历: 1646,
+  顺治: 1643,
+  监国鲁: 1645,
+  鲁监国: 1645,
+});
+
+function parseChineseYearNumber(value) {
+  const raw = String(value ?? '').trim();
+  if (raw === '元') return 1;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  const digits = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  if (raw === '十') return 10;
+  if (raw.includes('十')) {
+    const [tens, units] = raw.split('十');
+    return (tens ? digits[tens] : 1) * 10 + (units ? digits[units] : 0);
+  }
+  if ([...raw].every(char => char in digits)) return Number([...raw].map(char => digits[char]).join(''));
+  return NaN;
+}
+
+function gregorianYearFromDate(value) {
+  const match = String(value ?? '').match(/(崇祯|弘光|隆武|绍武|永历|顺治|监国鲁|鲁监国)([元一二两三四五六七八九十〇零\d]+)年/);
+  if (!match) return null;
+  const year = parseChineseYearNumber(match[2]);
+  return Number.isFinite(year) ? REIGN_YEAR_OFFSETS[match[1]] + year : null;
 }
 
 function getLatestMessageId() {
@@ -262,6 +294,16 @@ function migrateMilitaryOperations(data, stats) {
   return changed;
 }
 
+function migrateGregorianYear(data, stats) {
+  const world = data.世界运转;
+  if (!world || typeof world !== 'object') return false;
+  const year = gregorianYearFromDate(world.当前日期);
+  if (!year || world.公元年份 === year) return false;
+  world.公元年份 = year;
+  stats.gregorianYear++;
+  return true;
+}
+
 function migrateStatData(data, stats) {
   if (!data || typeof data !== 'object') return false;
   let changed = false;
@@ -272,6 +314,7 @@ function migrateStatData(data, stats) {
   changed = migrateMapOwnership(data, stats) || changed;
   changed = migrateReproductiveData(data, stats) || changed;
   changed = migrateMilitaryOperations(data, stats) || changed;
+  changed = migrateGregorianYear(data, stats) || changed;
   return changed;
 }
 
@@ -296,6 +339,7 @@ async function runLegacyMigrations() {
     mapOwnership: 0,
     reproductive: 0,
     militaryOperations: 0,
+    gregorianYear: 0,
   };
 
   for (let messageId = 0; messageId <= maxId; messageId++) {

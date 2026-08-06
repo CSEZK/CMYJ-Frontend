@@ -46,7 +46,21 @@ export function parseTimelineDate(value) {
   const raw = String(value ?? '').trim();
   if (!raw) return null;
 
-  // 仅兼容已经导入酒馆的旧版档案；新版档案与变量统一使用中文帝王纪年。
+  const commonEra = raw.match(/^公元(\d{4})年(?:闰)?(正|冬|腊|[一二两三四五六七八九十〇零\d]+)月(?:初)?([一二两三四五六七八九十廿卅〇零\d]+)日?$/);
+  if (commonEra) {
+    const parsed = {
+      reign: '公元',
+      year: Number(commonEra[1]),
+      gregorianYear: Number(commonEra[1]),
+      month: monthNumber(commonEra[2]),
+      day: chineseNumber(commonEra[3]),
+      raw,
+    };
+    if (![parsed.gregorianYear, parsed.month, parsed.day].every(Number.isFinite)) return null;
+    return { ...parsed, ordinal: toOrdinal(parsed) };
+  }
+
+  // 兼容已经导入酒馆的旧版档案；新版档案使用“公元YYYY年某月某日”。
   const legacyCommonEra = raw.match(/^CE(\d{4})-(\d{1,2})-(\d{1,2})$/i);
   if (legacyCommonEra) {
     const [, gregorianYear, month, day] = legacyCommonEra;
@@ -159,6 +173,7 @@ function eventLine(item, upcoming = false) {
 }
 
 export function buildTimelineInjection(archive, dateText, options = {}) {
+  const parsedDate = parseTimelineDate(dateText);
   const selected = selectTimelineEvents(archive, dateText, options);
   const sections = [
     ['当前态势', selected.current],
@@ -167,8 +182,9 @@ export function buildTimelineInjection(archive, dateText, options = {}) {
   ].filter(([, items]) => items.length > 0);
   if (sections.length === 0) return '';
 
+  const gregorianYear = parsedDate?.gregorianYear || Number(options.gregorianYear) || '';
   const header = [
-    `【历史态势参考｜${dateText}】`,
+    `【历史态势参考｜${gregorianYear ? `公元${gregorianYear}年` : '公元纪年未载'}｜${dateText}】`,
     '仅作未受干预时的默认走向；已确立剧情与变量优先，不得强拉回史实。模型知情不等于NPC知情，未来节点不得被人物无来源预知；远方事件须经驿递、文书或传闻延迟传入。',
   ];
   const limit = Number(options.maxChars ?? 460);
