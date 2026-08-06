@@ -1,13 +1,14 @@
 const REIGNS = Object.freeze({
-  崇祯: { offset: 1627 },
-  弘光: { offset: 1644 },
-  隆武: { offset: 1644 },
-  绍武: { offset: 1645 },
-  永历: { offset: 1646 },
-  顺治: { offset: 1643 },
-  监国鲁: { offset: 1645 },
-  鲁监国: { offset: 1645 },
+  崇祯: { code: 'CZ', offset: 1627 },
+  弘光: { code: 'HG', offset: 1644 },
+  隆武: { code: 'LW', offset: 1644 },
+  绍武: { code: 'SW', offset: 1645 },
+  永历: { code: 'YL', offset: 1646 },
+  顺治: { code: 'SZ', offset: 1643 },
+  监国鲁: { code: 'LJ', offset: 1645 },
+  鲁监国: { code: 'LJ', offset: 1645 },
 });
+const REIGNS_BY_CODE = Object.fromEntries(Object.entries(REIGNS).map(([name, data]) => [data.code, { name, ...data }]));
 
 function chineseNumber(text) {
   const raw = String(text ?? '').trim();
@@ -44,6 +45,36 @@ function toOrdinal({ gregorianYear, month, day }) {
 export function parseTimelineDate(value) {
   const raw = String(value ?? '').trim();
   if (!raw) return null;
+
+  // 仅兼容已经导入酒馆的旧版档案；新版档案与变量统一使用中文帝王纪年。
+  const legacyCommonEra = raw.match(/^CE(\d{4})-(\d{1,2})-(\d{1,2})$/i);
+  if (legacyCommonEra) {
+    const [, gregorianYear, month, day] = legacyCommonEra;
+    const parsed = {
+      reign: '旧版公元兼容',
+      year: Number(gregorianYear),
+      gregorianYear: Number(gregorianYear),
+      month: Number(month),
+      day: Number(day),
+      raw,
+    };
+    return { ...parsed, ordinal: toOrdinal(parsed) };
+  }
+
+  const legacyCompact = raw.match(/^(CZ|HG|LW|SW|YL|SZ|LJ)(\d{1,2})-(\d{1,2})-(\d{1,2})$/i);
+  if (legacyCompact) {
+    const [, code, year, month, day] = legacyCompact;
+    const reign = REIGNS_BY_CODE[code.toUpperCase()];
+    const parsed = {
+      reign: reign.name,
+      year: Number(year),
+      gregorianYear: reign.offset + Number(year),
+      month: Number(month),
+      day: Number(day),
+      raw,
+    };
+    return { ...parsed, ordinal: toOrdinal(parsed) };
+  }
 
   const reignMatch = raw.match(/(崇祯|弘光|隆武|绍武|永历|顺治|监国鲁|鲁监国)([元一二两三四五六七八九十百〇零\d]+)年/);
   if (!reignMatch) return null;
