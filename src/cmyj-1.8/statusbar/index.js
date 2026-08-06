@@ -2013,6 +2013,20 @@ function applyActiveDlcPortraits(library, context = ACTIVE_DLC_CONTEXT) {
   return changed;
 }
 
+function mirrorPortraitLibraryStorage(value) {
+  try {
+    (window.parent?.localStorage ?? localStorage).setItem(PORTRAIT_LIBRARY_STORAGE_KEY, value);
+  } catch {
+    // Keep the statusbar-prefixed copy when direct compatibility storage is unavailable.
+  }
+}
+
+function persistPortraitLibrary(library) {
+  const value = JSON.stringify(library);
+  saveStorage(PORTRAIT_LIBRARY_STORAGE_KEY, value);
+  mirrorPortraitLibraryStorage(value);
+}
+
 function getPortraitLibrary() {
   const stored = readJsonStorage(PORTRAIT_LIBRARY_STORAGE_KEY, null);
   if (stored?.version === 1 && stored.entries && typeof stored.entries === 'object') {
@@ -2032,17 +2046,18 @@ function getPortraitLibrary() {
       changed = true;
     }
     changed = applyActiveDlcPortraits(stored) || changed;
-    if (changed) saveStorage(PORTRAIT_LIBRARY_STORAGE_KEY, JSON.stringify(stored));
+    if (changed) persistPortraitLibrary(stored);
+    else mirrorPortraitLibraryStorage(JSON.stringify(stored));
     return stored;
   }
   const library = createDefaultPortraitLibrary();
   applyActiveDlcPortraits(library);
-  saveStorage(PORTRAIT_LIBRARY_STORAGE_KEY, JSON.stringify(library));
+  persistPortraitLibrary(library);
   return library;
 }
 
 function savePortraitLibrary(library) {
-  saveStorage(PORTRAIT_LIBRARY_STORAGE_KEY, JSON.stringify(library));
+  persistPortraitLibrary(library);
   window.CanmingPortraitLibrary = library;
   if (window.parent && window.parent !== window) window.parent.CanmingPortraitLibrary = library;
 }
