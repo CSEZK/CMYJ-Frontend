@@ -559,10 +559,9 @@ export const Schema = z.object({
       z
         .object({
           进度: z.enum(['未开始', '试验中', '小规模试点', '已推广']).prefault('未开始'),
-          效果: z.string().prefault(''),
-          描述: z.string().prefault(''),
+          现状: z.string().prefault(''),
         })
-        .prefault({ 进度: '未开始', 效果: '', 描述: '' }),
+        .prefault({ 进度: '未开始', 现状: '' }),
     )
     .prefault({}),
 

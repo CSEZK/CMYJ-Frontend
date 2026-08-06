@@ -7,6 +7,7 @@ import {
   shouldRetryApiRequest,
 } from '../shared/api-compat.js';
 import { buildScenarioCharacterCatalog } from './character-catalog.js';
+import { normalizeTechnologyCollection } from '../shared/technology.js';
 
 (() => {
   'use strict';
@@ -528,6 +529,7 @@ import { buildScenarioCharacterCatalog } from './character-catalog.js';
     const allowed = new Set(['主角', '人际网络', '军事', '经济', '科技', '个人史记', '时局与任务']);
     for (const key of Object.keys(patch)) if (!allowed.has(key)) delete patch[key];
     if (patch.主角) patch.主角 = { 私库: { 重要物品: patch.主角?.私库?.重要物品 || {} } };
+    normalizeTechnologyCollection(patch.科技);
     return patch;
   }
 
@@ -1254,8 +1256,7 @@ import { buildScenarioCharacterCatalog } from './character-catalog.js';
             recordItem({
               name: string,
               progress: { type: 'string', enum: ['未开始', '试验中', '小规模试点', '已推广'] },
-              effect: string,
-              description: string,
+              current_state: string,
             }),
           ),
           relationships: array(
@@ -1353,7 +1354,7 @@ import { buildScenarioCharacterCatalog } from './character-catalog.js';
     for (const item of unique(facts.storage, '仓储'))
       patch.经济.仓储[item.name] = { 数量: Number(item.quantity) || 0, 单位: item.unit };
     for (const item of unique(facts.technologies, '科技'))
-      patch.科技[item.name] = { 进度: item.progress, 效果: item.effect, 描述: item.description };
+      patch.科技[item.name] = { 进度: item.progress, 现状: item.current_state };
     for (const item of unique(facts.relationships, '人际关系')) {
       const configured = project.characters[item.name];
       if (configured?.included) item.category = configured.category;
