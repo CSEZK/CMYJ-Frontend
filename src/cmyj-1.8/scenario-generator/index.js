@@ -542,6 +542,7 @@ import { buildScenarioCharacterCatalog } from './character-catalog.js';
       世界运转: {
         _开场标识: project.opening.id,
         当前日期: `崇祯七年七月${project.date.day}`,
+        公元年份: 1634,
         十二时辰: { 时辰: hourToShichen(project.date.hour), 刻: project.date.ke },
         二十四时: { 小时: Number(project.date.hour), 分钟: Number(project.date.minute) },
         当前地点: p.location,
@@ -603,6 +604,7 @@ import { buildScenarioCharacterCatalog } from './character-catalog.js';
     candidate.天下地图 = clone(eraPreset.变量.天下地图);
     candidate.世界运转._开场标识 = project.opening.id;
     candidate.世界运转.当前日期 = `崇祯七年七月${project.date.day}`;
+    candidate.世界运转.公元年份 = 1634;
     candidate.世界运转.当前地点 = p.location;
     candidate.世界运转.天气 = project.date.weather;
     const validated = Schema.parse(candidate);

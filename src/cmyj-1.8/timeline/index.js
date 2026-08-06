@@ -86,6 +86,7 @@ import { buildTimelineInjection } from './core.js';
     try {
       const archive = await loadArchive();
       const content = buildTimelineInjection(archive, date, {
+        gregorianYear: statData?.世界运转?.公元年份,
         location: statData?.世界运转?.当前地点 ?? '',
         previewDays: 40,
         maxChars: 460,
