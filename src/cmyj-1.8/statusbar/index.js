@@ -6961,12 +6961,7 @@ function readMvuMergedStatData(mvu) {
   }
 }
 
-function readLatestStatData() {
-  const mvu = globalThis.Mvu ?? window.parent?.Mvu;
-  let data = readMvuMergedStatData(mvu);
-
-  // 新会话没有任何 MVU 数据时，回退到空对象（不再回退 getAllVariables()，
-  // 避免世界书 [initvar] 写入的初始结构在后续游玩中被永久保留、无法覆盖）。
+function prepareStatDataForDisplay(data) {
   if (!data || typeof data !== 'object') {
     data = {};
   }
@@ -6989,6 +6984,15 @@ function readLatestStatData() {
   throw new Error('未找到有效的变量数据，请先生成至少一轮剧情再打开状态栏。');
 }
 
+function readLatestStatData() {
+  const mvu = globalThis.Mvu ?? window.parent?.Mvu;
+  const data = readMvuMergedStatData(mvu);
+
+  // 新会话没有任何 MVU 数据时，回退到空对象（不再回退 getAllVariables()，
+  // 避免世界书 [initvar] 写入的初始结构在后续游玩中被永久保留、无法覆盖）。
+  return prepareStatDataForDisplay(data);
+}
+
 function refreshData(force = false) {
   const latestMessageId = getLatestMessageId();
   if (!force && latestMessageId != null && latestMessageId === lastMessageId && !lastError) {
@@ -7009,7 +7013,9 @@ function refreshData(force = false) {
 function checkLatestMessage() {
   const latestMessageId = getLatestMessageId();
   if (latestMessageId == null) return;
-  if (latestMessageId !== lastMessageId) {
+  // MVU 的 VARIABLE_UPDATE_ENDED 早于消息楼层变量真正写回；即使楼层号没有变化，
+  // 打开的状态栏也要定期复核实际数据，避免一次过早读取后永久卡在旧快照。
+  if (isOpen || latestMessageId !== lastMessageId) {
     refreshData(true);
   }
 }
@@ -8669,7 +8675,15 @@ async function bootstrap() {
       } catch (e) {
         /* 静默 */
       }
-      if (isOpen) refreshData(true);
+      if (isOpen) {
+        // VARIABLE_UPDATE_ENDED 触发时，新楼层变量尚未持久化。直接采用事件携带的
+        // 新快照，不能在这里立刻回读 latest，否则会读到旧值并把新楼层误标为已刷新。
+        statData = prepareStatDataForDisplay(_.cloneDeep(_.get(newVars, 'stat_data', {})));
+        lastError = '';
+        lastMessageId = getLatestMessageId();
+        lastRefreshAt = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+        render();
+      }
     };
     window._canmingMvuHandler = onVarUpdate;
     eventOn(mvu.events.VARIABLE_UPDATE_ENDED, onVarUpdate);
