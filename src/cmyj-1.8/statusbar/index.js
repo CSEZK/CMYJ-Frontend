@@ -1015,8 +1015,7 @@ let savedTabsScrollLeft = 0;
 let savedTabsScrollTop = 0;
 let renderedTab = activeTab;
 const savedContentScroll = {};
-const pendingDeletedPaths = new Set();
-let settleSessionId = ''; // 会话标记：换档时清空 pendingDeletedPaths
+let settleSessionId = ''; // 会话标记：换档时重置本地结算锁
 let mapMode = loadStorage('mapMode', 'status');
 let marketTransactionPending = false;
 
@@ -2666,20 +2665,14 @@ function doSettlementInPlace(variables, options = {}) {
   const grainIncomeBeforeClear = sumGrainRecord(grainLedger.本月入);
   const grainOutcomeBeforeClear = sumGrainRecord(grainLedger.本月出);
 
-  // 本月结余归零并清空月入/月出字典
-  // 将每条子路径加入删除集，防止旧消息楼层的数据在合并时复活
+  // 本月结余归零并清空月入/月出字典。状态栏只读写 MVU latest 快照，
+  // 无须保留已删除路径；永久路径墓碑会误删后续月份复用同名的新流水。
   data.经济.流水.本月结余 = 0;
   const incomeBeforeClear = income;
   const outcomeBeforeClear = ordinaryOutcome;
-  for (const key of Object.keys(flow.月入 || {})) {
-    pendingDeletedPaths.add(`经济.流水.月入.${key}`);
-  }
-  for (const key of Object.keys(flow.月出 || {})) {
-    pendingDeletedPaths.add(`经济.流水.月出.${key}`);
-  }
   data.经济.流水.月入 = {};
   data.经济.流水.月出 = {};
-  // 写入会话标记：换档后标记不匹配，pendingDeletedPaths 自动清空
+  // 写入会话标记：换档后重置 localStorage 中的结算锁
   if (settleSessionId) data.经济._结算标记 = settleSessionId;
   reconcileEconomy(data);
 
@@ -2703,8 +2696,6 @@ function doSettlementInPlace(variables, options = {}) {
   writeSettlementRecord(data, result, applyArmy);
 
   if (applyArmy) {
-    for (const key of Object.keys(grainLedger.本月入 || {})) pendingDeletedPaths.add(`经济.粮秣流水.本月入.${key}`);
-    for (const key of Object.keys(grainLedger.本月出 || {})) pendingDeletedPaths.add(`经济.粮秣流水.本月出.${key}`);
     grainLedger.本月入 = {};
     grainLedger.本月出 = {};
     grainLedger.本月结余 = 0;
@@ -3368,13 +3359,6 @@ async function deleteMvuPathEverywhere(mvu, path) {
   }
 
   return { deletedCount: touchedCount, touchedCount };
-}
-
-function applyPendingDeletedPaths(data) {
-  if (!data || !pendingDeletedPaths.size) return;
-  for (const path of pendingDeletedPaths) {
-    deleteByPath(data, path);
-  }
 }
 
 function meta(label, value) {
@@ -7267,15 +7251,13 @@ function prepareStatDataForDisplay(data) {
 
   if (typeof data === 'object') {
     normalizeStatDataKeys(data);
-    // 换档检测：数据中的会话标记与本会话不匹配 → 清空删除集
+    // 换档检测：数据中的会话标记与本会话不匹配 → 重置本地结算锁
     const dataSessionId = _.get(data, '经济._结算标记');
     if (!dataSessionId || dataSessionId !== settleSessionId) {
-      pendingDeletedPaths.clear();
       // 同步清理 localStorage 结算标记，防止旧档月份锁影响新档首次自动结算
       saveStorage('last_settled_ym', '');
       saveStorage('last_closed_army_ym', '');
     }
-    applyPendingDeletedPaths(data);
     reconcileEconomy(data);
     ensureMarketState(data, extractYearMonth(get(data, '世界运转.当前日期', '')) || '');
     return data;
@@ -7331,7 +7313,6 @@ async function execRemoveVariable(path) {
     return;
   }
   try {
-    pendingDeletedPaths.add(path);
     if (statData && typeof statData === 'object') deleteByPath(statData, path);
     render();
 

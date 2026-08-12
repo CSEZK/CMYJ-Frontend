@@ -546,6 +546,7 @@ assert.match(v18SchemaSource, /军令记录/);
 assert.match(v18StatusbarSource, /function buildMilitaryCommandQuote/);
 assert.match(v18StatusbarSource, /function advanceMilitaryOrders/);
 assert.match(v18StatusbarSource, /function appendGrainTransaction/);
+assert.doesNotMatch(v18StatusbarSource, /pendingDeletedPaths/);
 assert.match(v18StatusbarSource, /data-action="open-military-command"/);
 assert.match(v18StatusbarSource, /军府签押/);
 assert.match(v18StatusbarSource, /syncActiveDlcRelationshipGraph/);
