@@ -7312,9 +7312,9 @@ function refreshData(force = false) {
 function checkLatestMessage() {
   const latestMessageId = getLatestMessageId();
   if (latestMessageId == null) return;
-  // MVU 的 VARIABLE_UPDATE_ENDED 早于消息楼层变量真正写回；即使楼层号没有变化，
-  // 打开的状态栏也要定期复核实际数据，避免一次过早读取后永久卡在旧快照。
-  if (isOpen || latestMessageId !== lastMessageId) {
+  // 只在楼层变化时刷新。状态栏内的创意工坊、变量修改器等工具与面板共用
+  // frameDocument，周期性强制 render() 会销毁这些工具挂载的 DOM。
+  if (latestMessageId !== lastMessageId) {
     refreshData(true);
   }
 }
