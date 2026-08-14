@@ -3323,8 +3323,10 @@ function renderSelf() {
 
 function renderSettleSnapshot(s) {
   const sign = n => (n > 0 ? '+' : '');
+  const transfer = number(s?.私库变动, 0);
+  const balance = number(s?.私库余额, 0);
   const lines = [
-    `${s.类型 || '结算'} · ${s.日期 || ''}`,
+    `${s.类型 || '自动跨月结算'} · ${s.日期 || '未载日期'}`,
     `资产月入 ${s.资产月入 || 0} 两${s.军费支出 ? ' · 军费 ' + s.军费支出 + ' 两' : ''}`,
   ];
   if (s.仓储耗粮 || s.折银补粮) {
@@ -3339,8 +3341,13 @@ function renderSettleSnapshot(s) {
       `士气 ${sign(s.士气变动)}${s.士气变动} · 后勤 ${sign(s.后勤变动)}${s.后勤变动}（${s.受影响的营 || 0} 营）`,
     );
   }
-  lines.push(`私库 ${sign(s.私库变动)}${s.私库变动} 两 → 余额 ${s.私库余额 || 0} 两`);
+  lines.push(`私库 ${sign(transfer)}${transfer} 两 → 余额 ${balance} 两`);
   return `<div class="cm-settle-snapshot">${lines.map(l => `<p>${html(l)}</p>`).join('')}</div>`;
+}
+
+function hasSettlementSnapshot(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return Boolean(String(value.日期 || '').trim() || String(value.类型 || '').trim());
 }
 
 function renderMoneyViewSwitch() {
@@ -3427,7 +3434,8 @@ function renderMoney() {
   const assets = get(statData, '经济.资产', {});
   const storage = get(statData, '经济.仓储', {});
   const armySupply = estimateArmyMonthlySupply(statData);
-  const lastSettle = get(statData, '经济.上次结算', null);
+  const lastSettleRaw = get(statData, '经济.上次结算', null);
+  const lastSettle = hasSettlementSnapshot(lastSettleRaw) ? lastSettleRaw : null;
   const grainStock = availableArmyGrain(statData);
   const assetIncome = sumAssetIncome(assets);
   const grainRunway = armySupply.grain > 0 ? grainStock / armySupply.grain : null;

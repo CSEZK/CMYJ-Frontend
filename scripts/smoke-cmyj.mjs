@@ -576,6 +576,8 @@ assert.ok(v19Loader.length > 1_000, '1.9 加载器未构建');
 assert.match(v19LoaderSource, /REMOTE_ROOT = 'https:\/\/cmyj-frontend\.pages\.dev\/cmyj-1\.9\/'/);
 assert.match(v19StatusbarSource, /STATUSBAR_VERSION = '1\.9\.0'/);
 assert.match(v19StatusbarSource, /下月预估/);
+assert.match(v19StatusbarSource, /function hasSettlementSnapshot\(value\)/);
+assert.match(v19StatusbarSource, /尚未跨月结算/);
 assert.doesNotMatch(v19StatusbarSource, /data-action="manual-settle"/);
 assert.doesNotMatch(v19StatusbarSource, /reconcileGrainLedger/);
 assert.match(v19SchemaSource, /是否处女: z\.boolean\(\)\.prefault\(true\)/);
