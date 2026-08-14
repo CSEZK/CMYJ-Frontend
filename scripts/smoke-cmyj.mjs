@@ -75,6 +75,10 @@ const v18CharacterCatalogSource = await readFile(
   path.join(root, 'src', 'cmyj-1.8', 'scenario-generator', 'character-catalog.js'),
   'utf8',
 );
+const v19Loader = await readFile(path.join(root, 'dist', 'cmyj-1.9', 'loader', 'index.js'), 'utf8');
+const v19LoaderSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'loader', 'index.js'), 'utf8');
+const v19SchemaSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'schema', 'definition.js'), 'utf8');
+const v19StatusbarSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'statusbar', 'index.js'), 'utf8');
 
 assert.ok(loader.length > 300_000, '共享加载器未包含完整脚本集');
 assert.match(loader, /CanmingWorkshop/);
@@ -568,4 +572,14 @@ assert.match(v18StatusbarSource, /east_asia_1634_provinces/);
 assert.match(v18StatusbarSource, /initEChartsDetailMap/);
 assert.doesNotMatch(v18StatusbarSource, /WORLD_1629/);
 
-console.info('1.6 兼容版、1.7 测试版、1.7 正式版与 1.8 的加载器、环境隔离及脚本模块均已接入。');
+assert.ok(v19Loader.length > 1_000, '1.9 加载器未构建');
+assert.match(v19LoaderSource, /REMOTE_ROOT = 'https:\/\/cmyj-frontend\.pages\.dev\/cmyj-1\.9\/'/);
+assert.match(v19StatusbarSource, /STATUSBAR_VERSION = '1\.9\.0'/);
+assert.match(v19StatusbarSource, /下月预估/);
+assert.doesNotMatch(v19StatusbarSource, /data-action="manual-settle"/);
+assert.match(v19SchemaSource, /是否处女: z\.boolean\(\)\.prefault\(true\)/);
+assert.match(v19SchemaSource, /同房次数: NonnegativeInteger\.prefault\(0\)/);
+assert.doesNotMatch(v19SchemaSource, /^\s+粮秣流水:/m);
+assert.doesNotMatch(v19SchemaSource, /^\s+流水:/m);
+
+console.info('1.6 兼容版、1.7 测试版、1.7 正式版、1.8 与 1.9 的加载器、环境隔离及脚本模块均已接入。');
