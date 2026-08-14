@@ -2210,7 +2210,6 @@ function normalizeStatDataKeys(data) {
   if (!military.军令 || typeof military.军令 !== 'object') military.军令 = {};
   if (!Array.isArray(military.军令记录)) military.军令记录 = [];
   for (const camp of Object.values(military.各营)) ensureCampOperations(camp);
-  reconcileGrainLedger(data);
   return changed;
 }
 

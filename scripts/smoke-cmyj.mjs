@@ -577,6 +577,7 @@ assert.match(v19LoaderSource, /REMOTE_ROOT = 'https:\/\/cmyj-frontend\.pages\.de
 assert.match(v19StatusbarSource, /STATUSBAR_VERSION = '1\.9\.0'/);
 assert.match(v19StatusbarSource, /下月预估/);
 assert.doesNotMatch(v19StatusbarSource, /data-action="manual-settle"/);
+assert.doesNotMatch(v19StatusbarSource, /reconcileGrainLedger/);
 assert.match(v19SchemaSource, /是否处女: z\.boolean\(\)\.prefault\(true\)/);
 assert.match(v19SchemaSource, /同房次数: NonnegativeInteger\.prefault\(0\)/);
 assert.doesNotMatch(v19SchemaSource, /^\s+粮秣流水:/m);
