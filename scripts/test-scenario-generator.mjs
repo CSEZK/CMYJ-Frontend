@@ -16,7 +16,8 @@ globalThis.document = {};
 globalThis._ = lodash;
 
 const channel = process.argv[2] || 'cmyj-1.7-beta';
-if (!['cmyj-1.7-beta', 'cmyj-1.7', 'cmyj-1.8'].includes(channel)) throw new Error(`不支持的开局生成器通道：${channel}`);
+if (!['cmyj-1.7-beta', 'cmyj-1.7', 'cmyj-1.8', 'cmyj-1.9'].includes(channel))
+  throw new Error(`不支持的开局生成器通道：${channel}`);
 await import(`../src/${channel}/scenario-generator/index.js`);
 
 assert.equal(isOfficialDeepSeekApi({ apiurl: 'https://api.deepseek.com' }), true);
