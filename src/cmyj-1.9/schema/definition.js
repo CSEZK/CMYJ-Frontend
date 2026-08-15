@@ -671,18 +671,56 @@ export const Schema = z.object({
             .prefault({ 好感度: 0, 状态: '未接触', 关系摘要: '', 经济: {}, 军事: {} }),
         )
         .prefault({}),
+      未决事项: z
+        .record(
+          z.string(),
+          z
+            .object({
+              状态: z.enum(['待处理', '推进中', '等待中', '暂缓']).prefault('待处理'),
+              概要: z.string().prefault(''),
+              现状: z.string().prefault(''),
+              提醒: z.string().prefault(''),
+            })
+            .prefault({ 状态: '待处理', 概要: '', 现状: '', 提醒: '' }),
+        )
+        .prefault({}),
       当前任务: z
         .record(
           z.string(),
           z
             .object({
+              状态: z.string().prefault(''),
+              概要: z.string().prefault(''),
+              现状: z.string().prefault(''),
+              提醒: z.string().prefault(''),
               类型: z.string().prefault(''),
               目标: z.string().prefault(''),
-              进展: z.string().prefault('未开始'),
+              进展: z.string().prefault(''),
+              说明: z.string().prefault(''),
+              进度: z.string().prefault(''),
             })
-            .prefault({ 类型: '', 目标: '', 进展: '未开始' }),
+            .prefault({}),
         )
-        .prefault({}),
+        .optional(),
+    })
+    .transform(data => {
+      const matters = { ...data.未决事项 };
+      for (const [name, task] of Object.entries(data.当前任务 || {})) {
+        if (Object.hasOwn(matters, name)) continue;
+        const currentState = task.现状 || task.进展 || task.进度 || '';
+        const context = `${task.状态 || ''} ${currentState}`;
+        let status = '推进中';
+        if (/暂缓|搁置|暂停/.test(context)) status = '暂缓';
+        else if (/等待|待.*(?:回信|答复|消息|时机|结果|抵达)|静候/.test(context)) status = '等待中';
+        else if (/未开始|尚未|待办|待处理/.test(context) || !context.trim()) status = '待处理';
+        matters[name] = {
+          状态: status,
+          概要: task.概要 || task.目标 || task.说明 || '',
+          现状: currentState,
+          提醒: task.提醒 || '',
+        };
+      }
+      return { 势力关系: data.势力关系, 未决事项: matters };
     })
     .prefault({}),
 

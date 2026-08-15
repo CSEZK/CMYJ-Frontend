@@ -236,14 +236,23 @@ project.initialization = {
         粟米: { 数量: 18, 单位: '石' },
       },
     },
-    时局与任务: {
-      当前任务: {
-        安抚欠饷军士:
-          channel === 'cmyj-1.9'
-            ? { 类型: '军政', 目标: '在哗变前筹到粮饷', 进展: '未开始' }
-            : { 类型: '军政', 说明: '在哗变前筹到粮饷', 进度: '未开始' },
-      },
-    },
+    时局与任务:
+      channel === 'cmyj-1.9'
+        ? {
+            未决事项: {
+              安抚欠饷军士: {
+                状态: '待处理',
+                概要: '欠饷可能引发哗变',
+                现状: '尚未筹到粮饷',
+                提醒: '需在军士哗变前处置',
+              },
+            },
+          }
+        : {
+            当前任务: {
+              安抚欠饷军士: { 类型: '军政', 说明: '在哗变前筹到粮饷', 进度: '未开始' },
+            },
+          },
   },
 };
 
@@ -329,12 +338,21 @@ assert.equal(initvar.主角.私库.金银铜.白银, 3, '补丁合并不得覆�
 assert.deepEqual(initvar.经济.资产.北境边堡, { 说明: '主角负责守御的边堡', 月入: 0 });
 assert.deepEqual(initvar.经济.仓储.粟米, { 数量: 18, 单位: '石' });
 assert.equal(initvar.经济.市场.价格指数.粮食, 100, '补丁合并不得覆盖固定市场骨架');
-assert.deepEqual(
-  initvar.时局与任务.当前任务.安抚欠饷军士,
-  channel === 'cmyj-1.9'
-    ? { 类型: '军政', 目标: '在哗变前筹到粮饷', 进展: '未开始' }
-    : { 类型: '军政', 说明: '在哗变前筹到粮饷', 进度: '未开始' },
-);
+if (channel === 'cmyj-1.9') {
+  assert.deepEqual(initvar.时局与任务.未决事项.安抚欠饷军士, {
+    状态: '待处理',
+    概要: '欠饷可能引发哗变',
+    现状: '尚未筹到粮饷',
+    提醒: '需在军士哗变前处置',
+  });
+  assert.equal(Object.hasOwn(initvar.时局与任务, '当前任务'), false);
+} else {
+  assert.deepEqual(initvar.时局与任务.当前任务.安抚欠饷军士, {
+    类型: '军政',
+    说明: '在哗变前筹到粮饷',
+    进度: '未开始',
+  });
+}
 assert.equal((resource.openings[0].content.match(/<initvar>/g) || []).length, 1);
 assert.equal((resource.openings[0].content.match(/<\/initvar>/g) || []).length, 1);
 assert.doesNotMatch(resource.openings[0].content, /<\/?initial_variables>/);

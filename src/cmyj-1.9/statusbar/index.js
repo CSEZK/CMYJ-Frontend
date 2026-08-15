@@ -3256,7 +3256,7 @@ function sceneTone(scene) {
 function renderOverview() {
   const scene = get(statData, '世界运转.场景', 'SFW');
   const 五维 = get(statData, '主角.五维', {});
-  const tasks = entries(get(statData, '时局与任务.当前任务', {})).slice(0, 5);
+  const matters = entries(get(statData, '时局与任务.未决事项', {})).slice(0, 5);
   return `
     <div class="cm-hero">
       <div>
@@ -3276,15 +3276,15 @@ function renderOverview() {
         </div>`,
       )}
       ${card(
-        '当前事务',
-        tasks.length
-          ? `<div class="cm-list">${tasks
+        '未决之事',
+        matters.length
+          ? `<div class="cm-list">${matters
               .map(
-                ([name, task]) => `
+                ([name, matter]) => `
         <article class="cm-item">
-          <div class="cm-item-title"><b>${html(name)}</b>${tag(task.类型 || '未分类')}</div>
-          <p>${html(task.目标 || '无目标')}</p>
-          ${task.进展 ? meta('进展', task.进展) : ''}
+          <div class="cm-item-title"><b>${html(name)}</b>${tag(matter.状态 || '待处理')}</div>
+          <p>${html(matter.概要 || '暂无概要')}</p>
+          ${matter.现状 ? meta('现状', matter.现状) : ''}
         </article>`,
               )
               .join('')}</div>`
@@ -3659,7 +3659,7 @@ function renderMilitary() {
 
 function renderSituation() {
   const powers = entries(get(statData, '时局与任务.势力关系', {}));
-  const tasks = get(statData, '时局与任务.当前任务', {});
+  const matters = get(statData, '时局与任务.未决事项', {});
   const powersBody = powers.length
     ? `<div class="cm-row-list">${powers
         .map(([name, power]) => {
@@ -3689,18 +3689,19 @@ function renderSituation() {
     : emptyLine('暂无势力档案。');
   return `
     ${foldGroup(
-      '当前任务',
+      '未决之事',
       recordList(
-        tasks,
-        (name, task) => `
+        matters,
+        (name, matter) => `
       <article class="cm-item">
-        <div class="cm-item-title"><b>${html(name)}</b><span class="cm-title-actions">${tag(task.类型 || '未分类')}${actionButton('放弃', 'remove-variable', `时局与任务.当前任务.${name}`)}</span></div>
-        <p>${html(task.目标 || '无目标')}</p>
-        ${task.进展 ? meta('进展', task.进展) : ''}
+        <div class="cm-item-title"><b>${html(name)}</b><span class="cm-title-actions">${tag(matter.状态 || '待处理')}${actionButton('移除', 'remove-variable', `时局与任务.未决事项.${name}`)}</span></div>
+        <p>${html(matter.概要 || '暂无概要')}</p>
+        ${matter.现状 ? meta('现状', matter.现状) : ''}
+        ${matter.提醒 ? meta('提醒', matter.提醒) : ''}
       </article>`,
-        '暂无任务。',
+        '暂无未决之事。',
       ),
-      '暂无任务。',
+      '暂无未决之事。',
     )}
     ${foldGroup('势力关系', powersBody, '暂无势力档案。')}`;
 }

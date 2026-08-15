@@ -595,8 +595,10 @@ assert.match(v19StatusbarSource, /人际网络\.在场角色/);
 assert.doesNotMatch(v19StatusbarSource, /person\.角色心声/);
 assert.doesNotMatch(v19StatusbarSource, /person\.是否在场/);
 assert.doesNotMatch(v19StatusbarSource, /风月阁\.掌柜絮语/);
-assert.match(v19LegacySource, /MIGRATION_VERSION = 6/);
+assert.match(v19LegacySource, /MIGRATION_VERSION = 7/);
 assert.match(v19LegacySource, /function migrateLeanVariables/);
+assert.match(v19SchemaSource, /未决事项/);
+assert.match(v19SchemaSource, /当前任务/);
 assert.doesNotMatch(v19ScenarioSource, /inner_voice:/);
 
 console.info('1.6 兼容版、1.7 测试版、1.7 正式版、1.8 与 1.9 的加载器、环境隔离及脚本模块均已接入。');

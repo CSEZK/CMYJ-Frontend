@@ -1,6 +1,6 @@
 import { normalizeTechnologyCollection } from '../shared/technology.js';
 
-const MIGRATION_VERSION = 6;
+const MIGRATION_VERSION = 7;
 const MIGRATION_MARKER = '_残明余烬旧档迁移版本';
 
 const INTERPERSONAL_CATEGORIES = ['上司', '故友与同僚', '下属与幕僚', '三教九流', '仇敌', '亲属', '私帷'];
@@ -179,6 +179,27 @@ function normalizeFactionStatus(value) {
   return '观望';
 }
 
+function normalizeMatterStatus(value, currentState) {
+  const status = String(value || '').trim();
+  if (['待处理', '推进中', '等待中', '暂缓'].includes(status)) return status;
+  const context = `${status} ${String(currentState || '')}`;
+  if (/暂缓|搁置|暂停/.test(context)) return '暂缓';
+  if (/等待|待.*(?:回信|答复|消息|时机|结果|抵达)|静候/.test(context)) return '等待中';
+  if (/未开始|尚未|待办|待处理/.test(context)) return '待处理';
+  return context.trim() ? '推进中' : '待处理';
+}
+
+function normalizeMatter(task) {
+  const source = task && typeof task === 'object' ? task : {};
+  const currentState = source.现状 || source.进展 || source.进度 || '';
+  return {
+    状态: normalizeMatterStatus(source.状态, currentState),
+    概要: source.概要 || source.目标 || source.说明 || '',
+    现状: currentState,
+    提醒: source.提醒 || '',
+  };
+}
+
 function migrateLeanVariables(data, stats) {
   let changed = false;
   const network = data.人际网络;
@@ -231,15 +252,23 @@ function migrateLeanVariables(data, stats) {
     }
   }
 
-  const tasks = _.get(data, '时局与任务.当前任务');
-  if (tasks && typeof tasks === 'object') {
-    for (const task of Object.values(tasks)) {
-      if (!task || typeof task !== 'object') continue;
-      if (!task.目标 && typeof task.说明 === 'string') task.目标 = task.说明;
-      if (!task.进展 && typeof task.进度 === 'string') task.进展 = task.进度;
-      delete task.说明;
-      delete task.进度;
-      changed = true;
+  const situation = data.时局与任务;
+  if (situation && typeof situation === 'object') {
+    const oldTasks = situation.当前任务 && typeof situation.当前任务 === 'object' ? situation.当前任务 : {};
+    const currentMatters = situation.未决事项 && typeof situation.未决事项 === 'object' ? situation.未决事项 : {};
+    const sourceMatters = { ...oldTasks, ...currentMatters };
+    if (Object.keys(sourceMatters).length || Object.hasOwn(situation, '当前任务')) {
+      const normalizedMatters = Object.fromEntries(
+        Object.entries(sourceMatters).map(([name, task]) => [name, normalizeMatter(task)]),
+      );
+      if (JSON.stringify(currentMatters) !== JSON.stringify(normalizedMatters)) {
+        situation.未决事项 = normalizedMatters;
+        changed = true;
+      }
+      if (Object.hasOwn(situation, '当前任务')) {
+        delete situation.当前任务;
+        changed = true;
+      }
     }
   }
 

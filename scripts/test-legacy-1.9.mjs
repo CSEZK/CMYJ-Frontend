@@ -5,6 +5,22 @@ globalThis._ = lodash;
 globalThis.window = { parent: globalThis };
 globalThis.waitGlobalInitialized = async () => {};
 
+const { Schema } = await import('../src/cmyj-1.9/schema/definition.js');
+const schemaMigrated = Schema.parse({
+  时局与任务: {
+    当前任务: {
+      抢先解析测试: { 类型: '人事', 目标: '保留旧内容', 进展: '等待回信' },
+    },
+  },
+});
+assert.deepEqual(schemaMigrated.时局与任务.未决事项.抢先解析测试, {
+  状态: '等待中',
+  概要: '保留旧内容',
+  现状: '等待回信',
+  提醒: '',
+});
+assert.equal(Object.hasOwn(schemaMigrated.时局与任务, '当前任务'), false);
+
 const chat = {};
 const messages = {
   0: {
@@ -43,6 +59,7 @@ const messages = {
         },
         当前任务: {
           旧任务: { 类型: '人事', 说明: '保住藏银', 进度: '追查中' },
+          新版旧任务: { 类型: '军政', 目标: '等待援军抵达', 进展: '等待塘报' },
         },
       },
       风月阁: { 同房点数: 2, 器物: {}, 掌柜絮语: '旧絮语' },
@@ -86,11 +103,19 @@ assert.deepEqual(power.军事.下属将领.方仲嘉, {
   驻地: '桐城',
   简介: '旧简介',
 });
-assert.deepEqual(data.时局与任务.当前任务.旧任务, {
-  类型: '人事',
-  目标: '保住藏银',
-  进展: '追查中',
+assert.deepEqual(data.时局与任务.未决事项.旧任务, {
+  状态: '推进中',
+  概要: '保住藏银',
+  现状: '追查中',
+  提醒: '',
 });
-assert.equal(chat._残明余烬旧档迁移版本, 6);
+assert.deepEqual(data.时局与任务.未决事项.新版旧任务, {
+  状态: '等待中',
+  概要: '等待援军抵达',
+  现状: '等待塘报',
+  提醒: '',
+});
+assert.equal(Object.hasOwn(data.时局与任务, '当前任务'), false);
+assert.equal(chat._残明余烬旧档迁移版本, 7);
 
 console.info('残明余烬 1.9 旧档精简迁移测试通过。');

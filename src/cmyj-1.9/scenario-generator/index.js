@@ -216,6 +216,35 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
       /* ignore */
     }
   }
+  function migrateInitializationMatters(patch) {
+    const situation = patch?.时局与任务;
+    if (!situation || typeof situation !== 'object') return patch;
+    const oldTasks = situation.当前任务 && typeof situation.当前任务 === 'object' ? situation.当前任务 : {};
+    const currentMatters = situation.未决事项 && typeof situation.未决事项 === 'object' ? situation.未决事项 : {};
+    if (!Object.keys(oldTasks).length && !Object.hasOwn(situation, '当前任务')) return patch;
+    const normalizeStatus = (value, currentState) => {
+      const context = `${String(value || '')} ${String(currentState || '')}`;
+      if (['待处理', '推进中', '等待中', '暂缓'].includes(String(value || ''))) return value;
+      if (/暂缓|搁置|暂停/.test(context)) return '暂缓';
+      if (/等待|待.*(?:回信|答复|消息|时机|结果|抵达)|静候/.test(context)) return '等待中';
+      if (/未开始|尚未|待办|待处理/.test(context)) return '待处理';
+      return context.trim() ? '推进中' : '待处理';
+    };
+    situation.未决事项 = { ...currentMatters };
+    for (const [name, task] of Object.entries(oldTasks)) {
+      if (Object.hasOwn(situation.未决事项, name)) continue;
+      const source = task && typeof task === 'object' ? task : {};
+      const currentState = source.现状 || source.进展 || source.进度 || '';
+      situation.未决事项[name] = {
+        状态: normalizeStatus(source.状态, currentState),
+        概要: source.概要 || source.目标 || source.说明 || '',
+        现状: currentState,
+        提醒: source.提醒 || '',
+      };
+    }
+    delete situation.当前任务;
+    return patch;
+  }
   function normalizeProject(raw) {
     characterCatalog = buildScenarioCharacterCatalog({
       officialCharacters: characterCatalog,
@@ -271,8 +300,9 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
           .filter(item => item?.worldbook && item?.name)
           .map(item => ({ worldbook: String(item.worldbook), name: String(item.name) }))
       : [];
-    next.initialization.patch =
-      next.initialization.patch && typeof next.initialization.patch === 'object' ? next.initialization.patch : {};
+    next.initialization.patch = migrateInitializationMatters(
+      next.initialization.patch && typeof next.initialization.patch === 'object' ? next.initialization.patch : {},
+    );
     if (
       raw?.initialization &&
       !Object.hasOwn(raw.initialization, 'stale') &&
@@ -601,7 +631,7 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
         },
       },
       天下地图: clone(eraPreset.变量.天下地图),
-      时局与任务: { 势力关系: {}, 当前任务: {} },
+      时局与任务: { 势力关系: {}, 未决事项: {} },
       风月阁: { 同房点数: 0, 器物: {} },
     };
     const candidate = mergeDeep(base, sanitizeInitializationPatch(project.initialization?.patch));
@@ -1288,7 +1318,15 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
               main_troop_type: string,
             }),
           ),
-          tasks: array(recordItem({ name: string, type: string, goal: string, progress: string })),
+          pending_matters: array(
+            recordItem({
+              name: string,
+              status: { type: 'string', enum: ['待处理', '推进中', '等待中', '暂缓'] },
+              summary: string,
+              current_state: string,
+              reminder: string,
+            }),
+          ),
           events: array(
             recordItem({
               name: string,
@@ -1315,7 +1353,7 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
       经济: { 资产: {}, 仓储: {} },
       科技: {},
       个人史记: { 大事记: {} },
-      时局与任务: { 势力关系: {}, 当前任务: {} },
+      时局与任务: { 势力关系: {}, 未决事项: {} },
     };
     const unique = (items, kind) => {
       const names = new Set();
@@ -1405,8 +1443,13 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
           军队: {},
         },
       };
-    for (const item of unique(facts.tasks, '任务'))
-      patch.时局与任务.当前任务[item.name] = { 类型: item.type, 目标: item.goal, 进展: item.progress };
+    for (const item of unique(facts.pending_matters, '未决事项'))
+      patch.时局与任务.未决事项[item.name] = {
+        状态: item.status,
+        概要: item.summary,
+        现状: item.current_state,
+        提醒: item.reminder,
+      };
     for (const item of unique(facts.events, '大事记'))
       patch.个人史记.大事记[item.name] = {
         日期: item.date,
@@ -1421,7 +1464,7 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
   async function generateInitialVariables() {
     if (!project.opening.body.trim()) throw new Error('请先生成或填写开场白。');
     const system =
-      '你负责从《残明余烬》的最终开场白中提取初始化事实。只能提取正文和玩家配置明确支持的事实，不得为了填满变量而编造军队、产业、科技、势力或物品。不得输出天下地图、日期、地点、主角五维或金银铜；这些由固定模板生成。涉及玩家时一律写作<user>。只输出合法JSON，不得输出<initvar>、其他初始化标签、Markdown或说明。最终的<initvar>标签由程序统一生成。';
+      '你负责从《残明余烬》的最终开场白中提取初始化事实。只能提取正文和玩家配置明确支持的事实，不得为了填满变量而编造军队、产业、科技、势力或物品。未决事项仅提取主角已知、尚未解决、跨场景仍有效，且遗忘会影响承诺、期限、利益、安全或后续决策的内容；普通日程、临时想法、无后果闲聊和猜测不得提取。不得输出天下地图、日期、地点、主角五维或金银铜；这些由固定模板生成。涉及玩家时一律写作<user>。只输出合法JSON，不得输出<initvar>、其他初始化标签、Markdown或说明。最终的<initvar>标签由程序统一生成。';
     const characterSnapshot = selectedCharacters().map(character => ({
       name: character.name,
       known_before_opening: project.characters[character.name].known,
@@ -1435,7 +1478,7 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
     const user = `<user>：${project.protagonist.identity}；职业：${project.protagonist.occupation || '未定'}；势力：${project.protagonist.faction || '无'}\n开局地点：${project.protagonist.location}\n人物快照：${JSON.stringify(characterSnapshot, null, 2)}\n\n<最终开场白>\n${normalizeUserToken(stripInitializationBlocks(project.opening.body))}\n</最终开场白>\n\n空数组表示该类事实不存在。开场中实际相遇的现场人物应写入 relationships；未出场且开场前不相识的人物不得写入。人物快照中的初始好感度与忠心是硬约束，不得改写。`;
     const facts = await requestAi(system, user, factsSchema());
     project.initialization.patch = materializeInitialFacts(facts);
-    project.initialization.summary = `人物 ${(facts.relationships || []).length} · 物品 ${(facts.important_items || []).length} · 军队 ${(facts.forces || []).length} · 资产 ${(facts.assets || []).length} · 任务 ${(facts.tasks || []).length}`;
+    project.initialization.summary = `人物 ${(facts.relationships || []).length} · 物品 ${(facts.important_items || []).length} · 军队 ${(facts.forces || []).length} · 资产 ${(facts.assets || []).length} · 未决事项 ${(facts.pending_matters || []).length}`;
     project.initialization.stale = false;
     project.initialization.generatedAt = new Date().toISOString();
     createInitvar();
