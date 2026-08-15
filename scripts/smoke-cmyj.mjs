@@ -79,6 +79,8 @@ const v19Loader = await readFile(path.join(root, 'dist', 'cmyj-1.9', 'loader', '
 const v19LoaderSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'loader', 'index.js'), 'utf8');
 const v19SchemaSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'schema', 'definition.js'), 'utf8');
 const v19StatusbarSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'statusbar', 'index.js'), 'utf8');
+const v19LegacySource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'legacy', 'index.js'), 'utf8');
+const v19ScenarioSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'scenario-generator', 'index.js'), 'utf8');
 
 assert.ok(loader.length > 300_000, '共享加载器未包含完整脚本集');
 assert.match(loader, /CanmingWorkshop/);
@@ -582,7 +584,19 @@ assert.doesNotMatch(v19StatusbarSource, /data-action="manual-settle"/);
 assert.doesNotMatch(v19StatusbarSource, /reconcileGrainLedger/);
 assert.match(v19SchemaSource, /是否处女: z\.boolean\(\)\.prefault\(true\)/);
 assert.match(v19SchemaSource, /同房次数: NonnegativeInteger\.prefault\(0\)/);
+assert.match(v19SchemaSource, /在场角色: z/);
+assert.match(v19SchemaSource, /粮草状态: z\.enum/);
+assert.doesNotMatch(v19SchemaSource, /角色心声:/);
+assert.doesNotMatch(v19SchemaSource, /是否在场:/);
+assert.doesNotMatch(v19SchemaSource, /掌柜絮语:/);
 assert.doesNotMatch(v19SchemaSource, /^\s+粮秣流水:/m);
 assert.doesNotMatch(v19SchemaSource, /^\s+流水:/m);
+assert.match(v19StatusbarSource, /人际网络\.在场角色/);
+assert.doesNotMatch(v19StatusbarSource, /person\.角色心声/);
+assert.doesNotMatch(v19StatusbarSource, /person\.是否在场/);
+assert.doesNotMatch(v19StatusbarSource, /风月阁\.掌柜絮语/);
+assert.match(v19LegacySource, /MIGRATION_VERSION = 6/);
+assert.match(v19LegacySource, /function migrateLeanVariables/);
+assert.doesNotMatch(v19ScenarioSource, /inner_voice:/);
 
 console.info('1.6 兼容版、1.7 测试版、1.7 正式版、1.8 与 1.9 的加载器、环境隔离及脚本模块均已接入。');

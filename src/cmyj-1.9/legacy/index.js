@@ -1,6 +1,6 @@
 import { normalizeTechnologyCollection } from '../shared/technology.js';
 
-const MIGRATION_VERSION = 5;
+const MIGRATION_VERSION = 6;
 const MIGRATION_MARKER = '_残明余烬旧档迁移版本';
 
 const INTERPERSONAL_CATEGORIES = ['上司', '故友与同僚', '下属与幕僚', '三教九流', '仇敌', '亲属', '私帷'];
@@ -8,6 +8,7 @@ const PRIVATE_RELATIONS = new Set(['妻', '妾', '通房', '红颜', '女眷']);
 const HISTORY_TYPES = new Set(['军政', '经济', '人事', '外交', '战役', '建设', '技术', '家族']);
 const MAP_CAMPS = new Set(['主角方', '明廷', '后金', '流寇', '地方中立', '未知']);
 const MAP_CAMP_ALIASES = { 主角: '主角方', 明军: '明廷', 中立: '地方中立' };
+const FACTION_STATUSES = new Set(['未接触', '观望', '友好', '结盟', '敌对', '交战', '附庸', '宗主', '已投降', '已覆灭']);
 const LOCAL_REGIONS = new Set([
   '漠北',
   '朝鲜',
@@ -163,6 +164,89 @@ function migrateInterpersonal(data, stats) {
   return changed;
 }
 
+function normalizeFactionStatus(value) {
+  const status = String(value || '').trim();
+  if (FACTION_STATUSES.has(status)) return status;
+  if (/覆灭|消亡|瓦解/.test(status)) return '已覆灭';
+  if (/投降|归降/.test(status)) return '已投降';
+  if (/交战|战争|开战/.test(status)) return '交战';
+  if (/敌对|对立|明合暗斗/.test(status)) return '敌对';
+  if (/结盟|盟友/.test(status)) return '结盟';
+  if (/友好|倚重|合作/.test(status)) return '友好';
+  if (/附庸/.test(status)) return '附庸';
+  if (/宗主/.test(status)) return '宗主';
+  if (/未接触/.test(status)) return '未接触';
+  return '观望';
+}
+
+function migrateLeanVariables(data, stats) {
+  let changed = false;
+  const network = data.人际网络;
+  if (network && typeof network === 'object') {
+    const present = new Set(Array.isArray(network.在场角色) ? network.在场角色 : []);
+    for (const category of INTERPERSONAL_CATEGORIES) {
+      for (const [name, person] of Object.entries(network[category] || {})) {
+        if (!person || typeof person !== 'object') continue;
+        if (person.是否在场 === true) present.add(name);
+        if (Object.hasOwn(person, '是否在场')) {
+          delete person.是否在场;
+          changed = true;
+        }
+        if (Object.hasOwn(person, '角色心声')) {
+          delete person.角色心声;
+          changed = true;
+        }
+      }
+    }
+    const presentNames = [...present].map(name => String(name).trim()).filter(Boolean);
+    if (JSON.stringify(network.在场角色) !== JSON.stringify(presentNames)) {
+      network.在场角色 = presentNames;
+      changed = true;
+    }
+  }
+
+  if (data.风月阁 && typeof data.风月阁 === 'object' && Object.hasOwn(data.风月阁, '掌柜絮语')) {
+    delete data.风月阁.掌柜絮语;
+    changed = true;
+  }
+
+  const powers = _.get(data, '时局与任务.势力关系');
+  if (powers && typeof powers === 'object') {
+    for (const power of Object.values(powers)) {
+      if (!power || typeof power !== 'object') continue;
+      if (!power.关系摘要 && typeof power.描述 === 'string') power.关系摘要 = power.描述;
+      if (Object.hasOwn(power, '描述')) delete power.描述;
+      const normalizedStatus = normalizeFactionStatus(power.状态);
+      if (power.状态 !== normalizedStatus) power.状态 = normalizedStatus;
+
+      const economy = power.经济;
+      if (economy && typeof economy === 'object') {
+        const oldGrain = economy.粮草?.状态;
+        const grain = economy.粮草状态 || oldGrain || '未知';
+        economy.粮草状态 = grain === '紧缺' ? '短缺' : grain;
+        for (const key of ['主要收入', '主要支出', '粮草', '描述']) delete economy[key];
+      }
+      if (power.军事 && typeof power.军事 === 'object') delete power.军事.描述;
+      changed = true;
+    }
+  }
+
+  const tasks = _.get(data, '时局与任务.当前任务');
+  if (tasks && typeof tasks === 'object') {
+    for (const task of Object.values(tasks)) {
+      if (!task || typeof task !== 'object') continue;
+      if (!task.目标 && typeof task.说明 === 'string') task.目标 = task.说明;
+      if (!task.进展 && typeof task.进度 === 'string') task.进展 = task.进度;
+      delete task.说明;
+      delete task.进度;
+      changed = true;
+    }
+  }
+
+  if (changed) stats.leanVariables++;
+  return changed;
+}
+
 function migrateGeneralLoyalty(data, stats) {
   const generals = _.get(data, '军事.将领');
   if (!generals || typeof generals !== 'object') return false;
@@ -181,8 +265,6 @@ function migrateGeneralLoyalty(data, stats) {
         身份: '主角麾下将领',
         好感度: 0,
         忠心: loyalty,
-        角色心声: '',
-        是否在场: false,
       };
     } else if (record.person.忠心 == null && (record.category === '下属与幕僚' || record.category === '私帷')) {
       record.person.忠心 = loyalty;
@@ -331,6 +413,7 @@ function migrateStatData(data, stats) {
   let changed = false;
   changed = migrateSituationKey(data, stats) || changed;
   changed = migrateInterpersonal(data, stats) || changed;
+  changed = migrateLeanVariables(data, stats) || changed;
   changed = migrateGeneralLoyalty(data, stats) || changed;
   changed = migrateHistoryTypes(data, stats) || changed;
   changed = migrateMapOwnership(data, stats) || changed;
@@ -364,6 +447,7 @@ async function runLegacyMigrations() {
     militaryOperations: 0,
     gregorianYear: 0,
     technologyStatus: 0,
+    leanVariables: 0,
   };
 
   for (let messageId = 0; messageId <= maxId; messageId++) {

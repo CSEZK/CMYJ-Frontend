@@ -238,7 +238,10 @@ project.initialization = {
     },
     时局与任务: {
       当前任务: {
-        安抚欠饷军士: { 类型: '军政', 说明: '在哗变前筹到粮饷', 进度: '未开始' },
+        安抚欠饷军士:
+          channel === 'cmyj-1.9'
+            ? { 类型: '军政', 目标: '在哗变前筹到粮饷', 进展: '未开始' }
+            : { 类型: '军政', 说明: '在哗变前筹到粮饷', 进度: '未开始' },
       },
     },
   },
@@ -297,7 +300,11 @@ assert.equal(
 for (const transientField of ['openingExperience', 'currentGoals', 'knownInformation', 'openingStates']) {
   assert.equal(Object.hasOwn(qiyunAdaptation, transientField), false, `长期适配不得包含 ${transientField}`);
 }
-assert.equal(initvar.人际网络.亲属.栖云.是否在场, false);
+if (channel === 'cmyj-1.9') {
+  assert.deepEqual(initvar.人际网络.在场角色, []);
+  assert.equal(Object.hasOwn(initvar.人际网络.亲属.栖云, '是否在场'), false);
+  assert.equal(Object.hasOwn(initvar.人际网络.亲属.栖云, '角色心声'), false);
+} else assert.equal(initvar.人际网络.亲属.栖云.是否在场, false);
 assert.equal(initvar.人际网络.亲属.栖云.好感度, 37);
 if (channel === 'cmyj-1.8') assert.equal(initvar.世界运转.公元年份, 1634);
 if (channel === 'cmyj-1.7') {
@@ -322,7 +329,12 @@ assert.equal(initvar.主角.私库.金银铜.白银, 3, '补丁合并不得覆�
 assert.deepEqual(initvar.经济.资产.北境边堡, { 说明: '主角负责守御的边堡', 月入: 0 });
 assert.deepEqual(initvar.经济.仓储.粟米, { 数量: 18, 单位: '石' });
 assert.equal(initvar.经济.市场.价格指数.粮食, 100, '补丁合并不得覆盖固定市场骨架');
-assert.deepEqual(initvar.时局与任务.当前任务.安抚欠饷军士, { 类型: '军政', 说明: '在哗变前筹到粮饷', 进度: '未开始' });
+assert.deepEqual(
+  initvar.时局与任务.当前任务.安抚欠饷军士,
+  channel === 'cmyj-1.9'
+    ? { 类型: '军政', 目标: '在哗变前筹到粮饷', 进展: '未开始' }
+    : { 类型: '军政', 说明: '在哗变前筹到粮饷', 进度: '未开始' },
+);
 assert.equal((resource.openings[0].content.match(/<initvar>/g) || []).length, 1);
 assert.equal((resource.openings[0].content.match(/<\/initvar>/g) || []).length, 1);
 assert.doesNotMatch(resource.openings[0].content, /<\/?initial_variables>/);

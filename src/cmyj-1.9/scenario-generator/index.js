@@ -486,8 +486,6 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
   function networkRecord(name, state) {
     const base = {
       身份: state.identity || `${project.protagonist.location}人物`,
-      角色心声: '',
-      是否在场: Boolean(state.scene),
     };
     if (state.category === '仇敌') return { ...base, 仇恨度: clamp(-state.affection, 0, 100) };
     if (state.category === '下属与幕僚')
@@ -535,7 +533,12 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
 
   function createInitvar() {
     if (!eraPreset) throw new Error('尚未载入崇祯七年七月时代模板。');
-    const network = Object.fromEntries(CATEGORIES.map(category => [category, {}]));
+    const network = {
+      在场角色: selectedCharacters()
+        .filter(character => project.characters[character.name].scene)
+        .map(character => character.name),
+      ...Object.fromEntries(CATEGORIES.map(category => [category, {}])),
+    };
     for (const [name, state] of Object.entries(project.characters))
       if (state.included && (state.known || state.scene)) network[state.category][name] = networkRecord(name, state);
     const p = project.protagonist;
@@ -599,7 +602,7 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
       },
       天下地图: clone(eraPreset.变量.天下地图),
       时局与任务: { 势力关系: {}, 当前任务: {} },
-      风月阁: { 同房点数: 0, 器物: {}, 掌柜絮语: '' },
+      风月阁: { 同房点数: 0, 器物: {} },
     };
     const candidate = mergeDeep(base, sanitizeInitializationPatch(project.initialization?.patch));
     candidate.天下地图 = clone(eraPreset.变量.天下地图);
@@ -1266,7 +1269,6 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
               favor: number,
               loyalty: number,
               hatred: number,
-              inner_voice: string,
               present: { type: 'boolean' },
               private_relation: { type: 'string', enum: PRIVATE_RELATIONS },
             }),
@@ -1275,20 +1277,18 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
             recordItem({
               name: string,
               favor: number,
-              status: string,
-              description: string,
+              status: {
+                type: 'string',
+                enum: ['未接触', '观望', '友好', '结盟', '敌对', '交战', '附庸', '宗主', '已投降', '已覆灭'],
+              },
+              relationship_summary: string,
               financial_state: { type: 'string', enum: ['未知', '崩溃', '拮据', '平稳', '富足', '雄厚'] },
-              main_income: string,
-              main_expense: string,
-              grain_quantity: number,
-              grain_unit: string,
-              grain_state: { type: 'string', enum: ['未知', '断绝', '紧缺', '尚可', '充足'] },
+              grain_state: { type: 'string', enum: ['未知', '断绝', '短缺', '尚可', '充足'] },
               total_troops: number,
               main_troop_type: string,
-              military_description: string,
             }),
           ),
-          tasks: array(recordItem({ name: string, type: string, description: string, progress: string })),
+          tasks: array(recordItem({ name: string, type: string, goal: string, progress: string })),
           events: array(
             recordItem({
               name: string,
@@ -1310,7 +1310,7 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
   function materializeInitialFacts(facts) {
     const patch = {
       主角: { 私库: { 重要物品: {} } },
-      人际网络: {},
+      人际网络: { 在场角色: [] },
       军事: { 各营: {}, 将领: {} },
       经济: { 资产: {}, 仓储: {} },
       科技: {},
@@ -1361,9 +1361,10 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
       const loyalty = configured?.included ? Number(configured.loyalty) || 50 : item.loyalty;
       const base = {
         身份: normalizeUserToken(item.identity),
-        角色心声: normalizeUserToken(item.inner_voice),
-        是否在场: configured?.included ? Boolean(configured.scene) : Boolean(item.present),
       };
+      if (configured?.included ? Boolean(configured.scene) : Boolean(item.present)) {
+        patch.人际网络.在场角色.push(item.name);
+      }
       patch.人际网络[item.category] ||= {};
       if (item.category === '仇敌') {
         patch.人际网络[item.category][item.name] = {
@@ -1392,24 +1393,20 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
       patch.时局与任务.势力关系[item.name] = {
         好感度: clamp(item.favor, -100, 100),
         状态: item.status,
-        描述: item.description,
+        关系摘要: item.relationship_summary,
         经济: {
           财政状况: item.financial_state,
-          主要收入: item.main_income,
-          主要支出: item.main_expense,
-          粮草: { 数量: Number(item.grain_quantity) || 0, 单位: item.grain_unit, 状态: item.grain_state },
-          描述: item.description,
+          粮草状态: item.grain_state,
         },
         军事: {
           总兵力: Math.max(0, Math.round(item.total_troops)),
           主力兵种: item.main_troop_type,
-          描述: item.military_description,
           下属将领: {},
           军队: {},
         },
       };
     for (const item of unique(facts.tasks, '任务'))
-      patch.时局与任务.当前任务[item.name] = { 类型: item.type, 说明: item.description, 进度: item.progress };
+      patch.时局与任务.当前任务[item.name] = { 类型: item.type, 目标: item.goal, 进展: item.progress };
     for (const item of unique(facts.events, '大事记'))
       patch.个人史记.大事记[item.name] = {
         日期: item.date,

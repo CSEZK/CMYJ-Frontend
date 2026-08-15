@@ -175,6 +175,10 @@ export const Schema = z.object({
 
   人际网络: z
     .object({
+      在场角色: z
+        .array(z.string())
+        .transform(names => [...new Set(names.map(name => name.trim()).filter(Boolean))])
+        .prefault([]),
       上司: z
         .record(
           z.string(),
@@ -185,10 +189,8 @@ export const Schema = z.object({
                 .number()
                 .transform(v => _.clamp(v, -100, 100))
                 .prefault(0),
-              角色心声: z.string().prefault(''),
-              是否在场: z.boolean().prefault(true),
             })
-            .prefault({ 身份: '', 好感度: 0, 角色心声: '', 是否在场: true }),
+            .prefault({ 身份: '', 好感度: 0 }),
         )
         .prefault({}),
 
@@ -202,10 +204,8 @@ export const Schema = z.object({
                 .number()
                 .transform(v => _.clamp(v, -100, 100))
                 .prefault(0),
-              角色心声: z.string().prefault(''),
-              是否在场: z.boolean().prefault(true),
             })
-            .prefault({ 身份: '', 好感度: 0, 角色心声: '', 是否在场: true }),
+            .prefault({ 身份: '', 好感度: 0 }),
         )
         .prefault({}),
 
@@ -223,10 +223,8 @@ export const Schema = z.object({
                 .number()
                 .transform(v => _.clamp(v, 0, 100))
                 .prefault(50),
-              角色心声: z.string().prefault(''),
-              是否在场: z.boolean().prefault(true),
             })
-            .prefault({ 身份: '', 好感度: 0, 忠心: 50, 角色心声: '', 是否在场: true }),
+            .prefault({ 身份: '', 好感度: 0, 忠心: 50 }),
         )
         .prefault({}),
 
@@ -240,10 +238,8 @@ export const Schema = z.object({
                 .number()
                 .transform(v => _.clamp(v, -100, 100))
                 .prefault(0),
-              角色心声: z.string().prefault(''),
-              是否在场: z.boolean().prefault(true),
             })
-            .prefault({ 身份: '', 好感度: 0, 角色心声: '', 是否在场: true }),
+            .prefault({ 身份: '', 好感度: 0 }),
         )
         .prefault({}),
 
@@ -257,10 +253,8 @@ export const Schema = z.object({
                 .number()
                 .transform(v => _.clamp(v, 0, 100))
                 .prefault(0),
-              角色心声: z.string().prefault(''),
-              是否在场: z.boolean().prefault(true),
             })
-            .prefault({ 身份: '', 仇恨度: 0, 角色心声: '', 是否在场: true }),
+            .prefault({ 身份: '', 仇恨度: 0 }),
         )
         .prefault({}),
 
@@ -274,10 +268,8 @@ export const Schema = z.object({
                 .number()
                 .transform(v => _.clamp(v, -100, 100))
                 .prefault(0),
-              角色心声: z.string().prefault(''),
-              是否在场: z.boolean().prefault(true),
             })
-            .prefault({ 身份: '', 好感度: 0, 角色心声: '', 是否在场: true }),
+            .prefault({ 身份: '', 好感度: 0 }),
         )
         .prefault({}),
 
@@ -296,8 +288,6 @@ export const Schema = z.object({
                 .number()
                 .transform(v => _.clamp(v, 0, 100))
                 .prefault(50),
-              角色心声: z.string().prefault(''),
-              是否在场: z.boolean().prefault(true),
               生育: z
                 .object({
                   周期: z.coerce
@@ -324,7 +314,7 @@ export const Schema = z.object({
                 })
                 .prefault({}),
             })
-            .prefault({ 身份: '', 关系: '红颜', 好感度: 0, 忠心: 50, 角色心声: '', 是否在场: true, 生育: {} }),
+            .prefault({ 身份: '', 关系: '红颜', 好感度: 0, 忠心: 50, 生育: {} }),
         )
         .prefault({}),
     })
@@ -593,28 +583,20 @@ export const Schema = z.object({
                 .number()
                 .transform(v => _.clamp(v, -100, 100))
                 .prefault(0),
-              状态: z.string().prefault('未接触'),
-              描述: z.string().prefault(''),
+              状态: z
+                .enum(['未接触', '观望', '友好', '结盟', '敌对', '交战', '附庸', '宗主', '已投降', '已覆灭'])
+                .prefault('未接触'),
+              关系摘要: z.string().prefault(''),
               经济: z
                 .object({
                   财政状况: z.enum(['未知', '崩溃', '拮据', '平稳', '富足', '雄厚']).prefault('未知'),
-                  主要收入: z.string().prefault(''),
-                  主要支出: z.string().prefault(''),
-                  粮草: z
-                    .object({
-                      数量: z.coerce.number().prefault(0),
-                      单位: z.string().prefault('石'),
-                      状态: z.enum(['未知', '断绝', '紧缺', '尚可', '充足']).prefault('未知'),
-                    })
-                    .prefault({}),
-                  描述: z.string().prefault(''),
+                  粮草状态: z.enum(['未知', '断绝', '短缺', '尚可', '充足']).prefault('未知'),
                 })
                 .prefault({}),
               军事: z
                 .object({
                   总兵力: z.coerce.number().prefault(0),
                   主力兵种: z.string().prefault('未知'),
-                  描述: z.string().prefault(''),
                   下属将领: z
                     .record(
                       z.string(),
@@ -686,7 +668,7 @@ export const Schema = z.object({
                 })
                 .prefault({}),
             })
-            .prefault({ 好感度: 0, 状态: '未接触', 描述: '', 经济: {}, 军事: {} }),
+            .prefault({ 好感度: 0, 状态: '未接触', 关系摘要: '', 经济: {}, 军事: {} }),
         )
         .prefault({}),
       当前任务: z
@@ -695,10 +677,10 @@ export const Schema = z.object({
           z
             .object({
               类型: z.string().prefault(''),
-              说明: z.string().prefault(''),
-              进度: z.string().prefault('未开始'),
+              目标: z.string().prefault(''),
+              进展: z.string().prefault('未开始'),
             })
-            .prefault({ 类型: '', 说明: '', 进度: '未开始' }),
+            .prefault({ 类型: '', 目标: '', 进展: '未开始' }),
         )
         .prefault({}),
     })
@@ -718,7 +700,6 @@ export const Schema = z.object({
             .prefault({ 简介: '', 数量: 1 }),
         )
         .prefault({}),
-      掌柜絮语: z.string().prefault(''),
     })
     .prefault({}),
 });

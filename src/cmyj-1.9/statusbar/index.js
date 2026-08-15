@@ -3283,8 +3283,8 @@ function renderOverview() {
                 ([name, task]) => `
         <article class="cm-item">
           <div class="cm-item-title"><b>${html(name)}</b>${tag(task.类型 || '未分类')}</div>
-          <p>${html(task.说明 || '无说明')}</p>
-          ${task.进度 ? meta('进度', task.进度) : ''}
+          <p>${html(task.目标 || '无目标')}</p>
+          ${task.进展 ? meta('进展', task.进展) : ''}
         </article>`,
               )
               .join('')}</div>`
@@ -3492,6 +3492,11 @@ function renderMoney() {
     </div>`;
 }
 
+function isPersonPresent(name) {
+  const names = get(statData, '人际网络.在场角色', []);
+  return Array.isArray(names) && names.includes(name);
+}
+
 function personCard(name, person, options = {}) {
   const scoreName = options.enemy ? '仇恨度' : '好感度';
   const score = options.enemy ? person.仇恨度 : person.好感度;
@@ -3500,13 +3505,12 @@ function personCard(name, person, options = {}) {
     : { min: -100, max: 100, tone: number(score) < 0 ? 'danger' : 'high' };
   return `
     <article class="cm-item ${options.private ? 'private' : ''}">
-      <div class="cm-item-title"><b>${html(name)}</b><span>${person.是否在场 ? tag('在场', 'safe') : tag('不在场')}${portraitButton(name)}${options.path ? actionButton('遗忘', 'remove-variable', options.path) : ''}</span></div>
+      <div class="cm-item-title"><b>${html(name)}</b><span>${isPersonPresent(name) ? tag('在场', 'safe') : tag('不在场')}${portraitButton(name)}${options.path ? actionButton('遗忘', 'remove-variable', options.path) : ''}</span></div>
       ${person.身份 ? `<p class="cm-line">身份：${html(person.身份)}</p>` : ''}
       ${options.private && person.关系 ? `<p class="cm-line">关系：${html(person.关系)}</p>` : ''}
       ${bar(scoreName, score ?? 0, range)}
       ${person.忠心 != null ? bar('忠心', person.忠心, { tone: 'mid' }) : ''}
       ${options.private && person.生育 ? renderBirth(person.生育) : ''}
-      <p class="cm-heart">${html(person.角色心声 || '暂无心声。')}</p>
     </article>`;
 }
 
@@ -3551,11 +3555,10 @@ function privateRow(name, person) {
       <span class="cm-private-body">
         <span class="cm-private-name">${html(name)}</span>
         <span class="cm-private-tags">
-          ${tag(`好感 ${person.好感度 ?? 0}`)}${person.是否在场 ? tag('在场', 'safe') : tag('不在场')}
+          ${tag(`好感 ${person.好感度 ?? 0}`)}${isPersonPresent(name) ? tag('在场', 'safe') : tag('不在场')}
           ${tag(person.生育?.是否处女 === false ? '已非处子' : '处子之身', person.生育?.是否处女 === false ? 'private' : 'safe')}${tag(`同房 ${person.生育?.同房次数 ?? 0} 次`, 'private')}
           ${imgs ? `<span class="cm-mini-action cm-mini-portrait" data-action="view-portrait" data-portrait-name="${html(name)}">立绘</span>` : ''}
         </span>
-        <span class="cm-private-heart">${html(person.角色心声 || '暂无心声。')}</span>
       </span>
       <span class="cm-private-chevron">›</span>
     </button>`;
@@ -3692,8 +3695,8 @@ function renderSituation() {
         (name, task) => `
       <article class="cm-item">
         <div class="cm-item-title"><b>${html(name)}</b><span class="cm-title-actions">${tag(task.类型 || '未分类')}${actionButton('放弃', 'remove-variable', `时局与任务.当前任务.${name}`)}</span></div>
-        <p>${html(task.说明 || '无说明')}</p>
-        ${task.进度 ? meta('进度', task.进度) : ''}
+        <p>${html(task.目标 || '无目标')}</p>
+        ${task.进展 ? meta('进展', task.进展) : ''}
       </article>`,
         '暂无任务。',
       ),
@@ -3910,16 +3913,12 @@ function renderPortraitDetail() {
 
 function renderShop() {
   const 点数 = number(get(statData, '风月阁.同房点数', 0));
-  const 絮语 = get(statData, '风月阁.掌柜絮语', '');
   const 已拥有 = get(statData, '风月阁.器物', {});
   return `
     <div class="cm-shop">
       ${card(
-        '掌柜·云儿',
+        '风月阁账牌',
         `
-        <div class="cm-shop-keeper">
-          <p class="cm-heart" style="margin:0;font-style:italic">${html(絮语 || '哟，客官来了～今儿个有好东西，进来瞧瞧？')}</p>
-        </div>
         <div class="cm-shop-points">
           <span class="cm-shop-coin">⿓</span>
           <span>同房点数：<b>${点数}</b></span>
@@ -4001,23 +4000,19 @@ function renderPowerModal() {
         <div class="cm-modal-body">
           ${bar('好感度', 好感, { min: -100, max: 100, tone: 好感 < 0 ? 'danger' : 'high' })}
           ${meta('状态', power.状态 || '未接触')}
-          ${power.描述 ? `<p class="cm-heart">${html(power.描述)}</p>` : ''}
+          ${power.关系摘要 ? `<p class="cm-heart">${html(power.关系摘要)}</p>` : ''}
 
           <h3>经济</h3>
           <div class="cm-info-grid">
             ${meta('财政状况', get(power, '经济.财政状况', '未知'))}
-            ${meta('主要收入', get(power, '经济.主要收入', '未知'))}
-            ${meta('主要支出', get(power, '经济.主要支出', '未知'))}
-            ${meta('粮草', `${get(power, '经济.粮草.状态', '未知')} ${get(power, '经济.粮草.数量', 0)}${get(power, '经济.粮草.单位', '')}`)}
+            ${meta('粮草状态', get(power, '经济.粮草状态', '未知'))}
           </div>
-          ${get(power, '经济.描述') ? `<p class="cm-line">${html(get(power, '经济.描述'))}</p>` : ''}
 
           <h3>军事</h3>
           <div class="cm-info-grid">
             ${meta('总兵力', get(power, '军事.总兵力', 0).toLocaleString())}
             ${meta('主力兵种', get(power, '军事.主力兵种', '未知'))}
           </div>
-          ${get(power, '军事.描述') ? `<p class="cm-heart">${html(get(power, '军事.描述'))}</p>` : ''}
 
           ${
             将领.length
@@ -4090,10 +4085,9 @@ function renderModal() {
         <div class="cm-modal-body">
           ${meta('身份', person.身份 || '未载')}
           ${meta('关系', person.关系 || '未载')}
-          ${meta('是否在场', person.是否在场 ? '在场' : '不在场')}
+          ${meta('是否在场', isPersonPresent(modalState.name) ? '在场' : '不在场')}
           ${bar('好感度', person.好感度 ?? 0, { min: -100, max: 100, tone: number(person.好感度) < 0 ? 'danger' : 'high' })}
           ${bar('忠心', person.忠心 ?? 50, { tone: 'mid' })}
-          <p class="cm-heart">${html(person.角色心声 || '暂无心声。')}</p>
           <h3>月信</h3>
           <div class="cm-info-grid">
             ${meta('是否处女', person.生育?.是否处女 === false ? '否' : '是')}
@@ -7247,7 +7241,7 @@ async function buyShopItem(itemId) {
     const variables = getMergedLatestVariables(mvu);
     const data = get(variables, 'stat_data', {});
     // 确保风月阁结构
-    if (!data.风月阁) data.风月阁 = { 同房点数: 0, 器物: {}, 掌柜絮语: '' };
+    if (!data.风月阁) data.风月阁 = { 同房点数: 0, 器物: {} };
     if (!data.风月阁.器物) data.风月阁.器物 = {};
     const 当前点数 = number(data.风月阁.同房点数, 0);
     if (当前点数 < item.price) {
