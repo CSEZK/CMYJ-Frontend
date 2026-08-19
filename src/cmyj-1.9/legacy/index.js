@@ -1,6 +1,6 @@
 import { normalizeTechnologyCollection } from '../shared/technology.js';
 
-const MIGRATION_VERSION = 7;
+const MIGRATION_VERSION = 8;
 const MIGRATION_MARKER = '_残明余烬旧档迁移版本';
 
 const INTERPERSONAL_CATEGORIES = ['上司', '故友与同僚', '下属与幕僚', '三教九流', '仇敌', '亲属', '私帷'];
@@ -172,9 +172,10 @@ function normalizeFactionStatus(value) {
   if (/交战|战争|开战/.test(status)) return '交战';
   if (/敌对|对立|明合暗斗/.test(status)) return '敌对';
   if (/结盟|盟友/.test(status)) return '结盟';
-  if (/友好|倚重|合作/.test(status)) return '友好';
+  if (/友好|倚重|合作|联姻/.test(status)) return '友好';
   if (/附庸/.test(status)) return '附庸';
   if (/宗主/.test(status)) return '宗主';
+  if (/已合并|归并|兼并|吞并/.test(status)) return '已覆灭';
   if (/未接触/.test(status)) return '未接触';
   return '观望';
 }
@@ -185,7 +186,7 @@ function normalizeMatterStatus(value, currentState) {
   const context = `${status} ${String(currentState || '')}`;
   if (/暂缓|搁置|暂停/.test(context)) return '暂缓';
   if (/等待|待.*(?:回信|答复|消息|时机|结果|抵达)|静候/.test(context)) return '等待中';
-  if (/未开始|尚未|待办|待处理/.test(context)) return '待处理';
+  if (/(?:尚未|还未|未曾)开始|未开始|待办|待处理/.test(context)) return '待处理';
   return context.trim() ? '推进中' : '待处理';
 }
 
@@ -200,8 +201,50 @@ function normalizeMatter(task) {
   };
 }
 
+function migrateLedgerToMatters(data) {
+  const ledger = data.经济?.流水;
+  if (!ledger || typeof ledger !== 'object') return false;
+  const income = ledger.月入 && typeof ledger.月入 === 'object' ? ledger.月入 : {};
+  const expense = ledger.月出 && typeof ledger.月出 === 'object' ? ledger.月出 : {};
+  if (!Object.keys(income).length && !Object.keys(expense).length) return false;
+  if (!data.时局与任务 || typeof data.时局与任务 !== 'object') data.时局与任务 = {};
+  const matters =
+    data.时局与任务.未决事项 && typeof data.时局与任务.未决事项 === 'object'
+      ? data.时局与任务.未决事项
+      : {};
+  data.时局与任务.未决事项 = matters;
+  const uniqueName = base => {
+    if (!Object.hasOwn(matters, base)) return base;
+    if (!Object.hasOwn(matters, `${base}（旧流水）`)) return `${base}（旧流水）`;
+    let index = 2;
+    while (Object.hasOwn(matters, `${base}（旧流水${index}）`)) index++;
+    return `${base}（旧流水${index}）`;
+  };
+  const appendEntries = (entries, direction) => {
+    for (const [entryName, entryValue] of Object.entries(entries)) {
+      const entry = entryValue && typeof entryValue === 'object' ? entryValue : {};
+      const name = uniqueName(`${direction === 'income' ? '待收' : '待付'}：${entryName}`);
+      const amount = Number(entry.银两) || 0;
+      const description = String(entry.说明 || '').trim();
+      matters[name] = {
+        状态: '等待中',
+        概要: `${entryName}尚有${amount}两白银${direction === 'income' ? '应收' : '应付'}，尚未实际交割。${description ? `事由：${description}` : ''}`,
+        现状: '由1.8旧档流水迁移，当前仍待结清。',
+        提醒:
+          direction === 'income'
+            ? '实际到账后更新主角私库，并移除此事项。'
+            : '实际支付后更新主角私库，并移除此事项。',
+      };
+    }
+  };
+  appendEntries(income, 'income');
+  appendEntries(expense, 'expense');
+  return true;
+}
+
 function migrateLeanVariables(data, stats) {
   let changed = false;
+  changed = migrateLedgerToMatters(data) || changed;
   const network = data.人际网络;
   if (network && typeof network === 'object') {
     const present = new Set(Array.isArray(network.在场角色) ? network.在场角色 : []);
@@ -477,6 +520,7 @@ async function runLegacyMigrations() {
     gregorianYear: 0,
     technologyStatus: 0,
     leanVariables: 0,
+    failedMessages: 0,
   };
 
   for (let messageId = 0; messageId <= maxId; messageId++) {
@@ -487,12 +531,15 @@ async function runLegacyMigrations() {
       replaceVariables(variables, { type: 'message', message_id: messageId });
       stats.messages++;
     } catch (error) {
+      stats.failedMessages++;
       console.warn(`[旧档兼容] 迁移第 ${messageId} 楼失败`, error);
     }
   }
 
-  insertOrAssignVariables({ [MIGRATION_MARKER]: MIGRATION_VERSION }, { type: 'chat' });
-  if (stats.messages > 0) console.info('[旧档兼容] 迁移完成', stats);
+  if (stats.failedMessages === 0) {
+    insertOrAssignVariables({ [MIGRATION_MARKER]: MIGRATION_VERSION }, { type: 'chat' });
+    if (stats.messages > 0) console.info('[旧档兼容] 迁移完成', stats);
+  } else console.warn(`[旧档兼容] 有 ${stats.failedMessages} 个楼层迁移失败，将在下次加载时重试`, stats);
 }
 
 $(() => {

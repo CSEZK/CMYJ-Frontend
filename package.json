@@ -23,6 +23,7 @@
     "test:scenario-generator:release": "node scripts/test-scenario-generator.mjs cmyj-1.7",
     "test:scenario-generator:1.8": "node scripts/test-scenario-generator.mjs cmyj-1.8",
     "test:scenario-generator:1.9": "node scripts/test-scenario-generator.mjs cmyj-1.9",
+    "test:world-turn:1.9": "node scripts/test-world-turn-1.9.mjs",
     "test:technology": "node scripts/test-technology.mjs",
     "test:scenario-cleanup": "node scripts/test-scenario-cleanup.mjs",
     "package:release-card": "node scripts/package-release-card.mjs",

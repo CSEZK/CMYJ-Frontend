@@ -1,6 +1,7 @@
 import ORIGINAL_TONGCHENG_CHARACTER_PROFILES from './original-tongcheng-character-profiles.json';
 import ORIGINAL_TONGCHENG_CHARACTER_OVERVIEW from './original-tongcheng-character-overview.json';
 import ORIGINAL_TONGCHENG_RELATIONSHIP_GRAPH from './original-tongcheng-relationship-graph.json';
+import '../world-turn/index.js';
 import {
   CHARACTER_ADAPTATION_PATTERN,
   findCharacterAdaptationEntryIndex,
@@ -992,6 +993,14 @@ let worldbookSyncing = false;
 let shopEnabled = loadStorage('shop_enabled', '1') === '1';
 let illustrationsEnabled = loadStorage('illustrations_enabled', '1') === '1';
 let privateViewEnabled = loadStorage('private_view_enabled', '0') === '1';
+let worldTurnState = {
+  enabled: true,
+  interval: 8,
+  progress: 0,
+  remaining: 8,
+  status: 'countdown',
+  lastError: '',
+};
 let refreshTimer;
 let lastMessageId = null;
 let dragState = null;
@@ -4308,6 +4317,13 @@ function exposeStatusbarActions() {
     installOriginalScenario: () => installBuiltinTongchengScenario(),
     uninstallCurrentScenario: () => uninstallCurrentScenario(),
     getInstalledScenario: () => getInstalledScenarioInfo(),
+    openSettings: section => {
+      isOpen = true;
+      applyFrameLayout();
+      modalState = { type: 'settings', section: section || '' };
+      syncWorldTurnState();
+      render();
+    },
   };
 }
 
@@ -6029,6 +6045,7 @@ function styleText() {
     .cm-portrait-overlay{position:absolute;inset:0;z-index:6;background:rgba(18,12,8,.94);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;animation:cm-fade-in .35s ease;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;touch-action:manipulation}.cm-portrait-overlay *{user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}.cm-portrait-frame{display:flex;flex-direction:column;align-items:center;max-width:95%;max-height:92vh;animation:cm-portrait-enter .4s ease}.cm-portrait-stage{display:flex;align-items:center;gap:8px}.cm-portrait-view{display:flex;flex-direction:column;align-items:center}.cm-portrait-view img{max-width:100%;max-height:76vh;object-fit:contain;border:3px solid rgba(180,130,100,.35);border-radius:2px;box-shadow:0 0 60px rgba(0,0,0,.6);background:var(--paper2);padding:4px}.cm-portrait-caption{display:flex;flex-direction:column;align-items:center;margin-top:6px}.cm-portrait-caption .cm-portrait-name{color:#e8d8c0;font-size:18px;font-weight:700;letter-spacing:.12em;text-shadow:0 0 12px rgba(0,0,0,.5)}.cm-portrait-caption .cm-portrait-cat{font-size:13px;color:rgba(200,180,155,.65);margin-top:2px;letter-spacing:.12em}.cm-portrait-arrow{background:none;border:1px solid rgba(180,150,120,.25);color:rgba(210,190,160,.55);font-size:24px;width:38px;height:38px;border-radius:50%;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .25s;user-select:none;-webkit-user-select:none;line-height:1;outline:none;touch-action:manipulation}.cm-portrait-arrow:focus{outline:none}.cm-portrait-arrow:hover{background:rgba(180,70,45,.35);color:#e8d8c0;border-color:rgba(200,120,80,.5)}.cm-portrait-dots{display:flex;gap:10px;margin-top:10px}.cm-portrait-dot{width:6px;height:6px;border-radius:50%;background:rgba(180,150,120,.3);transition:all .25s}.cm-portrait-dot.active{background:rgba(210,170,120,.8);box-shadow:0 0 8px rgba(200,150,100,.5)}.cm-portrait-hint{position:absolute;bottom:14px;left:0;right:0;text-align:center;color:rgba(180,160,140,.4);font-size:12px;letter-spacing:2px}@keyframes cm-fade-in{from{opacity:0}to{opacity:1}}@keyframes cm-portrait-enter{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}.cm-shop-keeper{border-left:3px solid #b46a81;padding:6px 10px;margin-bottom:8px}.cm-shop-points{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border:1px solid var(--line);border-radius:999px;font-size:14px}.cm-shop-coin{font-size:18px;color:#b46a81}.cm-shop-grid{display:flex;flex-direction:column;gap:10px}.cm-shop-item{display:flex;align-items:flex-start;gap:10px;border:1px solid var(--line);border-radius:14px;background:var(--card);padding:12px}.cm-shop-item-body{flex:1;min-width:0}.cm-shop-price{display:inline-block;padding:2px 8px;border-radius:999px;background:rgba(180,106,129,.12);color:#b46a81;font-size:12px;font-weight:700}.cm-shop-buy.disabled{opacity:.35;pointer-events:none}.cm-shop-desc{font-size:13px;line-height:1.8;color:var(--muted)}.cm-setting-desc{font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.6}.cm-background-input{width:100%;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);padding:10px 12px;font:inherit;outline:none}.cm-background-input:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}.cm-background-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.cm-background-actions .cm-diff-btn{width:auto;justify-content:center}.cm-modal-character-studio{width:min(940px,97%);background:linear-gradient(145deg,var(--paper),var(--paper2))}.cm-studio{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:460px}.cm-studio-sidebar{padding:14px 10px;border-right:1px solid var(--line);background:rgba(0,0,0,.035)}.cm-studio-sidebar-head{display:flex;justify-content:space-between;align-items:center;padding:0 4px 10px;color:var(--accent);font-size:12px;font-weight:700;letter-spacing:.12em}.cm-studio-sidebar-head small{color:var(--muted);font-size:11px;font-weight:400;letter-spacing:0}.cm-studio-search{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--ink);padding:8px 9px;margin:0 0 9px;font:inherit;font-size:12px;outline:none}.cm-studio-search:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow)}.cm-studio-character-list{display:flex;flex-direction:column;gap:4px;max-height:344px;overflow-y:auto;overscroll-behavior:contain;padding:4px;border:1px solid var(--line);border-radius:11px;background:rgba(0,0,0,.025)}.cm-studio-search-empty{margin:9px 4px;color:var(--muted);font-size:12px;text-align:center}.cm-studio-character{border:0;border-left:2px solid transparent;border-radius:9px;background:transparent;color:var(--muted);padding:9px 10px;text-align:left;cursor:pointer}.cm-studio-character b,.cm-studio-character span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cm-studio-character b{color:var(--ink);font-size:14px}.cm-studio-character span{font-size:11px;margin-top:3px}.cm-studio-character:hover,.cm-studio-character.active{background:rgba(164,61,45,.09);border-left-color:var(--accent)}.cm-studio-list-empty{color:var(--muted);font-size:12px;padding:8px}.cm-studio-main{min-width:0;display:flex;flex-direction:column}.cm-studio-tabs{display:flex;align-items:center;gap:4px;padding:10px 14px;border-bottom:1px solid var(--line)}.cm-studio-tabs>button{border:0;border-radius:8px;background:transparent;color:var(--muted);padding:7px 10px;font:inherit;font-size:13px;cursor:pointer}.cm-studio-tabs>button.active{background:var(--accent);color:#fff}.cm-studio-tabs>button:disabled{opacity:.35;cursor:not-allowed}.cm-studio-actions{margin-left:auto;display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.cm-studio-content{padding:16px;overflow:auto}.cm-studio-note,.cm-studio-field-help{margin:0;color:var(--muted);font-size:12px;line-height:1.6}.cm-studio-note{padding:9px 11px;border-left:3px solid var(--accent2);background:rgba(0,0,0,.035)}.cm-studio-empty{padding:20px;color:var(--muted);text-align:center}.theme-ink .cm-modal-character-studio{background:linear-gradient(145deg,#f5f0e4,#ddd4c2)}@media(max-width:620px){.cm-studio{grid-template-columns:1fr!important}.cm-studio-sidebar{border-right:0!important;border-bottom:1px solid var(--line);padding:10px!important;min-width:0!important;overflow:hidden!important;max-width:100%!important}.cm-studio-character-list{display:flex!important;flex-direction:row!important;flex-wrap:nowrap!important;max-height:none!important;overflow-x:auto!important;overflow-y:hidden!important}.cm-studio-character{min-width:120px!important;flex-shrink:0!important}.cm-studio-tabs{flex-wrap:wrap}.cm-studio-actions{margin-left:0;width:100%;justify-content:flex-start}}.cm-modal-character-manager{width:min(780px,96%);background:linear-gradient(145deg,var(--paper),var(--paper2))}.cm-character-linked{display:flex;flex-wrap:wrap;gap:6px;padding:2px 0 10px}.cm-character-linked-chip{display:inline-flex;align-items:center;gap:7px;border:1px solid color-mix(in srgb,var(--accent) 42%,var(--line));border-radius:999px;padding:5px 8px 5px 10px;background:rgba(164,61,45,.08);color:var(--ink);font:inherit;font-size:12px;cursor:pointer}.cm-character-linked-chip:hover{border-color:var(--accent);color:var(--accent)}.cm-character-linked-chip i{font-style:normal;font-size:16px;line-height:10px;color:var(--muted)}.cm-character-linked-empty{color:var(--muted);font-size:13px;padding:5px 0}.cm-character-picker-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;border:1px dashed var(--line);border-radius:10px;background:transparent;color:var(--accent);padding:9px 11px;font:inherit;font-size:13px;font-weight:700;cursor:pointer}.cm-character-picker-toggle:hover,.cm-character-picker-toggle.open{border-color:var(--accent);background:rgba(164,61,45,.06)}.cm-character-picker-toggle span{font-size:12px;font-weight:400;color:var(--muted)}.cm-character-picker{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}.cm-character-picker-results{max-height:278px;overflow:auto;margin-top:8px;padding-right:4px}.cm-character-picker-empty,.cm-character-picker-more{margin:8px 2px;color:var(--muted);font-size:12px;text-align:center}.cm-character-picker-more{border-top:1px dashed var(--line);padding-top:9px}.cm-character-toolbar-actions{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap}.cm-character-toolbar{display:flex;align-items:end;gap:8px;padding:10px 12px;margin-bottom:16px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(90deg,rgba(0,0,0,.035),transparent)}.cm-character-worldbook{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.1)}.cm-character-worldbook-head{display:flex;justify-content:space-between;gap:10px;align-items:baseline;margin-bottom:8px;color:var(--accent);font-weight:700;font-size:13px}.cm-character-worldbook-head small{color:var(--muted);font-weight:400}.cm-character-worldbook-row{display:flex!important;grid-template-columns:none!important;align-items:flex-start;gap:9px;padding:9px 4px;border-top:1px dashed var(--line);color:var(--ink)!important;font-weight:400!important}.cm-character-worldbook-row input{margin-top:4px}.cm-character-worldbook-row span{display:grid;gap:2px}.cm-character-worldbook-row small{color:var(--muted);font-size:12px;line-height:1.45}.cm-character-status{padding:9px 12px;border-left:3px solid var(--accent2);background:rgba(0,0,0,.035);color:var(--muted);font-size:13px}.theme-ink .cm-modal-character-manager{background:linear-gradient(145deg,#f5f0e4,#ddd4c2)}.cm-modal-portrait-manager{width:min(780px,96%);background:linear-gradient(145deg,var(--paper),var(--paper2));backdrop-filter:none}.theme-ink .cm-modal-portrait-manager{background:linear-gradient(145deg,#f5f0e4,#ddd4c2);box-shadow:0 24px 70px rgba(23,26,23,.42)}.cm-portrait-toolbar{display:flex;align-items:end;gap:8px;padding:10px 12px;margin-bottom:16px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(90deg,rgba(0,0,0,.035),transparent)}.cm-portrait-select{display:grid!important;gap:4px!important;flex:1;color:var(--muted)!important;font-size:11px!important;letter-spacing:.12em}.cm-portrait-select select{width:100%;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--ink);padding:5px 0;font:inherit;font-size:15px;outline:none}.cm-portrait-toolbar-btn{height:34px;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--muted);padding:0 10px;cursor:pointer}.cm-portrait-toolbar-btn:hover{border-color:var(--accent);color:var(--accent)}.cm-portrait-toolbar-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}.cm-portrait-toolbar-btn.icon{width:34px;padding:0}.cm-portrait-toolbar-btn:disabled{opacity:.35;cursor:not-allowed}.cm-portrait-manager-list{display:none}.cm-portrait-form{display:grid;gap:12px}.cm-portrait-form label{display:grid;gap:6px;color:var(--accent);font-weight:700;font-size:13px}.cm-portrait-textarea{min-height:92px;resize:vertical;line-height:1.55}.cm-portrait-enabled{display:block!important;color:var(--muted)!important;font-weight:400!important}.cm-portrait-enabled input{margin-right:7px}.cm-portrait-category-editor{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.12)}.cm-portrait-category-head{display:grid;grid-template-columns:minmax(110px,.45fr) minmax(0,1fr) 32px;gap:8px;margin:0 0 8px;color:var(--accent);font-size:12px;letter-spacing:.08em}.cm-portrait-category-row{display:grid;grid-template-columns:minmax(110px,.45fr) minmax(0,1fr) 32px;gap:8px;align-items:center;margin:8px 0}.cm-portrait-row-remove{width:32px;height:32px;border:1px solid var(--line);border-radius:50%;background:transparent;color:var(--muted);font-size:19px;line-height:1;cursor:pointer}.cm-portrait-row-remove:hover{border-color:#b84835;background:#b84835;color:#fff}.cm-portrait-add-row{margin-top:6px;border:0;background:transparent;color:var(--accent);font:inherit;font-weight:700;cursor:pointer;padding:6px 0}.cm-portrait-add-row span{font-size:18px;vertical-align:-1px}.theme-ink .cm-portrait-category-editor{background:rgba(255,255,255,.48)}@media(max-width:620px){.cm-portrait-category-head{display:none}.cm-portrait-category-row{grid-template-columns:1fr 1fr 32px}}
     .cm-tools-dropdown [data-action="workshop"]{display:none!important}.cm-header>div:first-child{min-width:0}.cm-actions{flex-wrap:nowrap;white-space:nowrap}.cm-workshop-cloud{position:relative;color:var(--accent)!important}.cm-workshop-cloud i{position:absolute;right:-5px;top:-5px;display:grid;place-items:center;min-width:16px;height:16px;padding:0 4px;border:2px solid var(--paper);border-radius:999px;background:#d9463e;color:#fff;font:normal 9px/1 sans-serif}.cm-workshop-cloud i[hidden]{display:none!important}.cm-scenario-entry{display:inline-flex!important;align-items:center;gap:6px!important;border-color:color-mix(in srgb,var(--accent) 60%,var(--line))!important;background:color-mix(in srgb,var(--accent) 10%,var(--card))!important;color:var(--accent)!important;font-weight:700;letter-spacing:.04em}.cm-scenario-entry:hover{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)!important}.cm-scenario-entry svg{width:16px;height:16px}@media(max-width:768px){.cm-header{padding:11px 12px!important;gap:8px!important}.cm-header h1{max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:19px}.cm-kicker{font-size:9px!important;letter-spacing:.13em!important}.cm-actions{gap:5px!important}.cm-icon-btn{width:30px!important;height:30px!important;padding:6px!important}.cm-scenario-entry{width:30px;height:30px;padding:6px!important;justify-content:center}.cm-scenario-entry span{display:none}.cm-tools-dropdown{right:0!important;left:auto!important}.cm-tabs{gap:5px!important;padding:8px!important}.cm-tabs button{padding:8px 10px!important}.cm-content{padding:10px!important}}
     .cm-content{animation:cm-content-in .3s ease}
+    .cm-world-turn-controls{display:grid;grid-template-columns:minmax(210px,1fr) repeat(2,minmax(110px,auto));gap:8px;align-items:end;padding:12px;margin-top:9px;border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:12px;background:linear-gradient(105deg,color-mix(in srgb,var(--accent) 7%,transparent),rgba(255,255,255,.025))}.cm-world-turn-controls label{display:grid;grid-template-columns:auto minmax(70px,110px) auto;gap:8px;align-items:center;color:var(--muted);font-size:12px}.cm-world-turn-controls input{width:100%;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);padding:8px;font:inherit}.cm-world-turn-controls small{white-space:nowrap}.cm-world-turn-controls .cm-diff-btn{width:auto;justify-content:center}.cm-world-turn-controls button:disabled{opacity:.4;cursor:not-allowed}@media(max-width:620px){.cm-world-turn-controls{grid-template-columns:1fr 1fr}.cm-world-turn-controls label{grid-column:1/-1}.cm-world-turn-controls .cm-diff-btn{width:100%}}
     .cm-card,.cm-item,.cm-fold,.cm-private-row,.cm-power-row,.cm-diff-btn,.cm-portrait-card{transition:transform .2s ease,box-shadow .2s ease}
     .cm-card:hover,.cm-item:hover,.cm-fold:hover{transform:translateY(-2px);box-shadow:0 14px 32px rgba(0,0,0,.1)}
     .cm-private-row:hover,.cm-power-row:hover{transform:translateY(-1px)}
@@ -6439,7 +6456,48 @@ function bindFrameEvents() {
     if (target.closest('[data-action="settings"]')) {
       modalState = { type: 'settings' };
       syncWorldbookSettings();
+      syncWorldTurnState();
       render();
+      return;
+    }
+
+    if (target.closest('[data-action="toggle-world-turn"]')) {
+      const api = getWorldTurnApi();
+      if (!api?.setEnabled) showToast('天下推演脚本尚未就绪，请稍后重试。', 'err');
+      else {
+        syncWorldTurnState(api.setEnabled(!worldTurnState.enabled));
+        showToast(`✓ 自动天下推演已${worldTurnState.enabled ? '开启' : '关闭'}`, 'ok');
+      }
+      renderModalOnly();
+      return;
+    }
+
+    if (target.closest('[data-action="save-world-turn-interval"]')) {
+      const api = getWorldTurnApi();
+      const interval = Number(frameDocument.querySelector('[data-world-turn-interval]')?.value || 8);
+      if (!api?.setInterval) showToast('天下推演脚本尚未就绪，请稍后重试。', 'err');
+      else {
+        syncWorldTurnState(api.setInterval(interval));
+        showToast(`✓ 推演间隔已设为 ${worldTurnState.interval} 轮，并重置倒计时`, 'ok');
+      }
+      renderModalOnly();
+      return;
+    }
+
+    if (target.closest('[data-action="run-world-turn-now"]')) {
+      void runWorldTurnSettingAction('runNow');
+      return;
+    }
+    if (target.closest('[data-action="retry-world-turn"]')) {
+      void runWorldTurnSettingAction('retry');
+      return;
+    }
+    if (target.closest('[data-action="reset-world-turn"]')) {
+      void runWorldTurnSettingAction('reset', '✓ 天下推演倒计时已重置');
+      return;
+    }
+    if (target.closest('[data-action="skip-world-turn"]')) {
+      void runWorldTurnSettingAction('skip', '✓ 已跳过本次天下推演');
       return;
     }
 
@@ -8087,7 +8145,43 @@ async function removeCharacterProfile(id) {
     showToast(`✗ 删除角色失败：${error?.message || '未知错误'}`, 'err');
   }
 }
+function getWorldTurnApi() {
+  return globalThis.CanmingWorldTurn ?? window.parent?.CanmingWorldTurn;
+}
+
+function syncWorldTurnState(nextState) {
+  const state = nextState || getWorldTurnApi()?.getState?.();
+  if (state) worldTurnState = { ...worldTurnState, ...state };
+  return worldTurnState;
+}
+
+async function runWorldTurnSettingAction(action, successMessage = '') {
+  const api = getWorldTurnApi();
+  if (!api?.[action]) {
+    showToast('天下推演脚本尚未就绪，请稍后重试。', 'err');
+    return;
+  }
+  try {
+    const result = await api[action]();
+    syncWorldTurnState(result);
+    if (successMessage) showToast(successMessage, 'ok');
+  } catch (error) {
+    showToast(`天下推演操作失败：${error?.message || '未知错误'}`, 'err');
+  }
+  renderModalOnly();
+}
+
 function renderSettingsModal() {
+  const worldTurnStatus = {
+    countdown: `还需 ${worldTurnState.remaining ?? Math.max(0, worldTurnState.interval - worldTurnState.progress)} 轮正文`,
+    waiting_mvu: '正文已完成，等待本轮 MVU 更新',
+    waiting_time: '轮数已到，等待世界时间推进',
+    simulating: '正在生成天下推演',
+    writing: '正在通过 MVU 写入世界状态',
+    success: '本次推演已经完成',
+    failed: `上次推演中断：${worldTurnState.lastError || '未知错误'}`,
+    disabled: '已关闭',
+  }[worldTurnState.status] || '等待下一轮正文';
   return `
     <div class="cm-modal-mask" data-action="close-modal">
       <section class="cm-modal" role="dialog" aria-modal="true">
@@ -8136,6 +8230,23 @@ function renderSettingsModal() {
               <span class="cm-diff-desc">侧写女角色独自一人时的绣阁余声；关闭后历史内容同步隐藏</span>
               <span class="cm-diff-check">${privateViewEnabled ? '开' : '关'}</span>
             </button>
+          </div>
+          <h3 id="cm-world-turn-settings">天下推演</h3>
+          <p class="cm-setting-desc">正常正文及其 MVU 更新完成后计数；达到间隔便额外生成一次上帝视角推演。世界时间完全未推进时暂缓，不会拿“暂无变化”反复交差。</p>
+          <div class="cm-diff-options">
+            <button class="cm-diff-btn${worldTurnState.enabled ? ' active' : ''}" data-action="toggle-world-turn">
+              <span class="cm-diff-name">◈ 自动天下推演</span>
+              <span class="cm-diff-desc">${html(worldTurnStatus)}</span>
+              <span class="cm-diff-check">${worldTurnState.enabled ? '开' : '关'}</span>
+            </button>
+          </div>
+          <div class="cm-world-turn-controls">
+            <label><span>推演间隔</span><input type="number" min="3" max="30" step="1" value="${number(worldTurnState.interval, 8)}" data-world-turn-interval><small>轮正文（3—30）</small></label>
+            <button class="cm-diff-btn" data-action="save-world-turn-interval">应用间隔</button>
+            <button class="cm-diff-btn active" data-action="run-world-turn-now" ${['simulating', 'writing'].includes(worldTurnState.status) ? 'disabled' : ''}>立即推演</button>
+            <button class="cm-diff-btn" data-action="reset-world-turn">重置倒计时</button>
+            ${worldTurnState.status === 'failed' ? '<button class="cm-diff-btn active" data-action="retry-world-turn">重试</button>' : ''}
+            ${['failed', 'waiting_time'].includes(worldTurnState.status) ? '<button class="cm-diff-btn" data-action="skip-world-turn">跳过本次</button>' : ''}
           </div>
         </div>
       </section>
@@ -8603,6 +8714,16 @@ async function bootstrap() {
   const parentDocument = window.parent?.document ?? document;
   const parentWindow = window.parent ?? window;
   exposeStatusbarActions();
+  syncWorldTurnState();
+  const onWorldTurnState = event => {
+    syncWorldTurnState(event?.detail);
+    if (modalState?.type === 'settings') renderModalOnly();
+  };
+  const onWorldTurnOpenSettings = () => parentWindow.CanmingStatusbarActions?.openSettings?.('world-turn');
+  parentWindow.addEventListener('canming-world-turn-state', onWorldTurnState);
+  parentWindow.addEventListener('canming-world-turn-open-settings', onWorldTurnOpenSettings);
+  window._canmingWorldTurnStateHandler = onWorldTurnState;
+  window._canmingWorldTurnOpenSettingsHandler = onWorldTurnOpenSettings;
   const portraitLibrary = getPortraitLibrary();
   window.CanmingPortraitLibrary = portraitLibrary;
   if (window.parent && window.parent !== window) window.parent.CanmingPortraitLibrary = portraitLibrary;
@@ -8871,6 +8992,12 @@ function cleanup() {
   parentDocument.getElementById('canming-lamp-font')?.remove();
   if (window._canmingOnResize && window._canmingParentWindow) {
     window._canmingParentWindow.removeEventListener('resize', window._canmingOnResize);
+  }
+  if (window._canmingWorldTurnStateHandler) {
+    parentWindow.removeEventListener('canming-world-turn-state', window._canmingWorldTurnStateHandler);
+  }
+  if (window._canmingWorldTurnOpenSettingsHandler) {
+    parentWindow.removeEventListener('canming-world-turn-open-settings', window._canmingWorldTurnOpenSettingsHandler);
   }
 }
 

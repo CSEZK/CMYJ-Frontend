@@ -493,6 +493,23 @@ export const Schema = z.object({
             .prefault({}),
         })
         .prefault({}),
+      流水: z
+        .object({
+          本月结余: z.coerce.number().prefault(0),
+          月入: z
+            .record(
+              z.string(),
+              z.object({ 银两: z.coerce.number().prefault(0), 说明: z.string().prefault('') }).prefault({}),
+            )
+            .prefault({}),
+          月出: z
+            .record(
+              z.string(),
+              z.object({ 银两: z.coerce.number().prefault(0), 说明: z.string().prefault('') }).prefault({}),
+            )
+            .prefault({}),
+        })
+        .optional(),
       上次结算: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).prefault({}),
       _结算标记: z.string().prefault(''),
     })
@@ -712,7 +729,7 @@ export const Schema = z.object({
         let status = '推进中';
         if (/暂缓|搁置|暂停/.test(context)) status = '暂缓';
         else if (/等待|待.*(?:回信|答复|消息|时机|结果|抵达)|静候/.test(context)) status = '等待中';
-        else if (/未开始|尚未|待办|待处理/.test(context) || !context.trim()) status = '待处理';
+        else if (/(?:尚未|还未|未曾)开始|未开始|待办|待处理/.test(context) || !context.trim()) status = '待处理';
         matters[name] = {
           状态: status,
           概要: task.概要 || task.目标 || task.说明 || '',
@@ -740,4 +757,35 @@ export const Schema = z.object({
         .prefault({}),
     })
     .prefault({}),
+}).transform(data => {
+  const ledger = data.经济.流水;
+  if (!ledger) return data;
+  const matters = { ...data.时局与任务.未决事项 };
+  const uniqueName = base => {
+    if (!Object.hasOwn(matters, base)) return base;
+    if (!Object.hasOwn(matters, `${base}（旧流水）`)) return `${base}（旧流水）`;
+    let index = 2;
+    while (Object.hasOwn(matters, `${base}（旧流水${index}）`)) index++;
+    return `${base}（旧流水${index}）`;
+  };
+  const appendEntries = (entries, direction) => {
+    for (const [entryName, entry] of Object.entries(entries || {})) {
+      const name = uniqueName(`${direction === 'income' ? '待收' : '待付'}：${entryName}`);
+      const amount = Number(entry.银两) || 0;
+      const description = String(entry.说明 || '').trim();
+      matters[name] = {
+        状态: '等待中',
+        概要: `${entryName}尚有${amount}两白银${direction === 'income' ? '应收' : '应付'}，尚未实际交割。${description ? `事由：${description}` : ''}`,
+        现状: '由1.8旧档流水迁移，当前仍待结清。',
+        提醒:
+          direction === 'income'
+            ? '实际到账后更新主角私库，并移除此事项。'
+            : '实际支付后更新主角私库，并移除此事项。',
+      };
+    }
+  };
+  appendEntries(ledger.月入, 'income');
+  appendEntries(ledger.月出, 'expense');
+  const { 流水: _legacyLedger, ...economy } = data.经济;
+  return { ...data, 经济: economy, 时局与任务: { ...data.时局与任务, 未决事项: matters } };
 });
