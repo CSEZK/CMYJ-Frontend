@@ -11,13 +11,20 @@ export function worldClockKey(statData = {}) {
 
 export function normalReplyAnchor(messages, messageId) {
   const index = messages.findIndex(message => message.message_id === messageId);
-  if (index < 0 || messages[index]?.role !== 'assistant' || messages[index]?.extra?.canming_world_turn) return '';
+  if (index < 0 || messages[index]?.role !== 'assistant' || isWorldTurnMessage(messages[index])) return '';
   for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
     const previous = messages[cursor];
     if (previous.role === 'assistant') return '';
     if (previous.role === 'user') return `${messageId}:${previous.message_id}`;
   }
   return '';
+}
+
+export function isWorldTurnMessage(message) {
+  return Boolean(
+    message?.role === 'assistant' &&
+      (message?.extra?.canming_world_turn || /^\s*<world_turn(?:\s|>)/i.test(String(message?.message || message?.mes || ''))),
+  );
 }
 
 export function normalReplyAnchors(messages, startIndex = 0) {
@@ -36,7 +43,7 @@ export function reconcileWorldTurnHistory(messages, handledAnchors = [], interva
   const allAnchors = normalReplyAnchors(safeMessages);
   let lastWorldTurnIndex = -1;
   for (let index = safeMessages.length - 1; index >= 0; index -= 1) {
-    if (safeMessages[index]?.role === 'assistant' && safeMessages[index]?.extra?.canming_world_turn) {
+    if (isWorldTurnMessage(safeMessages[index])) {
       lastWorldTurnIndex = index;
       break;
     }
