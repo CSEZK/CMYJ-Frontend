@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { normalReplyAnchor, worldClockKey } from '../src/cmyj-1.9/world-turn/logic.js';
+import { normalReplyAnchor, reconcileWorldTurnHistory, worldClockKey } from '../src/cmyj-1.9/world-turn/logic.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = await readFile(path.join(root, 'src', 'cmyj-1.9', 'world-turn', 'index.js'), 'utf8');
@@ -41,6 +41,32 @@ assert.equal(
   '天下推演消息不得计入调度器',
 );
 
+const completedCycle = [
+  ...normal,
+  { message_id: 3, role: 'user', message: '行动二' },
+  { message_id: 4, role: 'assistant', message: '正文二', data: { stat_data: {} } },
+  { message_id: 5, role: 'user', message: '行动三' },
+  { message_id: 6, role: 'assistant', message: '正文三', data: { stat_data: {} } },
+  {
+    message_id: 7,
+    role: 'assistant',
+    message: '<world_turn></world_turn>',
+    data: { stat_data: { 世界运转: { 世界运转天数: 1, 二十四时: { 小时: 12, 分钟: 0 } } } },
+    extra: { canming_world_turn: true },
+  },
+  { message_id: 8, role: 'user', message: '行动四' },
+  { message_id: 9, role: 'assistant', message: '正文四', data: { stat_data: {} } },
+];
+const afterOneReply = reconcileWorldTurnHistory(completedCycle, ['2:1', '4:3', '6:5', '9:8'], 3);
+assert.equal(afterOneReply.progress, 1, '最后一次推演后的普通正文应重新核算为一轮');
+assert.equal(afterOneReply.lastWorldTurnClock, '1:12:0', '重算时应恢复最后一份现存推演的时间基线');
+const afterDeletingLatestPair = reconcileWorldTurnHistory(completedCycle.slice(0, -2), ['2:1', '4:3', '6:5', '9:8'], 3);
+assert.equal(afterDeletingLatestPair.progress, 0, '删除最新一组用户与正文楼层后计数必须回退');
+assert.doesNotMatch(afterDeletingLatestPair.handledAnchors.join(','), /9:8/, '被删除楼层的防重锚点必须清除');
+const afterDeletingWorldTurn = reconcileWorldTurnHistory(completedCycle.slice(0, 7), ['2:1', '4:3', '6:5'], 3);
+assert.equal(afterDeletingWorldTurn.progress, 3, '删除最新推演楼层后应恢复此前已经完成的正文轮数');
+assert.equal(afterDeletingWorldTurn.hasWorldTurn, false, '删除唯一推演后不得保留不存在的推演分界');
+
 assert.doesNotMatch(source, /mvu\.parseMessage\(/, '推演不得在消息写入前手动解析 MVU');
 assert.doesNotMatch(source, /data: parsedData/, '推演不得携带手动解析数据，以免与 MVU 实时监听重复');
 assert.match(source, /const mvuCompleted = waitForWorldTurnMvu\(runtime, oldData\)/, '推演必须等待唯一一次实时 MVU 更新');
@@ -58,6 +84,9 @@ assert.match(source, /visibleStatuses = \['waiting_time', 'simulating', 'writing
 assert.match(source, /bannerHideTimer = setTimeout/, '候时提示必须自动退场');
 assert.match(source, /generationType !== 'first_message'/, '开场消息必须排除');
 assert.match(source, /handledAnchors/, '重新生成必须通过楼层锚点去重');
+assert.match(source, /tavern_events\.MESSAGE_DELETED/, '删除楼层后必须触发计数重算');
+assert.match(source, /reconcileWorldTurnHistory/, '删除楼层后必须依据现存聊天重建计数');
+assert.match(source, /载入聊天时核算楼层失败/, '载入聊天时必须修复旧版本遗留的错误计数');
 assert.match(statusbar, /data-action="run-world-turn-now"/, '状态栏必须提供立即推演按钮');
 assert.match(statusbar, /data-action="skip-world-turn"/, '状态栏必须提供等待或失败时的跳过按钮');
 assert.match(statusbar, /openSettings: section/, '横幅必须能够直接打开状态栏设置');

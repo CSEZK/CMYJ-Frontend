@@ -1,4 +1,8 @@
-import { normalReplyAnchor, worldClockKey } from './logic.js';
+import {
+  normalReplyAnchor,
+  reconcileWorldTurnHistory,
+  worldClockKey,
+} from './logic.js';
 
 const RUNTIME_KEY = '__CMYJWorldTurnRuntimeV1';
 const STATE_KEY = 'canming_world_turn_v1';
@@ -410,18 +414,67 @@ function exposeApi(runtime) {
 function loadCurrentChat(runtime) {
   const clock = currentWorldClockKey();
   runtime.state = readState(clock);
+  try {
+    const messages = getChatMessages('0-{{lastMessageId}}') || [];
+    const reconciled = reconcileWorldTurnHistory(messages, runtime.state.handledAnchors, runtime.state.interval);
+    runtime.state.progress = reconciled.progress;
+    runtime.state.handledAnchors = reconciled.handledAnchors;
+    if (reconciled.hasWorldTurn) runtime.state.lastClock = reconciled.lastWorldTurnClock || runtime.state.lastClock;
+    else if (runtime.state.progress >= runtime.state.interval) runtime.state.lastClock = '';
+    if (['waiting_mvu', 'success'].includes(runtime.state.status)) runtime.state.status = 'countdown';
+  } catch (error) {
+    console.warn('[天下推演] 载入聊天时核算楼层失败:', error);
+  }
   if (!runtime.state.lastClock) runtime.state.lastClock = clock;
   emitState(runtime);
+}
+
+function reconcileAfterMessageDeletion(runtime) {
+  for (const pending of runtime.pendingMessages.values()) clearTimeout(pending.timer);
+  runtime.pendingMessages.clear();
+  runtime.normalMvuRunning = false;
+  runtime.lastMvuEndedAt = 0;
+
+  let messages;
+  try {
+    messages = getChatMessages('0-{{lastMessageId}}') || [];
+  } catch (error) {
+    console.warn('[天下推演] 删除楼层后读取聊天失败:', error);
+    return;
+  }
+
+  const reconciled = reconcileWorldTurnHistory(messages, runtime.state.handledAnchors, runtime.state.interval);
+  runtime.state.progress = reconciled.progress;
+  runtime.state.handledAnchors = reconciled.handledAnchors;
+  runtime.state.lastError = '';
+  runtime.state.runningSince = 0;
+  if (reconciled.hasWorldTurn) runtime.state.lastClock = reconciled.lastWorldTurnClock || runtime.state.lastClock;
+  else if (runtime.state.progress >= runtime.state.interval) runtime.state.lastClock = '';
+  runtime.state.status = runtime.state.enabled ? 'countdown' : 'disabled';
+  emitState(runtime);
+  console.info('[天下推演] 已按删除后的现存楼层重新核算计数。');
+}
+
+function scheduleDeletionReconcile(runtime) {
+  clearTimeout(runtime.deletionTimer);
+  runtime.deletionTimer = setTimeout(() => {
+    if (runtime.disposed) return;
+    if (runtime.running) return void scheduleDeletionReconcile(runtime);
+    runtime.deletionTimer = null;
+    reconcileAfterMessageDeletion(runtime);
+  }, 0);
 }
 
 function dispose(runtime) {
   runtime.disposed = true;
   clearTimeout(runtime.successTimer);
   clearTimeout(runtime.bannerHideTimer);
+  clearTimeout(runtime.deletionTimer);
   cancelWorldTurnMvu(runtime, '天下推演脚本已卸载。');
   for (const pending of runtime.pendingMessages.values()) clearTimeout(pending.timer);
   runtime.pendingMessages.clear();
   runtime.offMessage?.stop?.();
+  runtime.offDeleted?.stop?.();
   runtime.offChat?.stop?.();
   runtime.offMvuStarted?.stop?.();
   runtime.offMvuEnded?.stop?.();
@@ -447,8 +500,10 @@ async function bootstrap() {
     disposed: false,
     successTimer: null,
     bannerHideTimer: null,
+    deletionTimer: null,
     worldTurnMvu: null,
     offMessage: null,
+    offDeleted: null,
     offChat: null,
     offMvuStarted: null,
     offMvuEnded: null,
@@ -461,6 +516,7 @@ async function bootstrap() {
   runtime.offMessage = eventOn(tavern_events.MESSAGE_RECEIVED, (messageId, generationType) => {
     if (!runtime.running && generationType !== 'first_message') scheduleCompletedReply(runtime, messageId, generationType);
   });
+  runtime.offDeleted = eventOn(tavern_events.MESSAGE_DELETED, () => scheduleDeletionReconcile(runtime));
   const mvu = globalThis.Mvu ?? window.parent?.Mvu;
   if (mvu?.events?.VARIABLE_UPDATE_STARTED) {
     runtime.offMvuStarted = eventOn(mvu.events.VARIABLE_UPDATE_STARTED, () => {
