@@ -47,10 +47,17 @@ assert.match(source, /VARIABLE_UPDATE_STARTED/, '调度器必须监听 MVU 更�
 assert.match(source, /VARIABLE_UPDATE_ENDED/, '调度器必须监听 MVU 更新结束');
 assert.match(source, /pending\.mvuCompleted && message\?\.data\?\.stat_data/, '正文必须等本轮 MVU 落盘后才计数');
 assert.match(source, /status = 'waiting_time'/, '世界时间未推进时必须暂缓');
+assert.match(source, /visibleStatuses = \['waiting_time', 'simulating', 'writing', 'success', 'failed'\]/, '普通倒计时不得占用顶部提示');
+assert.match(source, /bannerHideTimer = setTimeout/, '候时提示必须自动退场');
 assert.match(source, /generationType !== 'first_message'/, '开场消息必须排除');
 assert.match(source, /handledAnchors/, '重新生成必须通过楼层锚点去重');
 assert.match(statusbar, /data-action="run-world-turn-now"/, '状态栏必须提供立即推演按钮');
 assert.match(statusbar, /data-action="skip-world-turn"/, '状态栏必须提供等待或失败时的跳过按钮');
 assert.match(statusbar, /openSettings: section/, '横幅必须能够直接打开状态栏设置');
+assert.match(statusbar, /cm-world-turn-count/, '状态栏悬浮图标必须显示推演剩余轮数');
+assert.match(statusbar, /renderWorldTurnLamp\(\)/, '推演状态变化必须刷新悬浮图标');
+assert.doesNotMatch(statusbar, /正常正文及其 MVU 更新完成后计数/, '设置说明不得暴露实现术语');
+assert.match(statusbar, /每隔若干轮追加一次全局推演；时间未推进则暂缓。/, '设置说明必须保持简洁');
+assert.doesNotMatch(statusbar, /隐秘信息不会自动成为主角已知内容/, '设置说明不得混淆玩家视角与剧情人物知情');
 
 console.info('天下推演 1.9 调度与接线测试通过');

@@ -8152,7 +8152,31 @@ function getWorldTurnApi() {
 function syncWorldTurnState(nextState) {
   const state = nextState || getWorldTurnApi()?.getState?.();
   if (state) worldTurnState = { ...worldTurnState, ...state };
+  renderWorldTurnLamp();
   return worldTurnState;
+}
+
+function renderWorldTurnLamp() {
+  if (!lamp) return;
+  const badge = lamp.querySelector('.cm-world-turn-count');
+  if (!badge) return;
+  const enabled = worldTurnState.enabled !== false;
+  const status = enabled ? String(worldTurnState.status || 'countdown') : 'disabled';
+  const remaining = Math.max(0, Math.round(Number(worldTurnState.remaining ?? worldTurnState.interval ?? 0) || 0));
+  const statusCopy = {
+    waiting_time: '推演已就绪，等待故事时间推进',
+    simulating: '正在推演天下大势',
+    writing: '正在落定本轮世局',
+    success: `推演完成，下次还剩 ${remaining} 轮`,
+    failed: '天下推演中断，点击状态栏处理',
+  };
+  badge.hidden = !enabled;
+  badge.textContent = String(remaining);
+  badge.setAttribute('aria-label', `天下推演还剩 ${remaining} 轮`);
+  lamp.dataset.worldTurnStatus = status;
+  const hint = statusCopy[status] || `天下推演还剩 ${remaining} 轮`;
+  lamp.title = enabled ? `残明余烬 · ${hint}` : '残明余烬';
+  lamp.setAttribute('aria-label', enabled ? `打开状态栏；${hint}` : '打开状态栏');
 }
 
 async function runWorldTurnSettingAction(action, successMessage = '') {
@@ -8232,7 +8256,7 @@ function renderSettingsModal() {
             </button>
           </div>
           <h3 id="cm-world-turn-settings">天下推演</h3>
-          <p class="cm-setting-desc">正常正文及其 MVU 更新完成后计数；达到间隔便额外生成一次上帝视角推演。世界时间完全未推进时暂缓，不会拿“暂无变化”反复交差。</p>
+          <p class="cm-setting-desc">每隔若干轮追加一次全局推演；时间未推进则暂缓。</p>
           <div class="cm-diff-options">
             <button class="cm-diff-btn${worldTurnState.enabled ? ' active' : ''}" data-action="toggle-world-turn">
               <span class="cm-diff-name">◈ 自动天下推演</span>
@@ -8744,7 +8768,7 @@ async function bootstrap() {
   lamp.id = 'canming-lamp';
   lamp.title = '残明余烬';
   lamp.setAttribute('aria-label', '打开状态栏');
-  lamp.innerHTML = '<span class="cm-seal-char">明</span>';
+  lamp.innerHTML = '<span class="cm-seal-char">明</span><span class="cm-world-turn-count" aria-hidden="true">8</span>';
   Object.assign(lamp.style, {
     position: 'fixed',
     border: '1.5px solid #b54a3a',
@@ -8773,6 +8797,25 @@ async function bootstrap() {
       line-height: 1; opacity: .94;
       position: relative; z-index: 1;
     }
+    #canming-lamp .cm-world-turn-count {
+      position: absolute; z-index: 3; top: -7px; right: -7px;
+      display: grid; min-width: 20px; height: 20px; box-sizing: border-box;
+      place-items: center; padding: 0 4px;
+      border: 1px solid rgba(246,222,181,.72); border-radius: 999px;
+      background: #a94737; box-shadow: 0 3px 10px rgba(0,0,0,.55), inset 0 0 0 1px rgba(95,25,18,.28);
+      color: #fff1d1; font: 700 11px/1 "Baskerville", "Times New Roman", serif;
+      font-variant-numeric: tabular-nums; pointer-events: none;
+      transition: background .2s ease, box-shadow .2s ease, transform .2s ease;
+    }
+    #canming-lamp .cm-world-turn-count[hidden] { display: none !important; }
+    #canming-lamp[data-world-turn-status="waiting_time"] .cm-world-turn-count { background: #8a6733; }
+    #canming-lamp[data-world-turn-status="simulating"] .cm-world-turn-count,
+    #canming-lamp[data-world-turn-status="writing"] .cm-world-turn-count {
+      animation: canming-world-turn-count-pulse 1.2s ease-in-out infinite;
+    }
+    #canming-lamp[data-world-turn-status="failed"] .cm-world-turn-count {
+      background: #9f302b; box-shadow: 0 0 0 3px rgba(190,55,47,.18), 0 3px 10px rgba(0,0,0,.55);
+    }
     #canming-lamp::before {
       content: "";
       position: absolute; inset: 3px;
@@ -8781,8 +8824,12 @@ async function bootstrap() {
       pointer-events: none; z-index: 0;
     }
     #canming-lamp:active { cursor: grabbing; }
+    @keyframes canming-world-turn-count-pulse {
+      50% { transform: translateY(-1px) scale(1.08); box-shadow: 0 0 0 4px rgba(201,83,61,.18), 0 3px 10px rgba(0,0,0,.55); }
+    }
   `;
   parentDocument.head.append(lampStyle);
+  renderWorldTurnLamp();
 
   // 在父文档加载 EBAS 字体
   const fontLink = parentDocument.createElement('link');

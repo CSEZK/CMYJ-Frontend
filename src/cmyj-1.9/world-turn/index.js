@@ -132,13 +132,11 @@ function emitState(runtime) {
 
 function bannerCopy(state) {
   if (state.status === 'simulating') return ['正在推演天下大势', '山河未眠，诸事正在暗处生长'];
-  if (state.status === 'writing') return ['推演完成，正在写入世局', 'MVU 正在核定这一次世界变化'];
-  if (state.status === 'waiting_mvu') return ['正文已经完成', '等待本轮 MVU 变量更新结束后结算轮数'];
-  if (state.status === 'waiting_time') return ['天下推演已经就绪', '世界时间尚未推进，有效流逝后自动补做'];
-  if (state.status === 'failed') return ['天下推演中断', state.lastError || '点击横幅打开设置，可重试或跳过'];
+  if (state.status === 'writing') return ['推演完成，正在落定世局', '正在核定并保存这一次世界变化'];
+  if (state.status === 'waiting_time') return ['推演时机已到', '故事时间尚未流逝，推进后将自动开始'];
+  if (state.status === 'failed') return ['天下推演中断', state.lastError || '点击提示打开设置，可重试或跳过'];
   if (state.status === 'success') return ['本次天下推演已入卷', `下一次推演还需 ${state.interval} 轮正文`];
-  const remaining = Math.max(0, state.interval - state.progress);
-  return [`距下次天下推演还有 ${remaining} 轮`, `每 ${state.interval} 轮正文推演一次 · 点击横幅可调整`];
+  return ['天下推演', '点击打开设置'];
 }
 
 function ensureBannerStyle() {
@@ -158,7 +156,11 @@ function openSettings() {
 
 function renderBanner(runtime) {
   const doc = getHostDocument();
-  if (!runtime.state.enabled) return void doc.getElementById(BANNER_ID)?.remove();
+  const visibleStatuses = ['waiting_time', 'simulating', 'writing', 'success', 'failed'];
+  clearTimeout(runtime.bannerHideTimer);
+  runtime.bannerHideTimer = null;
+  if (!runtime.state.enabled || !visibleStatuses.includes(runtime.state.status))
+    return void doc.getElementById(BANNER_ID)?.remove();
   ensureBannerStyle();
   let banner = doc.getElementById(BANNER_ID);
   if (!banner) {
@@ -181,6 +183,11 @@ function renderBanner(runtime) {
   banner.dataset.status = runtime.state.status;
   banner.querySelector('strong').textContent = title;
   banner.querySelector('small').textContent = detail;
+  if (runtime.state.status === 'waiting_time') {
+    runtime.bannerHideTimer = setTimeout(() => {
+      if (runtime.state.status === 'waiting_time') doc.getElementById(BANNER_ID)?.remove();
+    }, 6500);
+  }
 }
 
 async function handleCompletedReply(runtime, messageId, generationType = '') {
@@ -357,6 +364,7 @@ function loadCurrentChat(runtime) {
 function dispose(runtime) {
   runtime.disposed = true;
   clearTimeout(runtime.successTimer);
+  clearTimeout(runtime.bannerHideTimer);
   for (const pending of runtime.pendingMessages.values()) clearTimeout(pending.timer);
   runtime.pendingMessages.clear();
   runtime.offMessage?.stop?.();
@@ -384,6 +392,7 @@ async function bootstrap() {
     lastMvuEndedAt: 0,
     disposed: false,
     successTimer: null,
+    bannerHideTimer: null,
     offMessage: null,
     offChat: null,
     offMvuStarted: null,
