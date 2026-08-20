@@ -41,8 +41,15 @@ assert.equal(
   '天下推演消息不得计入调度器',
 );
 
-assert.match(source, /mvu\.parseMessage\(message, oldData\)/, '额外推演必须显式经过 MVU 解析');
-assert.match(source, /data: parsedData/, '推演楼层必须携带解析后的 MVU 数据');
+assert.doesNotMatch(source, /mvu\.parseMessage\(/, '推演不得在消息写入前手动解析 MVU');
+assert.doesNotMatch(source, /data: parsedData/, '推演不得携带手动解析数据，以免与 MVU 实时监听重复');
+assert.match(source, /const mvuCompleted = waitForWorldTurnMvu\(runtime, oldData\)/, '推演必须等待唯一一次实时 MVU 更新');
+assert.match(source, /const updatedData = await mvuCompleted/, '推演完成状态必须以实时 MVU 落盘为准');
+assert.match(source, /return report\.trim\(\)/, '推演楼层必须只保留 world_turn 报告');
+assert.match(source, /MVU_UPDATE_SCOPE: 本条是天下推演的回顾结算/, '推演楼层必须就近声明 MVU 更新边界');
+assert.match(source, /const protectedPaths = \['世界运转', '主角', '人际网络\.在场角色', '个人史记'\]/, '推演不得改动主场景状态');
+assert.match(source, /推演本身不产生额外耗时/, '推演提示词必须禁止额外推进时间');
+assert.match(source, /不输出普通正文、思维链、解释、前言、结语或 <UpdateVariable>/, '推演正文模型不得自行输出变量更新');
 assert.match(source, /VARIABLE_UPDATE_STARTED/, '调度器必须监听 MVU 更新开始');
 assert.match(source, /VARIABLE_UPDATE_ENDED/, '调度器必须监听 MVU 更新结束');
 assert.match(source, /pending\.mvuCompleted && message\?\.data\?\.stat_data/, '正文必须等本轮 MVU 落盘后才计数');

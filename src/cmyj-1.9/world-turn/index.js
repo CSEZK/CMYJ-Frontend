@@ -9,6 +9,9 @@ const DEFAULT_INTERVAL = 8;
 const MIN_INTERVAL = 3;
 const MAX_INTERVAL = 30;
 const STALE_RUNNING_MS = 10 * 60 * 1000;
+const MVU_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
+const WORLD_TURN_MVU_SCOPE =
+  '<!-- MVU_UPDATE_SCOPE: 本条是天下推演的回顾结算。只处理本条 <world_turn> 报告，不得重复结算上一条普通正文；禁止更新 世界运转、主角、个人史记、人际网络.在场角色。 -->';
 
 const WORLD_TURN_PROMPT = `你现在不是续写主角当前场景，而是执行一次独立的“天下推演”。
 
@@ -18,10 +21,10 @@ const WORLD_TURN_PROMPT = `你现在不是续写主角当前场景，而是执�
 1. 不续写主角当前动作，不代替玩家行动，不要求玩家重新输入。
 2. 使用全知叙述，但严格保持因果、交通、情报传播、行政效率与明末历史条件；不得为了热闹强造大事。
 3. 角色和势力只能依据各自掌握的信息行动。报告可以写客观真相，但普通正文中的主角不能因此自动知情。
-4. 各栏目都不是必填。没有值得记录的变化就省略该栏目；若整体没有显著变化，只需简短说明，不要编造变化填满格式。
-5. 对已经发生、足以改变长期世界状态的结果，必须按照现有 MVU 变量更新规则输出 <UpdateVariable>。没有变量需要改变时仍输出合法的空 JSONPatch 数组。
-6. 天下地图、势力关系、关键人物与未决事项是客观世界状态，不受主角是否知情限制；但不得事无巨细扩写全国，只更新本次推演确实发生实质变化的部分。
-7. 不输出普通正文、思维链、解释、前言或结语，只输出报告和变量更新。
+4. 本次推演是对正常正文已经流逝时间的回顾结算，截止时刻就是当前 MVU 世界时间；推演本身不产生额外耗时，不得把截止时刻之后的计划写成已经发生的事实。
+5. 各栏目都不是必填。没有值得记录的变化就省略该栏目；若整体没有显著变化，只需简短说明，不要编造变化填满格式。
+6. 天下地图、势力关系、关键人物与未决事项是客观世界状态，不受主角是否知情限制；但不得事无巨细扩写全国，只记录本次推演时段内确实发生的实质变化。
+7. 不输出普通正文、思维链、解释、前言、结语或 <UpdateVariable>，只输出 <world_turn> 报告。报告写入聊天后会由 MVU 副模型统一结算变量。
 
 报告格式：
 <world_turn>
@@ -33,7 +36,7 @@ const WORLD_TURN_PROMPT = `你现在不是续写主角当前场景，而是执�
 【确定影响】只写已经落地、将约束后续剧情的后果
 </world_turn>
 
-省略没有内容的标题。随后严格按当前角色卡的变量输出格式给出 <UpdateVariable>。`;
+省略没有内容的标题。`;
 
 const getHostWindow = () => window.parent ?? window;
 const getHostDocument = () => getHostWindow().document ?? document;
@@ -264,9 +267,50 @@ function normalizeGeneratedText(result) {
     .replace(/^```(?:html|xml|text)?\s*/i, '')
     .replace(/\s*```$/i, '')
     .trim();
-  if (!/<world_turn>[\s\S]*?<\/world_turn>/i.test(normalized))
+  const report = normalized.match(/<world_turn>[\s\S]*?<\/world_turn>/i)?.[0];
+  if (!report)
     throw new Error('模型返回中缺少 <world_turn> 推演报告。');
-  return normalized;
+  return report.trim();
+}
+
+function preserveWorldTurnScene(variables, beforeVariables) {
+  if (!variables?.stat_data || !beforeVariables?.stat_data) return variables;
+  const protectedPaths = ['世界运转', '主角', '人际网络.在场角色', '个人史记'];
+  for (const path of protectedPaths) {
+    if (_.has(beforeVariables.stat_data, path))
+      _.set(variables.stat_data, path, _.cloneDeep(_.get(beforeVariables.stat_data, path)));
+    else _.unset(variables.stat_data, path);
+  }
+  return variables;
+}
+
+function waitForWorldTurnMvu(runtime, beforeVariables) {
+  if (runtime.worldTurnMvu) throw new Error('已有一轮天下推演正在等待 MVU。');
+  return new Promise((resolve, reject) => {
+    const pending = {
+      beforeVariables,
+      timer: null,
+      resolve: variables => {
+        clearTimeout(pending.timer);
+        if (runtime.worldTurnMvu === pending) runtime.worldTurnMvu = null;
+        resolve(variables);
+      },
+      reject: error => {
+        clearTimeout(pending.timer);
+        if (runtime.worldTurnMvu === pending) runtime.worldTurnMvu = null;
+        reject(error);
+      },
+    };
+    pending.timer = setTimeout(
+      () => pending.reject(new Error('等待天下推演的 MVU 更新超时。')),
+      MVU_WAIT_TIMEOUT_MS,
+    );
+    runtime.worldTurnMvu = pending;
+  });
+}
+
+function cancelWorldTurnMvu(runtime, reason = '天下推演已中断。') {
+  runtime.worldTurnMvu?.reject(new Error(reason));
 }
 
 async function runWorldTurn(runtime, { manual = false } = {}) {
@@ -281,7 +325,7 @@ async function runWorldTurn(runtime, { manual = false } = {}) {
     const mvu = globalThis.Mvu ?? window.parent?.Mvu;
     const generateText = globalThis.generate ?? window.parent?.generate;
     const createMessages = globalThis.createChatMessages ?? window.parent?.createChatMessages;
-    if (!mvu?.getMvuData || !mvu?.parseMessage) throw new Error('MVU 尚未初始化。');
+    if (!mvu?.getMvuData || !mvu?.events?.VARIABLE_UPDATE_ENDED) throw new Error('MVU 尚未初始化。');
     if (typeof generateText !== 'function' || typeof createMessages !== 'function') throw new Error('酒馆生成接口不可用。');
     const result = await generateText({
       generation_id: generationId,
@@ -290,17 +334,25 @@ async function runWorldTurn(runtime, { manual = false } = {}) {
       should_silence: false,
       injects: [{ role: 'system', position: 'in_chat', depth: 0, should_scan: true, content: '本次请求处于【天下推演模式】。忽略普通续写要求，严格执行用户输入中的天下推演格式。' }],
     });
-    const message = normalizeGeneratedText(result);
+    const report = normalizeGeneratedText(result);
+    const message = `${report}\n\n${WORLD_TURN_MVU_SCOPE}`;
     runtime.state.status = 'writing';
     emitState(runtime);
     const oldData = _.cloneDeep(mvu.getMvuData({ type: 'message', message_id: 'latest' }) || {});
-    const parsedData = (await mvu.parseMessage(message, oldData)) || oldData;
-    await createMessages([{ role: 'assistant', message, data: parsedData, extra: { canming_world_turn: true, generated_at: Date.now() } }]);
+    const mvuCompleted = waitForWorldTurnMvu(runtime, oldData);
+    try {
+      await createMessages([{ role: 'assistant', message, extra: { canming_world_turn: true, generated_at: Date.now() } }]);
+    } catch (error) {
+      cancelWorldTurnMvu(runtime, error?.message || '推演消息写入失败。');
+      await mvuCompleted.catch(() => {});
+      throw error;
+    }
+    const updatedData = await mvuCompleted;
     runtime.state.progress = 0;
     runtime.state.status = 'success';
     runtime.state.runningSince = 0;
     runtime.state.lastSuccessAt = Date.now();
-    runtime.state.lastClock = worldClockKey(parsedData.stat_data || oldData.stat_data || {});
+    runtime.state.lastClock = worldClockKey(updatedData.stat_data || oldData.stat_data || {});
     emitState(runtime);
     clearTimeout(runtime.successTimer);
     runtime.successTimer = setTimeout(() => {
@@ -309,9 +361,10 @@ async function runWorldTurn(runtime, { manual = false } = {}) {
         emitState(runtime);
       }
     }, 5000);
-    console.info('[天下推演] 推演消息与 MVU 变量已写入。');
+    console.info('[天下推演] 推演消息与单次 MVU 变量已写入。');
     return true;
   } catch (error) {
+    cancelWorldTurnMvu(runtime, error?.message || '天下推演已中断。');
     runtime.state.status = 'failed';
     runtime.state.runningSince = 0;
     runtime.state.lastError = error?.message || String(error) || '未知错误';
@@ -365,6 +418,7 @@ function dispose(runtime) {
   runtime.disposed = true;
   clearTimeout(runtime.successTimer);
   clearTimeout(runtime.bannerHideTimer);
+  cancelWorldTurnMvu(runtime, '天下推演脚本已卸载。');
   for (const pending of runtime.pendingMessages.values()) clearTimeout(pending.timer);
   runtime.pendingMessages.clear();
   runtime.offMessage?.stop?.();
@@ -393,6 +447,7 @@ async function bootstrap() {
     disposed: false,
     successTimer: null,
     bannerHideTimer: null,
+    worldTurnMvu: null,
     offMessage: null,
     offChat: null,
     offMvuStarted: null,
@@ -413,7 +468,14 @@ async function bootstrap() {
     });
   }
   if (mvu?.events?.VARIABLE_UPDATE_ENDED) {
-    runtime.offMvuEnded = eventOn(mvu.events.VARIABLE_UPDATE_ENDED, () => {
+    runtime.offMvuEnded = eventOn(mvu.events.VARIABLE_UPDATE_ENDED, (variables, variablesBeforeUpdate) => {
+      if (runtime.worldTurnMvu) {
+        const pending = runtime.worldTurnMvu;
+        preserveWorldTurnScene(variables, pending.beforeVariables || variablesBeforeUpdate);
+        runtime.lastMvuEndedAt = Date.now();
+        pending.resolve(_.cloneDeep(variables));
+        return;
+      }
       if (runtime.running) return;
       runtime.normalMvuRunning = false;
       runtime.lastMvuEndedAt = Date.now();
@@ -423,6 +485,7 @@ async function bootstrap() {
     });
   }
   runtime.offChat = eventOn(tavern_events.CHAT_CHANGED, () => {
+    cancelWorldTurnMvu(runtime, '聊天已切换，天下推演已中断。');
     for (const pending of runtime.pendingMessages.values()) clearTimeout(pending.timer);
     runtime.pendingMessages.clear();
     runtime.running = false;
