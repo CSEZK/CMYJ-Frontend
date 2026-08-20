@@ -66,6 +66,14 @@ assert.doesNotMatch(afterDeletingLatestPair.handledAnchors.join(','), /9:8/, '�
 const afterDeletingWorldTurn = reconcileWorldTurnHistory(completedCycle.slice(0, 7), ['2:1', '4:3', '6:5'], 3);
 assert.equal(afterDeletingWorldTurn.progress, 3, '删除最新推演楼层后应恢复此前已经完成的正文轮数');
 assert.equal(afterDeletingWorldTurn.hasWorldTurn, false, '删除唯一推演后不得保留不存在的推演分界');
+const reportWithoutExtra = completedCycle.map(message =>
+  message.message_id === 7 ? { ...message, extra: {}, message: '<world_turn>仍是推演报告</world_turn>' } : message,
+);
+assert.equal(
+  reconcileWorldTurnHistory(reportWithoutExtra, ['2:1', '4:3', '6:5', '9:8'], 3).progress,
+  1,
+  '酒馆接口遗漏自定义 extra 时仍须通过 world_turn 标签识别推演分界',
+);
 
 assert.doesNotMatch(source, /mvu\.parseMessage\(/, '推演不得在消息写入前手动解析 MVU');
 assert.doesNotMatch(source, /data: parsedData/, '推演不得携带手动解析数据，以免与 MVU 实时监听重复');
