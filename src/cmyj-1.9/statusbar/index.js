@@ -16,7 +16,7 @@ import {
 import { normalizeTechnologyCollection } from '../shared/technology.js';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.9.3';
+const STATUSBAR_VERSION = '1.9.4';
 const MAP_ASSET_REVISION = 'd697affd3ed71c09e8278cc2ac37b5d3b5dc2ded';
 const STORAGE_PREFIX = 'canming-afterglow-1.9:statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
@@ -4659,8 +4659,8 @@ async function saveScenarioCharacter(characterName, character) {
     character?.extensions && typeof character.extensions === 'object'
       ? character.extensions
       : raw?.data?.extensions || {};
-  const formData = new FormData();
-  const append = (name, value) => formData.append(name, value == null ? '' : String(value));
+  const body = new URLSearchParams();
+  const append = (name, value) => body.append(name, value == null ? '' : String(value));
   append('ch_name', characterName);
   append('avatar_url', avatarUrl);
   append('character_version', character?.version ?? raw?.data?.character_version ?? '');
@@ -4671,7 +4671,7 @@ async function saveScenarioCharacter(characterName, character) {
   append('scenario', character?.scenario ?? raw?.data?.scenario ?? '');
   append('mes_example', character?.mes_example ?? raw?.data?.mes_example ?? '');
   append('first_mes', firstMessages[0] || '');
-  for (const greeting of firstMessages.slice(1)) formData.append('alternate_greetings', greeting);
+  firstMessages.slice(1).forEach((greeting, index) => body.append(`alternate_greetings[${index}]`, greeting));
   append('world', extensions.world ?? raw?.data?.extensions?.world ?? '');
   append('talkativeness', extensions.talkativeness ?? raw?.data?.extensions?.talkativeness ?? '0.5');
   append('fav', extensions.fav ?? raw?.data?.extensions?.fav ?? false);
@@ -4681,13 +4681,36 @@ async function saveScenarioCharacter(characterName, character) {
 
   const headers = { ...context.getRequestHeaders({ omitContentType: true }) };
   for (const key of Object.keys(headers)) if (key.toLowerCase() === 'content-type') delete headers[key];
+  headers['Content-Type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
   const response = await fetch('/api/characters/edit', {
     method: 'POST',
     headers,
-    body: formData,
+    body: body.toString(),
     cache: 'no-cache',
   });
   if (!response.ok) throw new Error(`酒馆原生角色卡保存失败（HTTP ${response.status}）。`);
+}
+
+async function readSavedScenarioCharacter(characterName) {
+  const context = (window.parent ?? window).SillyTavern?.getContext?.();
+  if (typeof context?.getRequestHeaders !== 'function') throw new Error('酒馆原生角色卡读取接口不可用。');
+  const raw = currentRawCharacter(characterName);
+  const avatarUrl = String(raw?.avatar || `${characterName}.png`);
+  const response = await fetch('/api/characters/get', {
+    method: 'POST',
+    headers: context.getRequestHeaders(),
+    body: JSON.stringify({ avatar_url: avatarUrl }),
+    cache: 'no-cache',
+  });
+  if (!response.ok) throw new Error(`酒馆原生角色卡读取失败（HTTP ${response.status}）。`);
+  const saved = await response.json();
+  const data = saved?.data && typeof saved.data === 'object' ? saved.data : saved || {};
+  const alternateGreetings = Array.isArray(data.alternate_greetings) ? data.alternate_greetings.map(String) : [];
+  return {
+    ...data,
+    first_messages: [String(data.first_mes ?? saved?.first_mes ?? ''), ...alternateGreetings],
+    extensions: data.extensions && typeof data.extensions === 'object' ? data.extensions : {},
+  };
 }
 
 async function refreshScenarioCharacterCache(characterName) {
@@ -5271,7 +5294,7 @@ async function repairBuiltinTongchengCharacterProfiles() {
       await restoreScenarioCharacterProfiles(characterProfileBackups);
       throw error;
     }
-    const verifiedCharacter = await getCharacter(characterName);
+    const verifiedCharacter = await readSavedScenarioCharacter(characterName);
     if (
       verifiedCharacter?.extensions?.canming_dlc?.context?.originalCharacterProfileVersion !==
         ORIGINAL_TONGCHENG_CHARACTER_PROFILES.version ||
@@ -5677,7 +5700,7 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
       let verifiedCharacter = null;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         await saveScenarioCharacter(characterName, character);
-        verifiedCharacter = await getCharacter(characterName);
+        verifiedCharacter = await readSavedScenarioCharacter(characterName);
         const verifiedInstall = verifiedCharacter?.extensions?.canming_dlc;
         if (
           verifiedInstall?.id === resource.scenario.id &&
@@ -5969,7 +5992,7 @@ async function uninstallWorkshopInstall(delta = {}) {
         // 用 null 作为明确的清除值，之后安装新 DLC 时会正常覆盖它。
         character.extensions.canming_dlc = null;
         await saveScenarioCharacter(characterName, character);
-        const verifiedCharacter = await getCharacter(characterName);
+        const verifiedCharacter = await readSavedScenarioCharacter(characterName);
         if (verifiedCharacter?.extensions?.canming_dlc?.id)
           throw new Error('角色卡中的身份 DLC 安装标记未能清除，请重试。');
       }
