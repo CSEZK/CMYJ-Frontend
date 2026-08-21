@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { normalReplyAnchor, reconcileWorldTurnHistory, worldClockKey } from '../src/cmyj-1.9/world-turn/logic.js';
+import {
+  isWorldTurnMessage,
+  normalReplyAnchor,
+  reconcileWorldTurnHistory,
+  worldClockKey,
+} from '../src/cmyj-1.9/world-turn/logic.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = await readFile(path.join(root, 'src', 'cmyj-1.9', 'world-turn', 'index.js'), 'utf8');
@@ -70,6 +75,7 @@ assert.equal(afterDeletingWorldTurn.hasWorldTurn, false, '删除唯一推演后�
 const reportWithoutExtra = completedCycle.map(message =>
   message.message_id === 7 ? { ...message, extra: {}, message: '<world_turn>仍是推演报告</world_turn>' } : message,
 );
+assert.equal(isWorldTurnMessage(completedCycle.at(-3)), true, '重推按钮必须能识别标记过的推演楼层');
 assert.equal(
   reconcileWorldTurnHistory(reportWithoutExtra, ['2:1', '4:3', '6:5', '9:8'], 3).progress,
   1,
@@ -92,14 +98,16 @@ assert.match(
   '推演不得改动主场景状态',
 );
 assert.match(source, /推演本身不产生额外耗时/, '推演提示词必须禁止额外推进时间');
-assert.match(
-  source,
-  /全篇至少三分之二的篇幅与事件必须发生在主角当前因果半径之外/,
-  '推演必须以主角因果半径之外的世界为主体',
-);
+assert.match(source, /禁止写场景、环境铺陈、人物对白、心理独白和动作过程/, '天下推演不得与平行世界重复生成叙事切片');
 assert.match(source, /事件尺度必须匹配实际流逝时间/, '推演事件尺度必须受世界时间约束');
-assert.match(source, /buildWorldTurnPrompt\(runtime\)/, '每轮推演必须注入动态时间边界');
-assert.doesNotMatch(source, /【未决事项】|【确定影响】|【天下大势】/, '推演报告不得继续使用旧式汇报栏目');
+assert.match(source, /“棋局推进”通常列出 6—10 项/, '推演必须优先输出高密度的宏观变化');
+assert.match(source, /【天下总势】/, '推演必须提供宏观总势');
+assert.match(source, /【棋局推进】/, '推演必须提供结构化棋局推进');
+assert.match(source, /【连锁反应】/, '推演必须支持跨地区与跨领域的因果传导');
+assert.match(source, /【世局线】/, '推演必须维护长线演化状态');
+assert.match(source, /【历史偏移】/, '推演必须在必要时说明历史轨迹偏移');
+assert.match(source, /buildWorldTurnPrompt\(runtime, statData, period\)/, '每轮推演必须注入动态时间边界');
+assert.doesNotMatch(source, /【未决事项】|【确定影响】/, '推演报告不得继续使用旧式待办栏目');
 assert.match(source, /不输出普通正文、思维链、解释、前言、结语或 <UpdateVariable>/, '推演正文模型不得自行输出变量更新');
 assert.match(source, /VARIABLE_UPDATE_STARTED/, '调度器必须监听 MVU 更新开始');
 assert.match(source, /VARIABLE_UPDATE_ENDED/, '调度器必须监听 MVU 更新结束');
@@ -115,6 +123,21 @@ assert.match(source, /generationType !== 'first_message'/, '开场消息必须�
 assert.match(source, /handledAnchors/, '重新生成必须通过楼层锚点去重');
 assert.match(source, /tavern_events\.MESSAGE_DELETED/, '删除楼层后必须触发计数重算');
 assert.match(source, /reconcileWorldTurnHistory/, '删除楼层后必须依据现存聊天重建计数');
+assert.match(
+  source,
+  /latest\?\.message_id !== requestedId \|\| !isWorldTurnMessage\(latest\)/,
+  '只有聊天末尾的最新推演可以重推',
+);
+assert.match(source, /await deleteMessages\(\[Number\(messageId\)\]\)/, '重推前必须先删除旧推演并回滚楼层变量');
+assert.match(source, /reconcileAfterMessageDeletion\(runtime\)/, '删除旧推演后必须立即重建计数与时间基线');
+assert.match(source, /canming_world_turn_period: period/, '推演楼层必须保存时间边界以便原样重推');
+assert.match(source, /旧卷已回滚；重推失败/, '重推失败时必须告知玩家旧卷已被回滚');
+assert.match(source, /periodOverride: runtime\.retryPeriodOverride/, '失败后重试必须继续沿用原卷时段');
+assert.match(
+  source,
+  /regenerateLatest: messageId => regenerateLatestWorldTurn/,
+  '推演脚本必须向卷宗正则暴露受控重推接口',
+);
 assert.match(source, /载入聊天时核算楼层失败/, '载入聊天时必须修复旧版本遗留的错误计数');
 assert.match(statusbar, /data-action="run-world-turn-now"/, '状态栏必须提供立即推演按钮');
 assert.match(statusbar, /data-action="skip-world-turn"/, '状态栏必须提供等待或失败时的跳过按钮');
