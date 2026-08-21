@@ -15,32 +15,49 @@ const MAX_INTERVAL = 30;
 const STALE_RUNNING_MS = 10 * 60 * 1000;
 const MVU_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 const WORLD_TURN_MVU_SCOPE =
-  '<!-- MVU_UPDATE_SCOPE: 本条是天下推演的回顾结算。只处理本条 <world_turn> 报告，不得重复结算上一条普通正文；禁止更新 世界运转、主角、个人史记、人际网络.在场角色。 -->';
+  '<!-- MVU_UPDATE_SCOPE: 本条是天下推演的回顾结算。只处理本条 <world_turn> 中已经落地的客观事实，不得重复结算上一条普通正文。允许更新 天下地图.地区态势、天下地图.世局线、时局与任务.势力关系中的客观经济与军事、离场人物的客观长期状态；禁止更新 世界运转、主角、个人史记、人际网络.在场角色，也不得仅因后台事实改变势力对主角的好感度、状态或关系摘要。时局与任务.未决事项仅在报告中的事实直接改变既有事项时更新。 -->';
 
-const WORLD_TURN_PROMPT = `你现在不是续写主角当前场景，而是执行一次独立的“天下推演”。
+function worldClockLabel(statData = latestStatData()) {
+  const date = String(_.get(statData, '世界运转.当前日期', '') || '').trim();
+  const hour = Number(_.get(statData, '世界运转.二十四时.小时'));
+  const minute = Number(_.get(statData, '世界运转.二十四时.分钟'));
+  const time = Number.isFinite(hour)
+    ? `${String(Math.max(0, Math.round(hour))).padStart(2, '0')}:${String(Number.isFinite(minute) ? Math.max(0, Math.round(minute)) : 0).padStart(2, '0')}`
+    : '';
+  return [date, time].filter(Boolean).join(' ') || worldClockKey(statData) || '未知';
+}
 
-目标：以上帝视角，根据聊天历史、世界书、当前 MVU 变量与已经发生的剧情，推演同一世界中各地势力、人物与未决事件在这段时间里的自然发展。世界不会因主角不在场而停止。
+function buildWorldTurnPrompt(runtime, statData = latestStatData()) {
+  const startClock = runtime.state.lastClock || '未记录（以最近一次现存推演为准）';
+  const endClock = worldClockLabel(statData);
+  return `你现在不是续写主角当前场景，而是执行一次独立的“天下推演”。
+
+本轮时间边界：上次截止标识为「${startClock}」，本次截止为「${endClock}」。只回顾两者之间在正常正文中已经流逝的世界时间；推演本身不产生额外耗时。
+
+目标：以上帝视角，根据聊天历史、世界书、当前 MVU 变量与既有世局线，写出同一世界在这段时间里自行发生的变化。重点不是汇报主角造成了什么，而是让远方势力、地方官民、军队、商路与关键人物依照各自利益继续运转。
 
 硬性规则：
 1. 不续写主角当前动作，不代替玩家行动，不要求玩家重新输入。
-2. 使用全知叙述，但严格保持因果、交通、情报传播、行政效率与明末历史条件；不得为了热闹强造大事。
-3. 角色和势力只能依据各自掌握的信息行动。报告可以写客观真相，但普通正文中的主角不能因此自动知情。
-4. 本次推演是对正常正文已经流逝时间的回顾结算，截止时刻就是当前 MVU 世界时间；推演本身不产生额外耗时，不得把截止时刻之后的计划写成已经发生的事实。
-5. 各栏目都不是必填。没有值得记录的变化就省略该栏目；若整体没有显著变化，只需简短说明，不要编造变化填满格式。
-6. 天下地图、势力关系、关键人物与未决事项是客观世界状态，不受主角是否知情限制；但不得事无巨细扩写全国，只记录本次推演时段内确实发生的实质变化。
-7. 不输出普通正文、思维链、解释、前言、结语或 <UpdateVariable>，只输出 <world_turn> 报告。报告写入聊天后会由 MVU 副模型统一结算变量。
+2. 全篇至少三分之二的篇幅与事件必须发生在主角当前因果半径之外；主角所在地最多一则，并且只写已经扩散到地区层面的客观余波。不得把各地事件都牵回主角、等待主角处理或为主角铺路。
+3. 使用全知叙述，但角色和势力只能依据各自掌握的信息行动；严格遵守交通、情报传播、行政效率、资源约束与明末历史条件。
+4. 事件尺度必须匹配实际流逝时间：数刻至数时辰只够命令、试探、启程、局部交易或小规模行动；数日才可能出现调兵、谈判、价格与治安变化；更长时间才允许势力格局显著改变。不得为了热闹强造大事。
+5. 从政治、军事、经济、民生、交通、灾害、派系与人物行动中选择真正有变化的方向；轮换地区和主题，避免每轮都只写战争或同一批人。
+6. 优先延续已有世局线，也可在确有客观起因时开启新线；一条事件必须写清“谁做了什么—为何此刻行动—已经落下什么后果”。计划、意图和趋势可以作为因果背景，但不能冒充既成事实。
+7. 不把 时局与任务.未决事项 当作本轮议程，也不输出“未决事项”“确定影响”等汇报栏目。玩家备忘录只有被本轮事实直接改变时，才由后续 MVU 更新。
+8. 若时间很短或变化稀少，允许只写一至两则微小但真实的动向；不强凑数量，不用“暂无显著变化”空泛交差。
+9. 不输出普通正文、思维链、解释、前言、结语或 <UpdateVariable>，只输出 <world_turn> 报告。报告写入聊天后会由 MVU 副模型结算已经落地的客观变量。
 
 报告格式：
 <world_turn>
-【推演时段】本次推演覆盖的世界内时间范围
-【天下大势】全国层面的显著趋势或“暂无显著变化”
-【地区与势力】只写发生实质变化的地区或势力
-【关键人物】只写发生关键行动、决策或处境变化的人物
-【未决事项】只写长线事件的新进展、等待条件或风险变化
-【确定影响】只写已经落地、将约束后续剧情的后果
+【地区或地点 · 可选的时刻】
+用一段连贯叙事写一则事件切片。
+
+【另一地区或地点】
+继续下一则事件切片。
 </world_turn>
 
-省略没有内容的标题。`;
+通常选择 2—4 则；内容不足时可以更少。标题只标地点，不使用固定汇报栏目。`;
+}
 
 const getHostWindow = () => window.parent ?? window;
 const getHostDocument = () => getHostWindow().document ?? document;
@@ -157,7 +174,8 @@ function ensureBannerStyle() {
 
 function openSettings() {
   const actions = getHostWindow().CanmingStatusbarActions;
-  if (typeof actions?.openSettings === 'function') actions.openSettings('world-turn');
+  if (typeof actions?.openWorldTurn === 'function') actions.openWorldTurn();
+  else if (typeof actions?.openSettings === 'function') actions.openSettings('world-turn');
   else getHostWindow().dispatchEvent(new CustomEvent('canming-world-turn-open-settings'));
 }
 
@@ -333,10 +351,18 @@ async function runWorldTurn(runtime, { manual = false } = {}) {
     if (typeof generateText !== 'function' || typeof createMessages !== 'function') throw new Error('酒馆生成接口不可用。');
     const result = await generateText({
       generation_id: generationId,
-      user_input: WORLD_TURN_PROMPT,
+      user_input: buildWorldTurnPrompt(runtime),
       should_stream: true,
       should_silence: false,
-      injects: [{ role: 'system', position: 'in_chat', depth: 0, should_scan: true, content: '本次请求处于【天下推演模式】。忽略普通续写要求，严格执行用户输入中的天下推演格式。' }],
+      injects: [
+        {
+          role: 'system',
+          position: 'in_chat',
+          depth: 0,
+          should_scan: true,
+          content: '本次请求处于【天下推演模式】。忽略普通续写要求，严格执行用户输入中的天下推演格式。',
+        },
+      ],
     });
     const report = normalizeGeneratedText(result);
     const message = `${report}\n\n${WORLD_TURN_MVU_SCOPE}`;
