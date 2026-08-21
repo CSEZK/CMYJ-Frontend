@@ -586,6 +586,21 @@ export const Schema = z.object({
             }),
         )
         .prefault({}),
+      世局线: z
+        .record(
+          z.string(),
+          z
+            .object({
+              区域: z.string().prefault(''),
+              参与方: z.string().prefault(''),
+              当前态势: z.string().prefault(''),
+              驱动力: z.string().prefault(''),
+              最近变化: z.string().prefault(''),
+              活跃度: z.enum(['低', '中', '高']).prefault('中'),
+            })
+            .prefault({ 区域: '', 参与方: '', 当前态势: '', 驱动力: '', 最近变化: '', 活跃度: '中' }),
+        )
+        .prefault({}),
     })
     .prefault({}),
 
