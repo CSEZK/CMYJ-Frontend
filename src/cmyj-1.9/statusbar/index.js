@@ -16,7 +16,7 @@ import {
 import { normalizeTechnologyCollection } from '../shared/technology.js';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.9.2';
+const STATUSBAR_VERSION = '1.9.3';
 const MAP_ASSET_REVISION = 'd697affd3ed71c09e8278cc2ac37b5d3b5dc2ded';
 const STORAGE_PREFIX = 'canming-afterglow-1.9:statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
@@ -4642,6 +4642,60 @@ function getWorkshopApi(name) {
   return globalThis[name] ?? window.parent?.[name];
 }
 
+function currentRawCharacter(characterName) {
+  const context = (window.parent ?? window).SillyTavern?.getContext?.();
+  const characterId = getWorkshopApi('getCurrentCharacterId')?.();
+  const raw = context?.characters?.[Number(characterId)];
+  return raw?.name === characterName ? raw : null;
+}
+
+async function saveScenarioCharacter(characterName, character) {
+  const context = (window.parent ?? window).SillyTavern?.getContext?.();
+  if (typeof context?.getRequestHeaders !== 'function') throw new Error('酒馆原生角色卡保存接口不可用。');
+  const raw = currentRawCharacter(characterName);
+  const avatarUrl = String(raw?.avatar || character?.avatar || `${characterName}.png`);
+  const firstMessages = Array.isArray(character?.first_messages) ? character.first_messages.map(String) : [];
+  const extensions =
+    character?.extensions && typeof character.extensions === 'object'
+      ? character.extensions
+      : raw?.data?.extensions || {};
+  const formData = new FormData();
+  const append = (name, value) => formData.append(name, value == null ? '' : String(value));
+  append('ch_name', characterName);
+  append('avatar_url', avatarUrl);
+  append('character_version', character?.version ?? raw?.data?.character_version ?? '');
+  append('creator', character?.creator ?? raw?.data?.creator ?? '');
+  append('creator_notes', character?.creator_notes ?? raw?.data?.creator_notes ?? '');
+  append('description', character?.description ?? raw?.data?.description ?? '');
+  append('personality', character?.personality ?? raw?.data?.personality ?? '');
+  append('scenario', character?.scenario ?? raw?.data?.scenario ?? '');
+  append('mes_example', character?.mes_example ?? raw?.data?.mes_example ?? '');
+  append('first_mes', firstMessages[0] || '');
+  for (const greeting of firstMessages.slice(1)) formData.append('alternate_greetings', greeting);
+  append('world', extensions.world ?? raw?.data?.extensions?.world ?? '');
+  append('talkativeness', extensions.talkativeness ?? raw?.data?.extensions?.talkativeness ?? '0.5');
+  append('fav', extensions.fav ?? raw?.data?.extensions?.fav ?? false);
+  append('chat', raw?.chat ?? '');
+  append('create_date', raw?.create_date ?? '');
+  append('extensions', JSON.stringify(extensions));
+
+  const headers = { ...context.getRequestHeaders({ omitContentType: true }) };
+  for (const key of Object.keys(headers)) if (key.toLowerCase() === 'content-type') delete headers[key];
+  const response = await fetch('/api/characters/edit', {
+    method: 'POST',
+    headers,
+    body: formData,
+    cache: 'no-cache',
+  });
+  if (!response.ok) throw new Error(`酒馆原生角色卡保存失败（HTTP ${response.status}）。`);
+}
+
+async function refreshScenarioCharacterCache(characterName) {
+  const context = (window.parent ?? window).SillyTavern?.getContext?.();
+  const avatarUrl = currentRawCharacter(characterName)?.avatar || `${characterName}.png`;
+  if (typeof context?.getOneCharacter === 'function') await context.getOneCharacter(avatarUrl);
+}
+
 function listWorkshopRegexes() {
   const getter = getWorkshopApi('getTavernRegexes');
   if (typeof getter !== 'function') return [];
@@ -5212,7 +5266,7 @@ async function repairBuiltinTongchengCharacterProfiles() {
     extension.context = context;
     character.extensions.canming_dlc = extension;
     try {
-      await replaceCharacter(characterName, character, { render: 'none' });
+      await saveScenarioCharacter(characterName, character);
     } catch (error) {
       await restoreScenarioCharacterProfiles(characterProfileBackups);
       throw error;
@@ -5245,7 +5299,7 @@ async function repairBuiltinTongchengCharacterProfiles() {
       rollbackErrors.push(`世界书：${rollbackError?.message || rollbackError}`);
     }
     try {
-      await replaceCharacter(characterName, repairSnapshot.character, { render: 'immediate' });
+      await saveScenarioCharacter(characterName, repairSnapshot.character);
     } catch (rollbackError) {
       rollbackErrors.push(`角色卡：${rollbackError?.message || rollbackError}`);
     }
@@ -5335,7 +5389,7 @@ async function reconcileInstalledScenarioOpenings({ notify = false } = {}) {
           ...missingOpenings,
         ];
       }
-      await replaceCharacter(characterName, character, { render: 'none' });
+      await saveScenarioCharacter(characterName, character);
     }
 
     writeActiveDlcContext(characterName, context);
@@ -5622,7 +5676,7 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
     try {
       let verifiedCharacter = null;
       for (let attempt = 0; attempt < 2; attempt += 1) {
-        await replaceCharacter(characterName, character, { render: 'none' });
+        await saveScenarioCharacter(characterName, character);
         verifiedCharacter = await getCharacter(characterName);
         const verifiedInstall = verifiedCharacter?.extensions?.canming_dlc;
         if (
@@ -5667,6 +5721,7 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
     getPortraitLibrary();
     getCharacterProfiles();
     await syncPortraitIllustrationRule();
+    await refreshScenarioCharacterCache(characterName);
     showToast(`✓ 已安装身份 DLC「${resource.name}」；请新建聊天后选择开场`, 'ok');
     if (options.showSuccessDialog) {
       await canmingUiDialog(
@@ -5688,7 +5743,7 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
       rollbackErrors.push(`世界书：${rollbackError?.message || rollbackError}`);
     }
     try {
-      await replaceCharacter(characterName, transactionSnapshot.character, { render: 'immediate' });
+      await saveScenarioCharacter(characterName, transactionSnapshot.character);
     } catch (rollbackError) {
       rollbackErrors.push(`角色卡：${rollbackError?.message || rollbackError}`);
     }
@@ -5913,7 +5968,7 @@ async function uninstallWorkshopInstall(delta = {}) {
         // 请求缺少该字段，服务端原有的 canming_dlc 反而会被保留下来。
         // 用 null 作为明确的清除值，之后安装新 DLC 时会正常覆盖它。
         character.extensions.canming_dlc = null;
-        await replaceCharacter(characterName, character, { render: 'none' });
+        await saveScenarioCharacter(characterName, character);
         const verifiedCharacter = await getCharacter(characterName);
         if (verifiedCharacter?.extensions?.canming_dlc?.id)
           throw new Error('角色卡中的身份 DLC 安装标记未能清除，请重试。');
