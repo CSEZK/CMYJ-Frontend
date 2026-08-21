@@ -576,7 +576,13 @@ assert.doesNotMatch(v18StatusbarSource, /WORLD_1629/);
 
 assert.ok(v19Loader.length > 1_000, '1.9 加载器未构建');
 assert.match(v19LoaderSource, /REMOTE_ROOT = 'https:\/\/cmyj-frontend\.pages\.dev\/cmyj-1\.9\/'/);
-assert.match(v19StatusbarSource, /STATUSBAR_VERSION = '1\.9\.1'/);
+assert.match(v19StatusbarSource, /STATUSBAR_VERSION = '1\.9\.2'/);
+assert.match(v19StatusbarSource, /async function reconcileInstalledScenarioOpenings/);
+assert.match(v19StatusbarSource, /openings: scenarioOpeningMetadata\(resource\.openings\)/);
+assert.match(v19StatusbarSource, /await reconcileInstalledScenarioOpenings\(\{ notify: true \}\)/);
+assert.match(v19StatusbarSource, /hasScenarioOpeningMessages\(character\?\.first_messages, installedScenario\)/);
+assert.match(v19StatusbarSource, /身份 DLC 写入角色卡后校验失败/);
+assert.match(v19StatusbarSource, /replaceCharacter\(characterName, character, \{ render: 'none' \}\)/);
 assert.match(v19StatusbarSource, /下月预估/);
 assert.match(v19StatusbarSource, /function hasSettlementSnapshot\(value\)/);
 assert.match(v19StatusbarSource, /尚未跨月结算/);
