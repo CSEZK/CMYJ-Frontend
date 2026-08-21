@@ -91,7 +91,8 @@ assert.match(
 );
 assert.match(source, /const updatedData = await mvuCompleted/, '推演完成状态必须以实时 MVU 落盘为准');
 assert.match(source, /return report\.trim\(\)/, '推演楼层必须只保留 world_turn 报告');
-assert.match(source, /MVU_UPDATE_SCOPE: 本条是天下推演的回顾结算/, '推演楼层必须就近声明 MVU 更新边界');
+assert.match(source, /<mvu_update_scope>[\s\S]*本条是天下推演的回顾结算/, '推演楼层必须用可进入提示词的标签声明 MVU 更新边界');
+assert.doesNotMatch(source, /<!--\s*MVU_UPDATE_SCOPE:/, 'MVU 更新边界不得放进会被提示词过滤的 HTML 注释');
 assert.match(
   source,
   /const protectedPaths = \['世界运转', '主角', '人际网络\.在场角色', '个人史记'\]/,
