@@ -4834,10 +4834,10 @@ async function importWorldbookWorkshopPackage(bundle, options = {}) {
       additions.push(entry);
     }
   }
-  if (replaced)
-    await replaceWorldbook(worldbookName, current, { render: additions.length ? 'debounced' : 'immediate' });
-  if (additions.length) await createEntries(worldbookName, additions, { render: 'immediate' });
-  showToast(`✓ 已导入 ${entries.length} 条世界书作品`, 'ok');
+  const render = options.render || (additions.length ? 'debounced' : 'immediate');
+  if (replaced) await replaceWorldbook(worldbookName, current, { render });
+  if (additions.length) await createEntries(worldbookName, additions, { render });
+  if (!options.silent) showToast(`✓ 已导入 ${entries.length} 条世界书作品`, 'ok');
   return { worldbookName, count: entries.length, mode };
 }
 
@@ -4917,7 +4917,7 @@ function characterAdaptationBody(adaptation, version = 2) {
   return lines.join('\n');
 }
 
-async function applyScenarioCharacterAdaptations(adaptations, version = 2) {
+async function applyScenarioCharacterAdaptations(adaptations, version = 2, options = {}) {
   if (!Array.isArray(adaptations) || !adaptations.length) return [];
   const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
   const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
@@ -4942,7 +4942,7 @@ async function applyScenarioCharacterAdaptations(adaptations, version = 2) {
     });
   }
   const next = current.map((entry, index) => updates.get(index) || entry);
-  await replaceWorldbook(worldbookName, next, { render: 'immediate' });
+  await replaceWorldbook(worldbookName, next, { render: options.render || 'immediate' });
   return backups;
 }
 
@@ -4974,7 +4974,7 @@ async function restoreScenarioCharacterAdaptations(backups, options = {}) {
       content: restored,
     };
   });
-  await replaceWorldbook(worldbookName, next, { render: 'immediate' });
+  await replaceWorldbook(worldbookName, next, { render: options.render || 'immediate' });
   return { restored: backupMap.size, skipped: missing.length };
 }
 
@@ -4997,7 +4997,7 @@ function hasScenarioCharacterProfiles(entries, profiles) {
   return normalized.every(profile => contentByName.get(profile.entryName) === profile.content);
 }
 
-async function applyScenarioCharacterProfiles(profiles) {
+async function applyScenarioCharacterProfiles(profiles, options = {}) {
   const normalized = normalizeOriginalCharacterProfiles(profiles);
   if (!normalized.length) return [];
   const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
@@ -5016,7 +5016,7 @@ async function applyScenarioCharacterProfiles(profiles) {
   const next = current.map(entry =>
     profileMap.has(entry?.name) ? { ...entry, content: profileMap.get(entry.name) } : entry,
   );
-  await replaceWorldbook(worldbookName, next, { render: 'immediate' });
+  await replaceWorldbook(worldbookName, next, { render: options.render || 'immediate' });
   return backups;
 }
 
@@ -5045,7 +5045,7 @@ async function restoreScenarioCharacterProfiles(backups, options = {}) {
   const next = current.map(entry =>
     backupMap.has(entry?.name) ? { ...entry, content: backupMap.get(entry.name) } : entry,
   );
-  await replaceWorldbook(worldbookName, next, { render: 'immediate' });
+  await replaceWorldbook(worldbookName, next, { render: options.render || 'immediate' });
   return { restored: backupMap.size, skipped: unavailable.length };
 }
 
@@ -5069,7 +5069,7 @@ function hasBuiltinTongchengOverview(entries) {
   );
 }
 
-async function upsertBuiltinTongchengOverview() {
+async function upsertBuiltinTongchengOverview(options = {}) {
   const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
   const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
   if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function')
@@ -5081,7 +5081,7 @@ async function upsertBuiltinTongchengOverview() {
   const next = [...current];
   if (index >= 0) next[index] = expected;
   else next.push(expected);
-  await replaceWorldbook(worldbookName, next, { render: 'immediate' });
+  await replaceWorldbook(worldbookName, next, { render: options.render || 'immediate' });
 }
 
 function builtinTongchengWorldbookEntries(entries) {
@@ -5102,7 +5102,7 @@ function hasBuiltinTongchengWorldbooks(entries) {
   return expected.every(entry => contentByName.get(entry.name) === String(entry.content || ''));
 }
 
-async function upsertBuiltinTongchengWorldbooks() {
+async function upsertBuiltinTongchengWorldbooks(options = {}) {
   const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
   const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
   if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function')
@@ -5113,7 +5113,7 @@ async function upsertBuiltinTongchengWorldbooks() {
   const expectedByName = new Map(expected.map(entry => [entry.name, entry]));
   const next = current.map(entry => expectedByName.get(entry?.name) || entry);
   for (const entry of expected) if (!current.some(item => item?.name === entry.name)) next.push(entry);
-  await replaceWorldbook(worldbookName, next, { render: 'immediate' });
+  await replaceWorldbook(worldbookName, next, { render: options.render || 'immediate' });
   return expected.map(entry => entry.name);
 }
 
@@ -5162,14 +5162,15 @@ async function repairBuiltinTongchengCharacterProfiles() {
 
   try {
     if (extension.characterProfileBackups?.length)
-      await restoreScenarioCharacterProfiles(extension.characterProfileBackups);
+      await restoreScenarioCharacterProfiles(extension.characterProfileBackups, { render: 'none' });
     if (extension.characterAdaptationBackups?.length)
-      await restoreScenarioCharacterAdaptations(extension.characterAdaptationBackups);
+      await restoreScenarioCharacterAdaptations(extension.characterAdaptationBackups, { render: 'none' });
     const characterProfileBackups = await applyScenarioCharacterProfiles(
       ORIGINAL_TONGCHENG_CHARACTER_PROFILES.profiles,
+      { render: 'none' },
     );
-    const repairedWorldbookNames = await upsertBuiltinTongchengWorldbooks();
-    await upsertBuiltinTongchengOverview();
+    const repairedWorldbookNames = await upsertBuiltinTongchengWorldbooks({ render: 'none' });
+    await upsertBuiltinTongchengOverview({ render: 'none' });
     const context = {
       ...(extension.context || {}),
       characterAdaptations: [],
@@ -5196,9 +5197,9 @@ async function repairBuiltinTongchengCharacterProfiles() {
     extension.context = context;
     character.extensions.canming_dlc = extension;
     try {
-      await replaceCharacter(characterName, character, { render: 'immediate' });
+      await replaceCharacter(characterName, character, { render: 'none' });
     } catch (error) {
-      await restoreScenarioCharacterProfiles(characterProfileBackups);
+      await restoreScenarioCharacterProfiles(characterProfileBackups, { render: 'none' });
       throw error;
     }
     const verifiedCharacter = await getCharacter(characterName);
@@ -5224,12 +5225,12 @@ async function repairBuiltinTongchengCharacterProfiles() {
   } catch (error) {
     const rollbackErrors = [];
     try {
-      await replaceWorldbook(worldbookName, repairSnapshot.worldbookEntries, { render: 'immediate' });
+      await replaceWorldbook(worldbookName, repairSnapshot.worldbookEntries, { render: 'none' });
     } catch (rollbackError) {
       rollbackErrors.push(`世界书：${rollbackError?.message || rollbackError}`);
     }
     try {
-      await replaceCharacter(characterName, repairSnapshot.character, { render: 'immediate' });
+      await replaceCharacter(characterName, repairSnapshot.character, { render: 'none' });
     } catch (rollbackError) {
       rollbackErrors.push(`角色卡：${rollbackError?.message || rollbackError}`);
     }
@@ -5357,7 +5358,7 @@ async function installBuiltinTongchengScenario() {
         cancelled.code = 'SCENARIO_REPLACE_CANCELLED';
         throw cancelled;
       }
-      await uninstallWorkshopInstall({ scenarios: [installed.id] });
+      await uninstallWorkshopInstall({ scenarios: [installed.id] }, { render: 'none' });
       await getCanmingWorkshop()?.forgetScenarioInstall?.(installed.id, {
         cleanup: true,
         bridge: createWorkshopBridge(),
@@ -5422,7 +5423,7 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
         throw cancelled;
       }
       transactionMutated = true;
-      await uninstallWorkshopInstall({ scenarios: [previous.id] });
+      await uninstallWorkshopInstall({ scenarios: [previous.id] }, { render: 'none' });
       await workshop?.forgetScenarioInstall?.(previous.id, {
         cleanup: true,
         bridge: createWorkshopBridge(),
@@ -5465,7 +5466,13 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
       ],
     };
     transactionMutated = true;
-    await importWorldbookWorkshopPackage(worldbookBundle, { conflictMode: 'overwrite' });
+    // 安装动作运行在消息 iframe 中。事务尚未完成时触发酒馆重绘会销毁当前
+    // 执行上下文，留下“页面刷新了，但角色卡没有开局”的半安装状态。
+    await importWorldbookWorkshopPackage(worldbookBundle, {
+      conflictMode: 'overwrite',
+      render: 'none',
+      silent: true,
+    });
     if (
       staleInstalledWorldbookNames.size &&
       typeof getWorldbook === 'function' &&
@@ -5475,21 +5482,28 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
       await replaceWorldbook(
         getWorldbookName(),
         current.filter(entry => !staleInstalledWorldbookNames.has(entry?.name)),
-        { render: 'immediate' },
+        { render: 'none' },
       );
     }
     if (previous?.characterProfileBackups?.length)
       await restoreScenarioCharacterProfiles(previous.characterProfileBackups, {
         allowMissing: true,
         expectedContents: previous.characterProfileSignatures,
+        render: 'none',
       });
     if (previous?.characterAdaptationBackups?.length)
-      await restoreScenarioCharacterAdaptations(previous.characterAdaptationBackups, { allowMissing: true });
+      await restoreScenarioCharacterAdaptations(previous.characterAdaptationBackups, {
+        allowMissing: true,
+        render: 'none',
+      });
     const characterAdaptationBackups = await applyScenarioCharacterAdaptations(
       resource.characterAdaptations || [],
       resource.characterAdaptationVersion || 2,
+      { render: 'none' },
     );
-    const characterProfileBackups = await applyScenarioCharacterProfiles(resource.originalCharacterProfiles || []);
+    const characterProfileBackups = await applyScenarioCharacterProfiles(resource.originalCharacterProfiles || [], {
+      render: 'none',
+    });
 
     const originalFirstMessages =
       previous?.originalFirstMessages || JSON.parse(JSON.stringify(character.first_messages || []));
@@ -5532,20 +5546,51 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
       context,
     };
     try {
-      await replaceCharacter(characterName, character, { render: 'immediate' });
+      await replaceCharacter(characterName, character, { render: 'none' });
     } catch (error) {
       try {
-        await restoreScenarioCharacterProfiles(characterProfileBackups);
+        await restoreScenarioCharacterProfiles(characterProfileBackups, { render: 'none' });
       } catch (rollbackError) {
         console.error('[残明余烬] 完整人设安装回滚失败', rollbackError);
       }
       try {
-        await restoreScenarioCharacterAdaptations(characterAdaptationBackups);
+        await restoreScenarioCharacterAdaptations(characterAdaptationBackups, { render: 'none' });
       } catch (rollbackError) {
         console.error('[残明余烬] 动态人设安装回滚失败', rollbackError);
       }
       throw error;
     }
+    const verifiedCharacter = await getCharacter(characterName);
+    const verifiedScenario = verifiedCharacter?.extensions?.canming_dlc;
+    const verifiedWorldbookEntries = (await getWorldbook(worldbookName)) || [];
+    const verifiedWorldbookByName = new Map(verifiedWorldbookEntries.map(entry => [entry?.name, entry]));
+    const missingWorldbookEntries = (resource.worldbookEntries || []).filter(entry => {
+      const persisted = verifiedWorldbookByName.get(entry?.name);
+      // 酒馆保存条目时会补全默认字段，不能用完整对象签名判断写入是否成功。
+      return !persisted || String(persisted.content || '') !== String(entry.content || '');
+    });
+    const normalizeOpening = value => String(value || '').replace(/\r\n?/g, '\n').trim();
+    const persistedOpenings = (verifiedCharacter?.first_messages || []).map(normalizeOpening);
+    const openingsPersisted = resource.openings.every(opening =>
+      persistedOpenings.includes(normalizeOpening(opening.content)),
+    );
+    const profilesPersisted = hasScenarioCharacterProfiles(
+      verifiedWorldbookEntries,
+      resource.originalCharacterProfiles || [],
+    );
+    const verificationFailures = [];
+    if (verifiedScenario?.id !== resource.scenario.id) verificationFailures.push('角色卡身份标记');
+    if (!openingsPersisted) verificationFailures.push('角色卡开场白');
+    if (!profilesPersisted) verificationFailures.push('完整人设');
+    if (missingWorldbookEntries.length)
+      verificationFailures.push(
+        `世界书：${missingWorldbookEntries
+          .map(entry => entry?.name)
+          .filter(Boolean)
+          .join('、')}`,
+      );
+    if (verificationFailures.length)
+      throw new Error(`身份 DLC 写入后校验失败（${verificationFailures.join('；')}），已自动恢复安装前状态。`);
     writeActiveDlcContext(characterName, context);
     globalThis.__CMYJ_DLC_CONTEXT_V1__ = context;
     ACTIVE_DLC_CONTEXT = context;
@@ -5571,12 +5616,12 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
     if (!transactionMutated || error?.code === 'SCENARIO_REPLACE_CANCELLED') throw error;
     const rollbackErrors = [];
     try {
-      await replaceWorldbook(worldbookName, transactionSnapshot.worldbookEntries, { render: 'immediate' });
+      await replaceWorldbook(worldbookName, transactionSnapshot.worldbookEntries, { render: 'none' });
     } catch (rollbackError) {
       rollbackErrors.push(`世界书：${rollbackError?.message || rollbackError}`);
     }
     try {
-      await replaceCharacter(characterName, transactionSnapshot.character, { render: 'immediate' });
+      await replaceCharacter(characterName, transactionSnapshot.character, { render: 'none' });
     } catch (rollbackError) {
       rollbackErrors.push(`角色卡：${rollbackError?.message || rollbackError}`);
     }
@@ -5696,7 +5741,8 @@ function renderStatusbarBehindWorkshop() {
   }
 }
 
-async function uninstallWorkshopInstall(delta = {}) {
+async function uninstallWorkshopInstall(delta = {}, options = {}) {
+  const render = options.render || 'immediate';
   const ids = key => new Set(Array.isArray(delta[key]) ? delta[key] : []);
   const characterIds = ids('characters');
   if (characterIds.size) {
@@ -5720,7 +5766,7 @@ async function uninstallWorkshopInstall(delta = {}) {
       await replaceWorldbook(
         getWorldbookName(),
         current.filter(entry => !worldbookNames.has(entry.name)),
-        { render: 'immediate' },
+        { render },
       );
     }
   }
@@ -5774,8 +5820,12 @@ async function uninstallWorkshopInstall(delta = {}) {
         await restoreScenarioCharacterProfiles(installed.characterProfileBackups || [], {
           allowMissing: true,
           expectedContents: installed.characterProfileSignatures,
+          render,
         });
-        await restoreScenarioCharacterAdaptations(installed.characterAdaptationBackups || [], { allowMissing: true });
+        await restoreScenarioCharacterAdaptations(installed.characterAdaptationBackups || [], {
+          allowMissing: true,
+          render,
+        });
         const installedWorldbookNames = new Set((installed.worldbookEntries || []).filter(Boolean));
         const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
         const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
@@ -5783,7 +5833,7 @@ async function uninstallWorkshopInstall(delta = {}) {
           const current = (await worldbook(getWorldbookName())) || [];
           const cleanup = planScenarioWorldbookCleanup(current, installed);
           if (cleanup.removedNames.length)
-            await replaceWorldbook(getWorldbookName(), cleanup.entries, { render: 'immediate' });
+            await replaceWorldbook(getWorldbookName(), cleanup.entries, { render });
         }
         if (hasScenarioOpeningMessages(character.first_messages, installed))
           character.first_messages = JSON.parse(
@@ -5793,7 +5843,7 @@ async function uninstallWorkshopInstall(delta = {}) {
         // 请求缺少该字段，服务端原有的 canming_dlc 反而会被保留下来。
         // 用 null 作为明确的清除值，之后安装新 DLC 时会正常覆盖它。
         character.extensions.canming_dlc = null;
-        await replaceCharacter(characterName, character, { render: 'immediate' });
+        await replaceCharacter(characterName, character, { render });
         const verifiedCharacter = await getCharacter(characterName);
         if (verifiedCharacter?.extensions?.canming_dlc?.id)
           throw new Error('角色卡中的身份 DLC 安装标记未能清除，请重试。');
@@ -5834,7 +5884,7 @@ async function uninstallCurrentScenario() {
       : readActiveDlcContext(characterName);
     if (!installed?.id) throw new Error('当前没有已安装的身份 DLC。');
     const name = installed.name || installed.id;
-    await uninstallWorkshopInstall({ scenarios: [installed.id] });
+    await uninstallWorkshopInstall({ scenarios: [installed.id] }, { render: 'none' });
     await getCanmingWorkshop()?.forgetScenarioInstall?.(installed.id, {
       cleanup: true,
       bridge: createWorkshopBridge(),
