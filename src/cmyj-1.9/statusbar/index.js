@@ -4309,13 +4309,22 @@ async function openScenarioGenerator() {
   }
 }
 
+async function openScenarioWorkshop() {
+  if (!isOpen) {
+    isOpen = true;
+    applyFrameLayout();
+    render();
+  }
+  return openCanmingWorkshop({ initialView: 'catalog', initialType: 'scenario' });
+}
+
 function exposeStatusbarActions() {
   const hostWindow = window.parent ?? window;
   hostWindow.CanmingStatusbarActions = {
     ...(hostWindow.CanmingStatusbarActions || {}),
     _owner: STATUSBAR_ACTIONS_OWNER,
     openScenarioGenerator: () => openScenarioGenerator(),
-    openWorkshop: () => openCanmingWorkshop({ initialView: 'catalog', initialType: 'scenario' }),
+    openWorkshop: () => openScenarioWorkshop(),
     installOriginalScenario: () => installBuiltinTongchengScenario(),
     uninstallCurrentScenario: () => uninstallCurrentScenario(),
     getInstalledScenario: () => getInstalledScenarioInfo(),
