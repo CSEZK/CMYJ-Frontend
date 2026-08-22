@@ -924,6 +924,33 @@ function refreshDlcLanding() {
   }
 }
 
+function resetLegacyDlcLandingAfterUninstall() {
+  refreshDlcLanding();
+  try {
+    const host = window.parent ?? window;
+    const documents = [
+      host.document,
+      ...[...host.document.querySelectorAll('iframe')].map(frame => frame.contentDocument).filter(Boolean),
+    ];
+    documents.forEach(doc => {
+      const originalLaunch = doc.getElementById('originalScenarioLaunch');
+      if (!originalLaunch) return;
+      originalLaunch.disabled = false;
+      const title = originalLaunch.querySelector('.scenario-launch-copy b');
+      if (title) title.textContent = '使用原版桐城开局';
+      const management = doc.getElementById('dlcManagement');
+      if (management) management.hidden = true;
+      const uninstallButton = doc.getElementById('dlcUninstall');
+      if (uninstallButton) {
+        uninstallButton.disabled = false;
+        uninstallButton.textContent = '卸载当前开局';
+      }
+    });
+  } catch {
+    /* 角色卡介绍页可能尚未挂载 */
+  }
+}
+
 let ACTIVE_DLC_CONTEXT = (() => {
   const runtimeContext = globalThis.__CMYJ_DLC_CONTEXT_V1__;
   if (runtimeContext && typeof runtimeContext === 'object') return runtimeContext;
@@ -4316,7 +4343,13 @@ function exposeStatusbarActions() {
     _owner: STATUSBAR_ACTIONS_OWNER,
     openScenarioGenerator: () => openScenarioGenerator(),
     installOriginalScenario: () => installBuiltinTongchengScenario(),
-    uninstallCurrentScenario: () => uninstallCurrentScenario(),
+    // 1.9.0 角色卡介绍页会在 action 返回真值后强制刷新整个酒馆。
+    // 映射脚本负责就地更新旧介绍页，并返回空值阻止那段兼容代码执行。
+    uninstallCurrentScenario: async () => {
+      await uninstallCurrentScenario();
+      resetLegacyDlcLandingAfterUninstall();
+      return null;
+    },
     getInstalledScenario: () => getInstalledScenarioInfo(),
     openSettings: section => {
       isOpen = true;

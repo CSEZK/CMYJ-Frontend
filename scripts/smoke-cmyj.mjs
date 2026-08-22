@@ -606,6 +606,8 @@ assert.match(v19StatusbarSource, /const verifiedCharacter = await getCharacter\(
 assert.match(v19StatusbarSource, /身份 DLC 写入后校验失败/);
 assert.match(v19StatusbarSource, /character\.extensions\.canming_dlc = \{ id: null \}/);
 assert.doesNotMatch(v19StatusbarSource, /character\.extensions\.canming_dlc = null/);
+assert.match(v19StatusbarSource, /function resetLegacyDlcLandingAfterUninstall\(\)/);
+assert.match(v19StatusbarSource, /await uninstallCurrentScenario\(\);\s+resetLegacyDlcLandingAfterUninstall\(\);\s+return null;/);
 assert.match(v19StatusbarSource, /syncPortraitIllustrationRule\(\{ render \}\)/);
 assert.match(v19StatusbarSource, /syncExtensionCharacterIndex\(\{ render \}\)/);
 assert.match(v19StatusbarSource, /async function syncPortraitIllustrationRule\(options = \{\}\)/);
