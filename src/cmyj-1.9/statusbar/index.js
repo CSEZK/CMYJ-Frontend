@@ -5134,6 +5134,24 @@ async function getInstalledScenarioInfo() {
   };
 }
 
+function scenarioCharacterPatch(character) {
+  return {
+    first_messages: JSON.parse(JSON.stringify(character?.first_messages || [])),
+    extensions: {
+      // 必须显式写 null 才能清除已保存的安装标记；缺少字段会被酒馆助手合并回旧值。
+      canming_dlc: JSON.parse(JSON.stringify(character?.extensions?.canming_dlc ?? null)),
+    },
+  };
+}
+
+async function replaceScenarioCharacterState(characterName, character, options = {}) {
+  const replaceCharacter = getWorkshopApi('replaceCharacter');
+  if (typeof replaceCharacter !== 'function') throw new Error('角色卡更新接口不可用。');
+  // 这里只提交安装事务真正修改的字段。传入完整角色卡会包含 tavern_helper 扩展，
+  // 酒馆助手会因此强制重载当前角色脚本，即使 render:'none' 也会销毁消息 iframe。
+  await replaceCharacter(characterName, scenarioCharacterPatch(character), options);
+}
+
 async function repairBuiltinTongchengCharacterProfiles() {
   const getCurrentName = getWorkshopApi('getCurrentCharacterName');
   const getCharacter = getWorkshopApi('getCharacter');
@@ -5197,7 +5215,7 @@ async function repairBuiltinTongchengCharacterProfiles() {
     extension.context = context;
     character.extensions.canming_dlc = extension;
     try {
-      await replaceCharacter(characterName, character, { render: 'none' });
+      await replaceScenarioCharacterState(characterName, character, { render: 'none' });
     } catch (error) {
       await restoreScenarioCharacterProfiles(characterProfileBackups, { render: 'none' });
       throw error;
@@ -5230,7 +5248,7 @@ async function repairBuiltinTongchengCharacterProfiles() {
       rollbackErrors.push(`世界书：${rollbackError?.message || rollbackError}`);
     }
     try {
-      await replaceCharacter(characterName, repairSnapshot.character, { render: 'none' });
+      await replaceScenarioCharacterState(characterName, repairSnapshot.character, { render: 'none' });
     } catch (rollbackError) {
       rollbackErrors.push(`角色卡：${rollbackError?.message || rollbackError}`);
     }
@@ -5546,7 +5564,7 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
       context,
     };
     try {
-      await replaceCharacter(characterName, character, { render: 'none' });
+      await replaceScenarioCharacterState(characterName, character, { render: 'none' });
     } catch (error) {
       try {
         await restoreScenarioCharacterProfiles(characterProfileBackups, { render: 'none' });
@@ -5621,7 +5639,7 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
       rollbackErrors.push(`世界书：${rollbackError?.message || rollbackError}`);
     }
     try {
-      await replaceCharacter(characterName, transactionSnapshot.character, { render: 'none' });
+      await replaceScenarioCharacterState(characterName, transactionSnapshot.character, { render: 'none' });
     } catch (rollbackError) {
       rollbackErrors.push(`角色卡：${rollbackError?.message || rollbackError}`);
     }
@@ -5843,7 +5861,7 @@ async function uninstallWorkshopInstall(delta = {}, options = {}) {
         // 请求缺少该字段，服务端原有的 canming_dlc 反而会被保留下来。
         // 用 null 作为明确的清除值，之后安装新 DLC 时会正常覆盖它。
         character.extensions.canming_dlc = null;
-        await replaceCharacter(characterName, character, { render });
+        await replaceScenarioCharacterState(characterName, character, { render });
         const verifiedCharacter = await getCharacter(characterName);
         if (verifiedCharacter?.extensions?.canming_dlc?.id)
           throw new Error('角色卡中的身份 DLC 安装标记未能清除，请重试。');
