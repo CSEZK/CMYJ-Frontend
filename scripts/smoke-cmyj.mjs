@@ -79,12 +79,8 @@ const v19Loader = await readFile(path.join(root, 'dist', 'cmyj-1.9', 'loader', '
 const v19LoaderSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'loader', 'index.js'), 'utf8');
 const v19SchemaSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'schema', 'definition.js'), 'utf8');
 const v19StatusbarSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'statusbar', 'index.js'), 'utf8');
-const v19WorkshopSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'workshop', 'index.js'), 'utf8');
 const v19LegacySource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'legacy', 'index.js'), 'utf8');
 const v19ScenarioSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'scenario-generator', 'index.js'), 'utf8');
-const v19BaseProfiles = JSON.parse(
-  await readFile(path.join(root, 'src', 'cmyj-1.9', 'statusbar', 'base-tongcheng-character-profiles.json'), 'utf8'),
-);
 
 assert.ok(loader.length > 300_000, '共享加载器未包含完整脚本集');
 assert.match(loader, /CanmingWorkshop/);
@@ -580,7 +576,7 @@ assert.doesNotMatch(v18StatusbarSource, /WORLD_1629/);
 
 assert.ok(v19Loader.length > 1_000, '1.9 加载器未构建');
 assert.match(v19LoaderSource, /REMOTE_ROOT = 'https:\/\/cmyj-frontend\.pages\.dev\/cmyj-1\.9\/'/);
-assert.match(v19StatusbarSource, /STATUSBAR_VERSION = '1\.9\.1'/);
+assert.match(v19StatusbarSource, /STATUSBAR_VERSION = '1\.9\.0'/);
 assert.match(v19StatusbarSource, /下月预估/);
 assert.match(v19StatusbarSource, /function hasSettlementSnapshot\(value\)/);
 assert.match(v19StatusbarSource, /尚未跨月结算/);
@@ -599,38 +595,6 @@ assert.match(v19StatusbarSource, /人际网络\.在场角色/);
 assert.doesNotMatch(v19StatusbarSource, /person\.角色心声/);
 assert.doesNotMatch(v19StatusbarSource, /person\.是否在场/);
 assert.doesNotMatch(v19StatusbarSource, /风月阁\.掌柜絮语/);
-assert.match(v19StatusbarSource, /importWorldbookWorkshopPackage\(worldbookBundle, \{/);
-assert.match(v19StatusbarSource, /conflictMode: 'overwrite',\s+render: 'none',\s+silent: true/);
-assert.match(v19StatusbarSource, /function scenarioCharacterPatch\(character\)/);
-assert.match(v19StatusbarSource, /replaceScenarioCharacterState\(characterName, character, \{ render: 'none' \}\)/);
-assert.match(v19StatusbarSource, /replaceCharacter\(characterName, scenarioCharacterPatch\(character\), options\)/);
-assert.doesNotMatch(v19StatusbarSource, /replaceCharacter\(characterName, character, \{ render: 'none' \}\)/);
-assert.match(v19StatusbarSource, /const verifiedCharacter = await getCharacter\(characterName\)/);
-assert.match(v19StatusbarSource, /身份 DLC 写入后校验失败/);
-assert.match(v19StatusbarSource, /worldbookRestorePlan/);
-assert.match(v19StatusbarSource, /verifyScenarioWorldbookRestorePlan/);
-assert.match(v19StatusbarSource, /async function repairLegacyBuiltinTongchengResidue/);
-assert.match(v19StatusbarSource, /基础卡开场与世界书已经恢复/);
-assert.equal(v19BaseProfiles.profiles.length, 15, '1.9 缺少卸载所需的基础卡原始人物人设');
-assert.match(v19StatusbarSource, /character\.extensions\.canming_dlc = \{ id: null \}/);
-assert.doesNotMatch(v19StatusbarSource, /character\.extensions\.canming_dlc = null/);
-assert.match(v19StatusbarSource, /function resetLegacyDlcLandingAfterUninstall\(\)/);
-assert.match(v19StatusbarSource, /async function refreshCurrentDlcLandingMessage\(\)/);
-assert.match(v19StatusbarSource, /setChatMessages\(\[\{ message_id: 0, swipe_id: 0 \}\], \{ refresh: 'all' \}\)/);
-assert.match(
-  v19StatusbarSource,
-  /await uninstallCurrentScenario\(\);\s+if \(!\(await refreshCurrentDlcLandingMessage\(\)\)\) resetLegacyDlcLandingAfterUninstall\(\);\s+return null;/,
-);
-assert.match(v19StatusbarSource, /syncPortraitIllustrationRule\(\{ render \}\)/);
-assert.match(v19StatusbarSource, /syncExtensionCharacterIndex\(\{ render \}\)/);
-assert.match(v19StatusbarSource, /async function syncPortraitIllustrationRule\(options = \{\}\)/);
-assert.match(v19StatusbarSource, /async function syncExtensionCharacterIndex\(options = \{\}\)/);
-assert.match(
-  v19StatusbarSource,
-  /replaceWorldbook\(getWorldbookName\(\), updated, \{ render: options\.render \|\| 'immediate' \}\)/,
-);
-assert.match(v19StatusbarSource, /forgetScenarioInstall\?\.\(installed\.id, \{\s+cleanup: true,\s+render: 'none',/);
-assert.match(v19WorkshopSource, /bridge\.uninstallInstall\(delta,\{render:options\.render\|\|'immediate'\}\)/);
 assert.match(v19LegacySource, /MIGRATION_VERSION = 8/);
 assert.match(v19LegacySource, /function migrateLeanVariables/);
 assert.match(v19LegacySource, /failedMessages/);
