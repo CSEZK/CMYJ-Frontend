@@ -5883,8 +5883,8 @@ async function uninstallWorkshopInstall(delta = {}, options = {}) {
     }
   }
   if (characterIds.size || scenarioIds.size) {
-    await syncPortraitIllustrationRule();
-    await syncExtensionCharacterIndex();
+    await syncPortraitIllustrationRule({ render });
+    await syncExtensionCharacterIndex({ render });
   }
   renderStatusbarBehindWorkshop();
   return true;
@@ -8699,7 +8699,7 @@ function buildPortraitManifest() {
   );
 }
 
-async function syncPortraitIllustrationRule() {
+async function syncPortraitIllustrationRule(options = {}) {
   const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
   const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
   if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function') return false;
@@ -8717,7 +8717,7 @@ async function syncPortraitIllustrationRule() {
     changed = true;
     return { ...entry, content: nextContent };
   });
-  if (changed) await replaceWorldbook(getWorldbookName(), updated, { render: 'immediate' });
+  if (changed) await replaceWorldbook(getWorldbookName(), updated, { render: options.render || 'immediate' });
   return changed;
 }
 
@@ -8749,7 +8749,7 @@ function buildExtensionCharacterIndex() {
   return lines.join('\n') || '- （暂无允许主动登场的扩展角色）';
 }
 
-async function syncExtensionCharacterIndex() {
+async function syncExtensionCharacterIndex(options = {}) {
   const worldbook = globalThis.getWorldbook ?? window.parent?.getWorldbook;
   const replaceWorldbook = globalThis.createOrReplaceWorldbook ?? window.parent?.createOrReplaceWorldbook;
   if (typeof worldbook !== 'function' || typeof replaceWorldbook !== 'function') return false;
@@ -8767,7 +8767,7 @@ async function syncExtensionCharacterIndex() {
     changed = true;
     return { ...entry, content: nextContent };
   });
-  if (changed) await replaceWorldbook(getWorldbookName(), updated, { render: 'immediate' });
+  if (changed) await replaceWorldbook(getWorldbookName(), updated, { render: options.render || 'immediate' });
   return changed;
 }
 
