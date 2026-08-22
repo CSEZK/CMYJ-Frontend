@@ -335,7 +335,8 @@ async function forgetScenarioInstall(scenarioId,options={}){
     for(let item of matched){
       let delta=cloneInstallData(item.delta||{});
       delta.scenarios=(delta.scenarios||[]).filter(id=>id!==scenarioId);
-      if(INSTALL_STATE_KEYS.some(key=>(delta[key]||[]).length))await bridge.uninstallInstall(delta);
+      if(INSTALL_STATE_KEYS.some(key=>(delta[key]||[]).length))
+        await bridge.uninstallInstall(delta,{render:options.render||'immediate'});
     }
   }
   for(let item of matched)await removeInstallSnapshot(item.id);

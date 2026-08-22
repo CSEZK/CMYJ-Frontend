@@ -5379,6 +5379,7 @@ async function installBuiltinTongchengScenario() {
       await uninstallWorkshopInstall({ scenarios: [installed.id] }, { render: 'none' });
       await getCanmingWorkshop()?.forgetScenarioInstall?.(installed.id, {
         cleanup: true,
+        render: 'none',
         bridge: createWorkshopBridge(),
       });
     }
@@ -5444,6 +5445,7 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
       await uninstallWorkshopInstall({ scenarios: [previous.id] }, { render: 'none' });
       await workshop?.forgetScenarioInstall?.(previous.id, {
         cleanup: true,
+        render: 'none',
         bridge: createWorkshopBridge(),
       });
       character = await getCharacter(characterName);
@@ -5905,6 +5907,7 @@ async function uninstallCurrentScenario() {
     await uninstallWorkshopInstall({ scenarios: [installed.id] }, { render: 'none' });
     await getCanmingWorkshop()?.forgetScenarioInstall?.(installed.id, {
       cleanup: true,
+      render: 'none',
       bridge: createWorkshopBridge(),
     });
     showToast(`✓ 已卸载身份 DLC「${name}」，基础卡开场已经恢复`, 'ok');

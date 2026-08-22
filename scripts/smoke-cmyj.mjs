@@ -79,6 +79,7 @@ const v19Loader = await readFile(path.join(root, 'dist', 'cmyj-1.9', 'loader', '
 const v19LoaderSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'loader', 'index.js'), 'utf8');
 const v19SchemaSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'schema', 'definition.js'), 'utf8');
 const v19StatusbarSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'statusbar', 'index.js'), 'utf8');
+const v19WorkshopSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'workshop', 'index.js'), 'utf8');
 const v19LegacySource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'legacy', 'index.js'), 'utf8');
 const v19ScenarioSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'scenario-generator', 'index.js'), 'utf8');
 
@@ -611,6 +612,8 @@ assert.match(
   v19StatusbarSource,
   /replaceWorldbook\(getWorldbookName\(\), updated, \{ render: options\.render \|\| 'immediate' \}\)/,
 );
+assert.match(v19StatusbarSource, /forgetScenarioInstall\?\.\(installed\.id, \{\s+cleanup: true,\s+render: 'none',/);
+assert.match(v19WorkshopSource, /bridge\.uninstallInstall\(delta,\{render:options\.render\|\|'immediate'\}\)/);
 assert.match(v19LegacySource, /MIGRATION_VERSION = 8/);
 assert.match(v19LegacySource, /function migrateLeanVariables/);
 assert.match(v19LegacySource, /failedMessages/);
