@@ -4315,6 +4315,7 @@ function exposeStatusbarActions() {
     ...(hostWindow.CanmingStatusbarActions || {}),
     _owner: STATUSBAR_ACTIONS_OWNER,
     openScenarioGenerator: () => openScenarioGenerator(),
+    openWorkshop: () => openCanmingWorkshop({ initialView: 'catalog', initialType: 'scenario' }),
     installOriginalScenario: () => installBuiltinTongchengScenario(),
     uninstallCurrentScenario: () => uninstallCurrentScenario(),
     getInstalledScenario: () => getInstalledScenarioInfo(),
