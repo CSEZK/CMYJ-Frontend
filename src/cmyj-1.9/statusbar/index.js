@@ -19,7 +19,7 @@ import {
 import { normalizeTechnologyCollection } from '../shared/technology.js';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.9.1';
+const STATUSBAR_VERSION = '1.9.2';
 const MAP_ASSET_REVISION = 'd697affd3ed71c09e8278cc2ac37b5d3b5dc2ded';
 const STORAGE_PREFIX = 'canming-afterglow-1.9:statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
@@ -954,13 +954,77 @@ function resetLegacyDlcLandingAfterUninstall() {
   }
 }
 
-async function refreshCurrentDlcLandingMessage() {
+function normalizeDlcOpeningMessage(value) {
+  return String(value || '')
+    .replace(/\r\n?/g, '\n')
+    .trim();
+}
+
+async function prepareCurrentDlcOpeningSwipes(firstMessages) {
+  const getChatMessages = getWorkshopApi('getChatMessages');
   const setChatMessages = getWorkshopApi('setChatMessages');
-  if (typeof setChatMessages !== 'function') return false;
+  const openingMessages = (Array.isArray(firstMessages) ? firstMessages : []).map(message => String(message || ''));
+  if (openingMessages.length < 2 || typeof getChatMessages !== 'function' || typeof setChatMessages !== 'function') {
+    return { prepared: false, reason: 'unavailable' };
+  }
   try {
+    const chatMessages = getChatMessages('0-{{lastMessageId}}', { include_swipes: true }) || [];
+    const landingMessage = chatMessages[0];
+    const selectedSwipe = Number.isInteger(landingMessage?.swipe_id) ? landingMessage.swipe_id : 0;
+    const selectedMessage = landingMessage?.swipes?.[selectedSwipe] || '';
+    const isPristineLanding =
+      chatMessages.length === 1 &&
+      landingMessage?.message_id === 0 &&
+      landingMessage?.role === 'assistant' &&
+      normalizeDlcOpeningMessage(selectedMessage) === normalizeDlcOpeningMessage(openingMessages[0]);
+    if (!isPristineLanding) return { prepared: false, reason: 'existing-chat' };
+
+    // 角色卡介绍中的开场卡片只负责切换 swipe_id；必须先把 DLC 开场真正写进
+    // 当前第 0 楼，否则它仍然只有介绍页这一个 swipe，点击开场卡会被静默忽略。
+    await setChatMessages([{ message_id: 0, swipes: openingMessages, swipe_id: 0 }], { refresh: 'all' });
+    const persisted = getChatMessages(0, { include_swipes: true })?.[0];
+    if (JSON.stringify(persisted?.swipes || []) !== JSON.stringify(openingMessages))
+      throw new Error('当前聊天的身份开场写入后校验失败。');
+    return { prepared: true, reason: '' };
+  } catch (error) {
+    console.warn('[状态栏] 当前聊天的身份开场载入失败:', error);
+    return { prepared: false, reason: 'failed' };
+  }
+}
+
+async function prepareCurrentCharacterDlcOpeningSwipes() {
+  const getCurrentName = getWorkshopApi('getCurrentCharacterName');
+  const getCharacter = getWorkshopApi('getCharacter');
+  if (typeof getCurrentName !== 'function' || typeof getCharacter !== 'function')
+    return { prepared: false, reason: 'unavailable' };
+  try {
+    const characterName = getCurrentName();
+    const character = characterName ? await getCharacter(characterName) : null;
+    return await prepareCurrentDlcOpeningSwipes(character?.first_messages || []);
+  } catch (error) {
+    console.warn('[状态栏] 无法读取角色卡身份开场:', error);
+    return { prepared: false, reason: 'failed' };
+  }
+}
+
+async function refreshCurrentDlcLandingMessage() {
+  const getCurrentName = getWorkshopApi('getCurrentCharacterName');
+  const getCharacter = getWorkshopApi('getCharacter');
+  const setChatMessages = getWorkshopApi('setChatMessages');
+  if (
+    typeof getCurrentName !== 'function' ||
+    typeof getCharacter !== 'function' ||
+    typeof setChatMessages !== 'function'
+  )
+    return false;
+  try {
+    const characterName = getCurrentName();
+    const character = characterName ? await getCharacter(characterName) : null;
+    const firstMessages = (character?.first_messages || []).map(message => String(message || ''));
+    if (!firstMessages.length) return false;
     // 角色卡数据已经落盘后，只重建当前聊天的第 0 条介绍消息。
     // 这会换掉旧 iframe，但不会刷新 SillyTavern 主页面，也不会切走当前角色。
-    await setChatMessages([{ message_id: 0, swipe_id: 0 }], { refresh: 'all' });
+    await setChatMessages([{ message_id: 0, swipes: firstMessages, swipe_id: 0 }], { refresh: 'all' });
     return true;
   } catch (error) {
     console.warn('[状态栏] 刷新卸载后的角色卡介绍失败:', error);
@@ -5474,13 +5538,20 @@ async function installBuiltinTongchengScenario() {
       requiredWorldbookNames.every(name => installedWorldbookNames.has(name)) &&
       hasBuiltinTongchengWorldbooks(entries)
     ) {
-      showToast('原版桐城开局已经安装，无需重复安装。', 'ok');
-      return { scenarioId: installed.id, alreadyInstalled: true };
+      const currentChatOpening = await prepareCurrentCharacterDlcOpeningSwipes();
+      showToast(
+        currentChatOpening.prepared
+          ? '✓ 原版桐城开场已载入当前聊天，请在介绍页选择开局。'
+          : '原版桐城开局已经安装，无需重复安装。',
+        'ok',
+      );
+      return { scenarioId: installed.id, alreadyInstalled: true, currentChatPrepared: currentChatOpening.prepared };
     }
     if (installed?.id === 'cmyj.original.tongcheng') {
       const repaired = await repairBuiltinTongchengCharacterProfiles();
+      const currentChatOpening = await prepareCurrentCharacterDlcOpeningSwipes();
       showToast(`✓ 已切换 ${repaired.characterProfileCount} 份完整人设并补全原版人物概览`, 'ok');
-      return repaired;
+      return { ...repaired, currentChatPrepared: currentChatOpening.prepared };
     }
     const openings = BUILTIN_TONGCHENG_OPENINGS.map(definition => {
       const entry = entries.find(item => item?.name === definition.entry);
@@ -5804,10 +5875,19 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
     getPortraitLibrary();
     getCharacterProfiles();
     await syncPortraitIllustrationRule();
-    showToast(`✓ 已安装身份 DLC「${resource.name}」；请新建聊天后选择开场`, 'ok');
+    const currentChatOpening = await prepareCurrentDlcOpeningSwipes(verifiedCharacter?.first_messages || []);
+    const currentChatPrepared = currentChatOpening.prepared;
+    showToast(
+      currentChatPrepared
+        ? `✓ 已安装身份 DLC「${resource.name}」；请在介绍页选择开场`
+        : `✓ 已安装身份 DLC「${resource.name}」；请新建聊天后选择开场`,
+      'ok',
+    );
     if (options.showSuccessDialog) {
       await canmingUiDialog(
-        `身份 DLC「${resource.name}」已经安装完成。\n\n新开场不会写入当前聊天。请新建聊天，再从开场列表中选择要使用的开局。`,
+        currentChatPrepared
+          ? `身份 DLC「${resource.name}」已经安装完成。\n\n三条开场已经载入当前角色卡介绍。关闭提示后，请点击一张开场卡片进入故事。`
+          : `身份 DLC「${resource.name}」已经安装完成。\n\n当前聊天已有内容或无法安全更新。为避免覆盖存档，请新建聊天，再从开场列表中选择要使用的开局。`,
         {
           kind: 'alert',
           title: '身份开场安装成功',
@@ -5815,7 +5895,12 @@ async function importScenarioWorkshopPackage(bundle, options = {}) {
         },
       );
     }
-    return { scenarioId: resource.scenario.id, characterName, openingCount: resource.openings.length };
+    return {
+      scenarioId: resource.scenario.id,
+      characterName,
+      openingCount: resource.openings.length,
+      currentChatPrepared,
+    };
   } catch (error) {
     if (!transactionMutated || error?.code === 'SCENARIO_REPLACE_CANCELLED') throw error;
     const rollbackErrors = [];
