@@ -604,6 +604,8 @@ assert.match(v19StatusbarSource, /replaceCharacter\(characterName, scenarioChara
 assert.doesNotMatch(v19StatusbarSource, /replaceCharacter\(characterName, character, \{ render: 'none' \}\)/);
 assert.match(v19StatusbarSource, /const verifiedCharacter = await getCharacter\(characterName\)/);
 assert.match(v19StatusbarSource, /身份 DLC 写入后校验失败/);
+assert.match(v19StatusbarSource, /character\.extensions\.canming_dlc = \{ id: null \}/);
+assert.doesNotMatch(v19StatusbarSource, /character\.extensions\.canming_dlc = null/);
 assert.match(v19StatusbarSource, /syncPortraitIllustrationRule\(\{ render \}\)/);
 assert.match(v19StatusbarSource, /syncExtensionCharacterIndex\(\{ render \}\)/);
 assert.match(v19StatusbarSource, /async function syncPortraitIllustrationRule\(options = \{\}\)/);

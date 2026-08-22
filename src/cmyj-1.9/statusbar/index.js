@@ -5861,8 +5861,10 @@ async function uninstallWorkshopInstall(delta = {}, options = {}) {
           );
         // 酒馆助手在写回角色卡时会合并 extensions；直接 delete 只会让本次
         // 请求缺少该字段，服务端原有的 canming_dlc 反而会被保留下来。
-        // 用 null 作为明确的清除值，之后安装新 DLC 时会正常覆盖它。
-        character.extensions.canming_dlc = null;
+        // 不能把该字段直接写成 null：酒馆助手即使收到 render:none，仍会在
+        // null 扩展写回后异步刷新整个酒馆。保留一个无有效 id 的对象墓碑，
+        // 既能稳定表示“未安装”，也能在以后安装新 DLC 时被完整覆盖。
+        character.extensions.canming_dlc = { id: null };
         await replaceScenarioCharacterState(characterName, character, { render });
         const verifiedCharacter = await getCharacter(characterName);
         if (verifiedCharacter?.extensions?.canming_dlc?.id)
