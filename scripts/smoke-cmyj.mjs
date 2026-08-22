@@ -82,6 +82,9 @@ const v19StatusbarSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'st
 const v19WorkshopSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'workshop', 'index.js'), 'utf8');
 const v19LegacySource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'legacy', 'index.js'), 'utf8');
 const v19ScenarioSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'scenario-generator', 'index.js'), 'utf8');
+const v19BaseProfiles = JSON.parse(
+  await readFile(path.join(root, 'src', 'cmyj-1.9', 'statusbar', 'base-tongcheng-character-profiles.json'), 'utf8'),
+);
 
 assert.ok(loader.length > 300_000, '共享加载器未包含完整脚本集');
 assert.match(loader, /CanmingWorkshop/);
@@ -604,10 +607,20 @@ assert.match(v19StatusbarSource, /replaceCharacter\(characterName, scenarioChara
 assert.doesNotMatch(v19StatusbarSource, /replaceCharacter\(characterName, character, \{ render: 'none' \}\)/);
 assert.match(v19StatusbarSource, /const verifiedCharacter = await getCharacter\(characterName\)/);
 assert.match(v19StatusbarSource, /身份 DLC 写入后校验失败/);
+assert.match(v19StatusbarSource, /worldbookRestorePlan/);
+assert.match(v19StatusbarSource, /verifyScenarioWorldbookRestorePlan/);
+assert.match(v19StatusbarSource, /async function repairLegacyBuiltinTongchengResidue/);
+assert.match(v19StatusbarSource, /基础卡开场与世界书已经恢复/);
+assert.equal(v19BaseProfiles.profiles.length, 15, '1.9 缺少卸载所需的基础卡原始人物人设');
 assert.match(v19StatusbarSource, /character\.extensions\.canming_dlc = \{ id: null \}/);
 assert.doesNotMatch(v19StatusbarSource, /character\.extensions\.canming_dlc = null/);
 assert.match(v19StatusbarSource, /function resetLegacyDlcLandingAfterUninstall\(\)/);
-assert.match(v19StatusbarSource, /await uninstallCurrentScenario\(\);\s+resetLegacyDlcLandingAfterUninstall\(\);\s+return null;/);
+assert.match(v19StatusbarSource, /async function refreshCurrentDlcLandingMessage\(\)/);
+assert.match(v19StatusbarSource, /setChatMessages\(\[\{ message_id: 0, swipe_id: 0 \}\], \{ refresh: 'all' \}\)/);
+assert.match(
+  v19StatusbarSource,
+  /await uninstallCurrentScenario\(\);\s+if \(!\(await refreshCurrentDlcLandingMessage\(\)\)\) resetLegacyDlcLandingAfterUninstall\(\);\s+return null;/,
+);
 assert.match(v19StatusbarSource, /syncPortraitIllustrationRule\(\{ render \}\)/);
 assert.match(v19StatusbarSource, /syncExtensionCharacterIndex\(\{ render \}\)/);
 assert.match(v19StatusbarSource, /async function syncPortraitIllustrationRule\(options = \{\}\)/);
