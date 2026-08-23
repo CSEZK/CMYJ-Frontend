@@ -9,6 +9,18 @@ import {
 import { buildScenarioCharacterCatalog } from './character-catalog.js';
 import { normalizeTechnologyCollection } from '../shared/technology.js';
 
+export function normalizeScenarioFactList(items) {
+  if (!items) return [];
+  const normalizeItem = (item, fallbackName = '') => {
+    const value = item && typeof item === 'object' && !Array.isArray(item) ? { ...item } : {};
+    return { ...value, name: String(value.name || fallbackName).trim() };
+  };
+  if (Array.isArray(items)) return items.map(item => normalizeItem(item));
+  if (typeof items !== 'object') return [];
+  if (Object.hasOwn(items, 'name')) return [normalizeItem(items)];
+  return Object.entries(items).map(([name, item]) => normalizeItem(item, name));
+}
+
 (() => {
   'use strict';
 
@@ -563,6 +575,7 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
 
   function createInitvar() {
     if (!eraPreset) throw new Error('尚未载入崇祯七年七月时代模板。');
+    const expectedMap = Schema.parse({ 天下地图: clone(eraPreset.变量.天下地图) }).天下地图;
     const network = {
       在场角色: selectedCharacters()
         .filter(character => project.characters[character.name].scene)
@@ -630,19 +643,19 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
           },
         },
       },
-      天下地图: clone(eraPreset.变量.天下地图),
+      天下地图: clone(expectedMap),
       时局与任务: { 势力关系: {}, 未决事项: {} },
       风月阁: { 同房点数: 0, 器物: {} },
     };
     const candidate = mergeDeep(base, sanitizeInitializationPatch(project.initialization?.patch));
-    candidate.天下地图 = clone(eraPreset.变量.天下地图);
+    candidate.天下地图 = clone(expectedMap);
     candidate.世界运转._开场标识 = project.opening.id;
     candidate.世界运转.当前日期 = `崇祯七年七月${project.date.day}`;
     candidate.世界运转.公元年份 = 1634;
     candidate.世界运转.当前地点 = p.location;
     candidate.世界运转.天气 = project.date.weather;
     const validated = Schema.parse(candidate);
-    if (JSON.stringify(validated.天下地图) !== JSON.stringify(eraPreset.变量.天下地图))
+    if (JSON.stringify(validated.天下地图) !== JSON.stringify(expectedMap))
       throw new Error('初始变量校验失败：天下地图被意外修改。');
     return validated;
   }
@@ -797,7 +810,7 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
         id,
         version: project.packageVersion || '0.1.0',
         baseCard: 'cmyj.base',
-        minBaseVersion: '1.7.0',
+        minBaseVersion: '1.9.0',
         exclusiveGroup: 'player-origin',
         allowMidChatSwitch: false,
         newChatRequired: true,
@@ -1356,13 +1369,14 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
       时局与任务: { 势力关系: {}, 未决事项: {} },
     };
     const unique = (items, kind) => {
+      const normalizedItems = normalizeScenarioFactList(items);
       const names = new Set();
-      for (const item of items || []) {
+      for (const item of normalizedItems) {
         item.name = String(item.name || '').trim();
         if (!item.name || names.has(item.name)) throw new Error(`${kind}存在空名称或重复名称。`);
         names.add(item.name);
       }
-      return items || [];
+      return normalizedItems;
     };
     for (const item of unique(facts.important_items, '重要物品'))
       patch.主角.私库.重要物品[item.name] = { 简介: item.description, 数量: Math.max(1, Math.round(item.quantity)) };
@@ -1478,7 +1492,7 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
     const user = `<user>：${project.protagonist.identity}；职业：${project.protagonist.occupation || '未定'}；势力：${project.protagonist.faction || '无'}\n开局地点：${project.protagonist.location}\n人物快照：${JSON.stringify(characterSnapshot, null, 2)}\n\n<最终开场白>\n${normalizeUserToken(stripInitializationBlocks(project.opening.body))}\n</最终开场白>\n\n空数组表示该类事实不存在。开场中实际相遇的现场人物应写入 relationships；未出场且开场前不相识的人物不得写入。人物快照中的初始好感度与忠心是硬约束，不得改写。`;
     const facts = await requestAi(system, user, factsSchema());
     project.initialization.patch = materializeInitialFacts(facts);
-    project.initialization.summary = `人物 ${(facts.relationships || []).length} · 物品 ${(facts.important_items || []).length} · 军队 ${(facts.forces || []).length} · 资产 ${(facts.assets || []).length} · 未决事项 ${(facts.pending_matters || []).length}`;
+    project.initialization.summary = `人物 ${normalizeScenarioFactList(facts.relationships).length} · 物品 ${normalizeScenarioFactList(facts.important_items).length} · 军队 ${normalizeScenarioFactList(facts.forces).length} · 资产 ${normalizeScenarioFactList(facts.assets).length} · 未决事项 ${normalizeScenarioFactList(facts.pending_matters).length}`;
     project.initialization.stale = false;
     project.initialization.generatedAt = new Date().toISOString();
     createInitvar();

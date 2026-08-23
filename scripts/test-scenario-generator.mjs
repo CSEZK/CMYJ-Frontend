@@ -18,7 +18,18 @@ globalThis._ = lodash;
 const channel = process.argv[2] || 'cmyj-1.7-beta';
 if (!['cmyj-1.7-beta', 'cmyj-1.7', 'cmyj-1.8', 'cmyj-1.9'].includes(channel))
   throw new Error(`不支持的开局生成器通道：${channel}`);
-await import(`../src/${channel}/scenario-generator/index.js`);
+const scenarioModule = await import(`../src/${channel}/scenario-generator/index.js`);
+
+if (channel === 'cmyj-1.9') {
+  assert.deepEqual(scenarioModule.normalizeScenarioFactList(null), []);
+  assert.deepEqual(scenarioModule.normalizeScenarioFactList({}), []);
+  assert.deepEqual(scenarioModule.normalizeScenarioFactList({ name: '单条事项', status: '待处理' }), [
+    { name: '单条事项', status: '待处理' },
+  ]);
+  assert.deepEqual(scenarioModule.normalizeScenarioFactList({ 映射事项: { status: '等待中' } }), [
+    { name: '映射事项', status: '等待中' },
+  ]);
+}
 
 assert.equal(isOfficialDeepSeekApi({ apiurl: 'https://api.deepseek.com' }), true);
 assert.equal(isOfficialDeepSeekApi({ apiurl: 'https://api.deepseek.com/v1/chat/completions' }), true);
@@ -265,6 +276,7 @@ assert.equal(bundle.format, 'canming-workshop-package');
 assert.equal(bundle.version, 2);
 assert.equal(bundle.kind, 'scenario');
 assert.equal(resource.scenario.exclusiveGroup, 'player-origin');
+assert.equal(resource.scenario.minBaseVersion, channel === 'cmyj-1.9' ? '1.9.0' : '1.7.0');
 assert.equal(resource.scenario.allowMidChatSwitch, false);
 assert.equal(resource.scenario.newChatRequired, true);
 assert.equal(resource.openings.length, 1);
