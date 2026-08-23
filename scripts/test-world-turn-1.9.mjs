@@ -122,6 +122,7 @@ assert.match(source, /bannerHideTimer = setTimeout/, '候时提示必须自动�
 assert.match(source, /globalThis\.generateRaw/, '天下推演不得携带正文预设');
 assert.match(source, /class="wt-close"/, '天下推演横幅必须提供关闭按钮');
 assert.match(source, /dismissedBannerKey/, '关闭横幅后同一状态不得立刻重新出现');
+assert.match(source, /style\.textContent = `#\$\{BANNER_ID\}/, '热更新后必须刷新横幅样式');
 assert.match(source, /generationType !== 'first_message'/, '开场消息必须排除');
 assert.match(source, /handledAnchors/, '重新生成必须通过楼层锚点去重');
 assert.match(source, /tavern_events\.MESSAGE_DELETED/, '删除楼层后必须触发计数重算');

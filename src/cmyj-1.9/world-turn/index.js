@@ -200,11 +200,13 @@ function bannerNoticeKey(state) {
 
 function ensureBannerStyle() {
   const doc = getHostDocument();
-  if (doc.getElementById(STYLE_ID)) return;
-  const style = doc.createElement('style');
-  style.id = STYLE_ID;
-  style.textContent = `#${BANNER_ID}{--wt-paper:rgba(35,27,20,.94);--wt-ink:#f0dfbd;--wt-muted:#bda682;--wt-cinnabar:#c9634c;position:fixed;z-index:99996;top:max(10px,env(safe-area-inset-top));left:50%;display:grid;grid-template-columns:1fr auto;align-items:center;gap:7px;width:min(520px,calc(100vw - 24px));padding:7px 8px 7px 10px;transform:translateX(-50%);border:1px solid rgba(202,163,102,.22);border-radius:4px;background:repeating-linear-gradient(90deg,transparent 0 25px,rgba(255,255,255,.012) 26px),linear-gradient(150deg,var(--wt-paper),rgba(23,18,14,.96));box-shadow:0 12px 32px rgba(0,0,0,.28);color:var(--wt-ink);font-family:"Noto Serif SC","Songti SC","STSong","SimSun",serif;backdrop-filter:blur(13px);animation:canming-world-turn-in .3s ease-out}#${BANNER_ID}::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:linear-gradient(var(--wt-cinnabar),rgba(201,99,76,.3))}#${BANNER_ID}:hover{border-color:rgba(202,163,102,.42);box-shadow:0 15px 38px rgba(0,0,0,.34)}#${BANNER_ID} button{font:inherit}#${BANNER_ID} .wt-open{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:11px;min-width:0;padding:2px 5px 2px 0;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}#${BANNER_ID} .wt-open:focus-visible,#${BANNER_ID} .wt-close:focus-visible{outline:1px solid var(--wt-cinnabar);outline-offset:2px}#${BANNER_ID} .wt-seal{display:grid;width:31px;height:31px;place-items:center;border:1px solid var(--wt-cinnabar);color:var(--wt-cinnabar);font-size:16px;transform:rotate(-3deg)}#${BANNER_ID} .wt-copy{min-width:0}#${BANNER_ID} strong,#${BANNER_ID} small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#${BANNER_ID} strong{font-size:13px;letter-spacing:.08em}#${BANNER_ID} small{margin-top:2px;color:var(--wt-muted);font-size:10px;letter-spacing:.025em}#${BANNER_ID} .wt-mark{color:var(--wt-cinnabar);font-size:11px;letter-spacing:.08em;white-space:nowrap}#${BANNER_ID} .wt-close{display:grid;width:30px;height:30px;place-items:center;padding:0;border:1px solid rgba(202,163,102,.2);border-radius:50%;background:rgba(255,255,255,.035);color:var(--wt-muted);font-size:18px;line-height:1;cursor:pointer}#${BANNER_ID} .wt-close:hover{border-color:rgba(202,163,102,.45);background:rgba(255,255,255,.075);color:var(--wt-ink)}#${BANNER_ID}[data-status="simulating"] .wt-seal,#${BANNER_ID}[data-status="writing"] .wt-seal{animation:canming-world-turn-pulse 1.35s ease-in-out infinite}#${BANNER_ID}[data-status="failed"]{--wt-cinnabar:#d35b51}@keyframes canming-world-turn-in{from{opacity:0;transform:translate(-50%,-10px)}to{opacity:1;transform:translate(-50%,0)}}@keyframes canming-world-turn-pulse{50%{box-shadow:0 0 0 5px rgba(201,99,76,.1);transform:rotate(3deg)}}@media(max-width:540px){#${BANNER_ID}{top:max(7px,env(safe-area-inset-top));width:calc(100vw - 16px)}#${BANNER_ID} .wt-mark{display:none}}`;
-  doc.head.append(style);
+  let style = doc.getElementById(STYLE_ID);
+  if (!style) {
+    style = doc.createElement('style');
+    style.id = STYLE_ID;
+  }
+  style.textContent = `#${BANNER_ID}{--wt-paper:rgba(35,27,20,.94);--wt-ink:#f0dfbd;--wt-muted:#bda682;--wt-cinnabar:#c9634c;position:fixed;z-index:99996;top:max(10px,env(safe-area-inset-top));left:50%;display:grid;grid-template-columns:auto 1fr auto auto;align-items:center;gap:11px;width:min(520px,calc(100vw - 24px));padding:9px 8px 9px 10px;transform:translateX(-50%);border:1px solid rgba(202,163,102,.22);border-radius:4px;background:repeating-linear-gradient(90deg,transparent 0 25px,rgba(255,255,255,.012) 26px),linear-gradient(150deg,var(--wt-paper),rgba(23,18,14,.96));box-shadow:0 12px 32px rgba(0,0,0,.28);color:var(--wt-ink);font-family:"Noto Serif SC","Songti SC","STSong","SimSun",serif;cursor:pointer;backdrop-filter:blur(13px);animation:canming-world-turn-in .3s ease-out}#${BANNER_ID}::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:linear-gradient(var(--wt-cinnabar),rgba(201,99,76,.3))}#${BANNER_ID}:hover{border-color:rgba(202,163,102,.42);box-shadow:0 15px 38px rgba(0,0,0,.34)}#${BANNER_ID} .wt-seal{display:grid;width:31px;height:31px;place-items:center;border:1px solid var(--wt-cinnabar);color:var(--wt-cinnabar);font-size:16px;transform:rotate(-3deg)}#${BANNER_ID} .wt-copy{min-width:0}#${BANNER_ID} strong,#${BANNER_ID} small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#${BANNER_ID} strong{font-size:13px;letter-spacing:.08em}#${BANNER_ID} small{margin-top:2px;color:var(--wt-muted);font-size:10px;letter-spacing:.025em}#${BANNER_ID} .wt-mark{color:var(--wt-cinnabar);font-size:11px;letter-spacing:.08em;white-space:nowrap}#${BANNER_ID} .wt-close{display:grid;box-sizing:border-box;width:27px;height:27px;min-width:27px;min-height:27px;place-items:center;margin:0;padding:0;border:1px solid rgba(202,163,102,.2);border-radius:50%;background:transparent;color:var(--wt-muted);font:18px/1 Arial,sans-serif;cursor:pointer}#${BANNER_ID} .wt-close:hover{border-color:rgba(202,163,102,.45);background:rgba(255,255,255,.065);color:var(--wt-ink)}#${BANNER_ID} .wt-close:focus-visible{outline:1px solid var(--wt-cinnabar);outline-offset:2px}#${BANNER_ID}[data-status="simulating"] .wt-seal,#${BANNER_ID}[data-status="writing"] .wt-seal{animation:canming-world-turn-pulse 1.35s ease-in-out infinite}#${BANNER_ID}[data-status="failed"]{--wt-cinnabar:#d35b51}@keyframes canming-world-turn-in{from{opacity:0;transform:translate(-50%,-10px)}to{opacity:1;transform:translate(-50%,0)}}@keyframes canming-world-turn-pulse{50%{box-shadow:0 0 0 5px rgba(201,99,76,.1);transform:rotate(3deg)}}@media(max-width:540px){#${BANNER_ID}{top:max(7px,env(safe-area-inset-top));width:calc(100vw - 16px)}#${BANNER_ID} .wt-mark{display:none}}`;
+  if (!style.isConnected) doc.head.append(style);
 }
 
 function openSettings() {
@@ -231,11 +233,19 @@ function renderBanner(runtime) {
   if (!banner) {
     banner = doc.createElement('aside');
     banner.id = BANNER_ID;
-    banner.setAttribute('aria-label', '天下推演状态');
+    banner.tabIndex = 0;
+    banner.setAttribute('role', 'button');
+    banner.setAttribute('aria-label', '打开天下推演设置');
     banner.innerHTML =
-      '<button type="button" class="wt-open" aria-label="打开天下推演设置"><span class="wt-seal">演</span><span class="wt-copy"><strong></strong><small></small></span><span class="wt-mark">山河自转</span></button><button type="button" class="wt-close" aria-label="关闭天下推演提示" title="关闭">×</button>';
-    banner.querySelector('.wt-open').addEventListener('click', openSettings);
-    banner.querySelector('.wt-close').addEventListener('click', () => {
+      '<span class="wt-seal">演</span><span class="wt-copy"><strong></strong><small></small></span><span class="wt-mark">山河自转</span><button type="button" class="wt-close" aria-label="关闭天下推演提示" title="关闭">×</button>';
+    banner.addEventListener('click', openSettings);
+    banner.addEventListener('keydown', event => {
+      if (event.target !== banner || (event.key !== 'Enter' && event.key !== ' ')) return;
+      event.preventDefault();
+      openSettings();
+    });
+    banner.querySelector('.wt-close').addEventListener('click', event => {
+      event.stopPropagation();
       runtime.dismissedBannerKey = bannerNoticeKey(runtime.state);
       clearTimeout(runtime.bannerHideTimer);
       runtime.bannerHideTimer = null;
@@ -618,6 +628,7 @@ function dispose(runtime) {
   runtime.offMvuStarted?.stop?.();
   runtime.offMvuEnded?.stop?.();
   getHostDocument().getElementById(BANNER_ID)?.remove();
+  getHostDocument().getElementById(STYLE_ID)?.remove();
   if (getHostWindow().CanmingWorldTurn?._owner === runtime.owner) delete getHostWindow().CanmingWorldTurn;
 }
 
