@@ -2,8 +2,33 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildCharacterSelectionPackage } from '../src/cmyj-1.9/workshop/collection.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+const packagedCharacterIds = [];
+const characterSelectionPackage = await buildCharacterSelectionPackage(
+  ['character-a', 'character-b', 'character-c', 'character-b'],
+  async id => {
+    packagedCharacterIds.push(id);
+    return {
+      format: 'canming-workshop-package',
+      version: 2,
+      kind: 'character',
+      metadata: { title: id },
+      resources: [{ id, kind: 'character', name: id }],
+    };
+  },
+);
+assert.deepEqual(packagedCharacterIds, ['character-a', 'character-b', 'character-c']);
+assert.deepEqual(
+  characterSelectionPackage.resources.map(resource => resource.id),
+  ['character-a', 'character-b', 'character-c'],
+);
+await assert.rejects(
+  () => buildCharacterSelectionPackage([], async () => ({ resources: [] })),
+  /请至少选择一个角色档案/,
+);
 const loaderPath = path.join(root, 'dist', 'cmyj-1.6', 'loader', 'index.js');
 const loader = await readFile(loaderPath, 'utf8');
 const loaderSource = await readFile(path.join(root, 'src', 'cmyj-1.6', 'loader', 'index.js'), 'utf8');
@@ -79,6 +104,7 @@ const v19Loader = await readFile(path.join(root, 'dist', 'cmyj-1.9', 'loader', '
 const v19LoaderSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'loader', 'index.js'), 'utf8');
 const v19SchemaSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'schema', 'definition.js'), 'utf8');
 const v19StatusbarSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'statusbar', 'index.js'), 'utf8');
+const v19WorkshopSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'workshop', 'index.js'), 'utf8');
 const v19LegacySource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'legacy', 'index.js'), 'utf8');
 const v19ScenarioSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'scenario-generator', 'index.js'), 'utf8');
 
@@ -580,6 +606,8 @@ assert.match(v19StatusbarSource, /STATUSBAR_VERSION = '1\.9\.2'/);
 assert.match(v19StatusbarSource, /async function openScenarioWorkshop\(\)/);
 assert.match(v19StatusbarSource, /openWorkshop: \(\) => openScenarioWorkshop\(\)/);
 assert.match(v19StatusbarSource, /return openCanmingWorkshop\(\{ initialView: 'catalog', initialType: 'scenario' \}\)/);
+assert.match(v19WorkshopSource, /buildCharacterSelectionPackage\(ids,/);
+assert.doesNotMatch(v19WorkshopSource, /buildCharacterPackage\(ids\[0\],m\)/);
 assert.match(v19StatusbarSource, /下月预估/);
 assert.match(v19StatusbarSource, /function hasSettlementSnapshot\(value\)/);
 assert.match(v19StatusbarSource, /尚未跨月结算/);
