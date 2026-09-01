@@ -87,21 +87,7 @@ const detailWithReportGuard=detail;detail=async function(id){await detailWithRep
 const clickWithReportFeedback=click;click=async function(event){let save=event.target.closest?.('[data-a="dialog-save"][data-report]');if(save){try{let reason=root.querySelector('[data-dialog-reason]').value.trim(),category=root.querySelector('[data-dialog-category]').value;if(reason.length<10)return say('举报说明至少需要 10 个字','err');await api('/api/works/'+encodeURIComponent(save.dataset.report)+'/report',{method:'POST',body:JSON.stringify({category,reason})});root.querySelector('.workshop-dialog')?.remove();return say('举报已提交','ok')}catch(e){return say(e.message||'举报提交失败','err')}}return clickWithReportFeedback(event)};
 const clickWithDedicatedReport=click;click=async function(event){let report=event.target.closest?.('[data-a="report"]'),submit=event.target.closest?.('[data-a="report-submit"]');if(report&&work){root.querySelector('.workshop-dialog')?.remove();root.insertAdjacentHTML('beforeend',`<div class="workshop-dialog"><section><p class="eyebrow">REPORT WORK</p><h2>举报作品</h2><label class="field"><span>举报类型</span><select class="select" data-report-category><option value="other">其他问题</option><option value="copyright">版权问题</option><option value="spam">垃圾内容</option><option value="misleading">误导内容</option></select></label><label class="field"><span>举报说明（至少 10 字）</span><textarea class="area" data-report-reason></textarea></label><div class="dialog-actions"><button data-a="dialog-close">取消</button><button class="primary" data-a="report-submit">提交举报</button></div></section></div>`);return}if(submit&&work){let reason=root.querySelector('[data-report-reason]')?.value.trim()||'',category=root.querySelector('[data-report-category]')?.value||'other';if(reason.length<10)return say('举报说明至少需要 10 个字','err');submit.disabled=true;submit.textContent='正在提交…';try{await api('/api/works/'+encodeURIComponent(work.id)+'/report',{method:'POST',body:JSON.stringify({category,reason})});root.querySelector('.workshop-dialog')?.remove();say('举报已提交','ok')}catch(e){submit.disabled=false;submit.textContent='提交举报';say(e.message||'举报提交失败','err')}return}return clickWithDedicatedReport(event)};
 async function captureReportSubmit(event){let button=event.target.closest?.('[data-a="report-submit"]');if(!button)return;event.stopImmediatePropagation();let field=root.querySelector('[data-report-reason]'),reason=field?.value.trim()||'',category=root.querySelector('[data-report-category]')?.value||'other',hint=root.querySelector('[data-report-hint]');if(!hint&&field){field.insertAdjacentHTML('afterend','<small data-report-hint style="display:block;margin-top:6px;color:#c85f50"></small>');hint=root.querySelector('[data-report-hint]')}if(reason.length<10){if(hint)hint.textContent='举报说明至少需要 10 个字（当前 '+reason.length+' 字）';return}if(hint)hint.textContent='';button.disabled=true;button.textContent='正在提交…';try{await api('/api/works/'+encodeURIComponent(work.id)+'/report',{method:'POST',body:JSON.stringify({category,reason})});root.querySelector('.workshop-dialog')?.remove();say('举报已提交','ok')}catch(e){button.disabled=false;button.textContent='提交举报';if(hint)hint.textContent=e.message||'举报提交失败';say(e.message||'举报提交失败','err')}}
-let notifications;
-const shellWithNotifications=shell;shell=function(body){shellWithNotifications(body);let actions=root.querySelector('.head-actions');if(actions&&!actions.querySelector('[data-v="notifications"]'))actions.insertAdjacentHTML('afterbegin','<button class="btn" data-v="notifications" title="通知">通知<span class="notice-dot" data-notice-dot></span></button>')};
-const currentWithNotifications=current;current=async function(){if(view==='notifications')return notifications();return currentWithNotifications()};
-function syncNoticeIndicator(unread){try{let host=window.parent||window;host.dispatchEvent(new host.CustomEvent('canming-workshop-notifications-changed',{detail:{unread:Math.max(0,Number(unread||0))}}))}catch{}}
-const localNoticeState={unread:0,known:false,fetchedAt:0,promise:null};
-function noticeState(){try{let host=window.parent||window;return host.__canmingWorkshopNoticeState||(host.__canmingWorkshopNoticeState={unread:0,known:false,fetchedAt:0,promise:null})}catch{return localNoticeState}}
-function paintNoticeIndicator(){let dot=root?.querySelector?.('[data-notice-dot]');if(!dot)return;let state=noticeState(),unread=Math.max(0,Number(state.unread||0));dot.hidden=!state.known||unread<1;dot.textContent=unread>99?'99+':String(unread||'')}
-function setNoticeUnread(unread,fresh=true){let state=noticeState();state.unread=Math.max(0,Number(unread||0));state.known=true;if(fresh)state.fetchedAt=Date.now();paintNoticeIndicator();syncNoticeIndicator(state.unread);return state.unread}
-async function refreshNoticeUnread(force=false){let state=noticeState();if(!me()){setNoticeUnread(0,false);return 0}if(!force&&state.known&&Date.now()-Number(state.fetchedAt||0)<300000){paintNoticeIndicator();return state.unread}if(state.promise)return state.promise;state.promise=api('/api/me/notifications?page=1&pageSize=20').then(data=>setNoticeUnread(data.unread)).finally(()=>{state.promise=null});return state.promise}
-notifications=async function(){shell('<section class="page"><div class="title"><div><p class="eyebrow">NOTIFICATIONS</p><h1>通知</h1></div><div class="row"><button class="btn" data-note="readall">全部已读</button><button class="btn" data-note="deleteall">全部删除</button></div></div><div class="sheet notice-list" data-notice>正在读取…</div></section>');try{let data=await api('/api/me/notifications?page=1');setNoticeUnread(data.unread);root.querySelector('[data-notice]').innerHTML=data.items.map(item=>`<article class="notice-item ${item.is_read?'':'unread'}"><div><b>${h(item.title)}</b><p>${h(item.content||'')}</p><small>${h(dateText(item.created_at))}</small></div><div class="notice-actions"><button data-note="read" data-id="${h(item.id)}" ${item.is_read?'disabled':''}>${item.is_read?'已读':'标为已读'}</button><button data-note="delete" data-id="${h(item.id)}">删除</button></div></article>`).join('')||'<p class="muted">暂无通知</p>'}catch(e){root.querySelector('[data-notice]').textContent=e.message}};
-const clickWithNotificationActions=click;click=async function(event){let button=event.target.closest?.('[data-note]');if(button){let action=button.dataset.note,id=button.dataset.id;if(action==='readall')await api('/api/me/notifications/read-all',{method:'POST'});else if(action==='deleteall'){if(!confirm('确定删除全部个人通知吗？'))return;await api('/api/me/notifications',{method:'DELETE'})}else if(action==='read')await api('/api/me/notifications/'+encodeURIComponent(id)+'/read',{method:'POST'});else if(action==='delete')await api('/api/me/notifications/'+encodeURIComponent(id),{method:'DELETE'});return notifications()}return clickWithNotificationActions(event)};
-const shellWithBellIcon=shell;shell=function(body){shellWithBellIcon(body);let notice=root.querySelector('[data-v="notifications"]');if(notice){notice.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><i data-notice-dot></i>'}};
-const shellWithNoticeSkin=shell;shell=function(body){shellWithNoticeSkin(body);root.insertAdjacentHTML('afterbegin',`<style>#${R} [data-v="notifications"]{position:relative;width:38px;padding:8px!important}#${R} [data-v="notifications"] svg{width:19px;height:19px;display:block}#${R} [data-notice-dot]{position:absolute;right:-5px;top:-5px;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:var(--accent);color:#fff;font:10px/17px serif;font-style:normal}#${R} .notice-item{display:flex;justify-content:space-between;gap:18px;padding:16px 4px;border-bottom:1px solid var(--line);font-size:16px}#${R} .notice-item.unread b{color:var(--accent)}#${R} .notice-item p{margin:7px 0;color:var(--ink);font-size:15px;line-height:1.75}#${R} .notice-item small{font-size:13px;color:var(--muted)}#${R} .notice-actions{display:flex;align-items:start;gap:6px}.notice-actions button{border:1px solid var(--line);border-radius:8px;padding:7px 9px;background:var(--paper2);color:var(--ink);cursor:pointer;font:13px inherit}</style>`)};
-const clickWithNoticeDeleteDialog=click;click=async function(event){let deleteAll=event.target.closest?.('[data-note="deleteall"]'),confirmDelete=event.target.closest?.('[data-a="notice-delete-confirm"]');if(deleteAll){root.querySelector('.workshop-dialog')?.remove();root.insertAdjacentHTML('beforeend',`<div class="workshop-dialog" data-dialog="notice-delete"><section><p class="eyebrow">CLEAR NOTIFICATIONS</p><h2>删除全部通知？</h2><p class="muted">此操作会清空你自己的通知列表；公共通知仅会对你隐藏，不会影响其他用户。</p><div class="dialog-actions"><button data-a="dialog-close">取消</button><button class="primary" data-a="notice-delete-confirm">全部删除</button></div></section></div>`);return}if(confirmDelete){confirmDelete.disabled=true;confirmDelete.textContent='正在删除…';try{await api('/api/me/notifications',{method:'DELETE'});root.querySelector('.workshop-dialog')?.remove();return notifications()}catch(error){confirmDelete.disabled=false;confirmDelete.textContent='全部删除';return say(error.message||'删除失败','err')}}return clickWithNoticeDeleteDialog(event)};
-const shellWithDynamicNoticeDot=shell;shell=function(body){shellWithDynamicNoticeDot(body);paintNoticeIndicator()};
+async function refreshNoticeUnread(){return 0}
 const INSTALLS_KEY='canming-workshop-1.9:installs-v1';
 function installedWorks(){try{let value=JSON.parse(store().getItem(INSTALLS_KEY)||'[]');return Array.isArray(value)?value:[]}catch{return[]}}
 function saveInstalledWorks(items){store().setItem(INSTALLS_KEY,JSON.stringify(items))}
@@ -580,4 +566,70 @@ shell=function(body){
     }
   </style>`);
 };
+// 精简工坊读取：通知与收藏功能退役，列表只请求当前页。
+refreshNoticeUnread=async()=>0;
+fetchWorkshopPages=async function(params){let query=new URLSearchParams({...params,page:1,pageSize:20}),result=await api('/api/works?'+query);return result.items||[]};
+
+const shellWithoutRetiredWorkshopFeatures=shell;
+shell=function(body){
+  shellWithoutRetiredWorkshopFeatures(body);
+  root?.querySelectorAll?.('[data-v="notifications"],[data-v="favorites"],[data-my="favorites"]').forEach(node=>node.remove());
+};
+
+const currentWithoutRetiredWorkshopViews=current;
+current=async function(){
+  if(view==='notifications'||view==='favorites')view='discover';
+  return currentWithoutRetiredWorkshopViews();
+};
+
+const detailWithoutFavorite=detail;
+detail=async function(id){
+  const result=await detailWithoutFavorite(id);
+  root?.querySelector?.('[data-a="favorite"]')?.remove();
+  return result;
+};
+
+const cardWithoutFavorite=card;
+card=function(item){return cardWithoutFavorite(item).replace(/<span>☆ [^<]*<\/span>/,'')};
+
+let leanCatalogPage=1,leanCatalogResult={items:[],total:0,totalPages:1},leanCatalogRequest=0;
+function renderLeanCatalog(){
+  let list=root.querySelector('[data-list]'),pager=root.querySelector('[data-catalog-pager]');
+  if(!list||!pager)return;
+  list.innerHTML=(leanCatalogResult.items||[]).map(card).join('')||'<p class="muted">没有匹配的作品</p>';
+  let pages=Math.max(1,Number(leanCatalogResult.totalPages||1));
+  pager.innerHTML=pages>1?`<button class="btn" data-a="catalog-prev" ${leanCatalogPage<=1?'disabled':''}>上一页</button><span>${leanCatalogPage} / ${pages} · 共 ${Number(leanCatalogResult.total||0)} 件</span><button class="btn" data-a="catalog-next" ${leanCatalogPage>=pages?'disabled':''}>下一页</button>`:'';
+}
+async function loadLeanCatalog(page=1){
+  let request=++leanCatalogRequest,sort=root.querySelector('[data-sort]')?.value||'downloads',query=new URLSearchParams({page:Math.max(1,page),pageSize:20,q:root.querySelector('[data-q]')?.value||'',type:root.querySelector('[data-t]')?.value||'',category:root.querySelector('[data-c]')?.value||'',sort});
+  leanCatalogPage=Math.max(1,page);
+  let list=root.querySelector('[data-list]');if(list)list.textContent='正在查阅…';
+  try{let result=await api('/api/works?'+query);if(request!==leanCatalogRequest)return;leanCatalogResult=result;leanCatalogPage=Number(result.page||leanCatalogPage);renderLeanCatalog()}catch(error){if(request===leanCatalogRequest&&list)list.textContent=error.message}
+}
+catalog=async function(){
+  shell(`<section class="page"><div class="title"><div><p class="eyebrow">ARCHIVE INDEX</p><h1>全部作品</h1></div></div><div class="catalog-tools"><div class="catalog-search"><input class="input" data-q placeholder="搜索作品、作者或标签"><button class="btn primary" data-a="search">搜索</button></div><div class="catalog-filters"><select class="select" data-t><option value="">全部资源</option>${Object.keys(K).map(x=>`<option value="${x}">${type(x)}</option>`).join('')}</select><select class="select" data-c><option value="">全部分类</option>${C.map(x=>`<option>${x}</option>`).join('')}</select><select class="select" data-sort><option value="downloads" selected>下载最多</option><option value="newest">最新发布</option><option value="likes">点赞最多</option></select></div></div><div class="grid" data-list>正在查阅…</div><div class="catalog-pager" data-catalog-pager></div></section>`);
+  if(catalogInitialType){let select=root.querySelector('[data-t]');if(select)select.value=catalogInitialType;catalogInitialType=''}
+  await loadLeanCatalog(1);
+};
+search=async function(){return loadLeanCatalog(1)};
+
+discover=async function(){
+  shell(`<section class="page"><section class="featured-ribbon"><div class="featured-intro"><p class="eyebrow">FEATURED ARCHIVE</p><h1>精选</h1></div><div class="featured-strip" data-featured>正在载入精选…</div></section><section class="new-arrivals"><div class="title"><div><p class="eyebrow">NEW ARRIVALS</p><h1>新近入藏</h1></div><button class="btn primary" data-v="publish">发布作品</button></div><div class="grid" data-list>正在查阅…</div></section></section>`);
+  try{
+    let [featuredResult,newestResult]=await Promise.all([api('/api/works?page=1&pageSize=8&featured=1&sort=newest'),api('/api/works?page=1&pageSize=8&sort=newest')]),featured=featuredResult.items||[],newest=newestResult.items||[],strip=root.querySelector('[data-featured]');
+    strip.innerHTML=featured.map(featuredRibbonCard).join('')||'<p class="muted">暂无精选作品</p>';
+    root.querySelector('[data-list]').innerHTML=newest.map(card).join('')||'<p class="muted">暂无公开作品</p>';
+    if(featured.length>2)featuredScrollTimer=setInterval(()=>{if(!root||strip.matches(':hover'))return;let atEnd=strip.scrollLeft+strip.clientWidth>=strip.scrollWidth-8;strip.scrollTo({left:atEnd?0:strip.scrollLeft+260,behavior:'smooth'})},5000);
+  }catch(error){let featured=root.querySelector('[data-featured]'),list=root.querySelector('[data-list]');if(featured)featured.textContent=error.message;if(list)list.textContent=error.message}
+};
+
+const clickWithLeanCatalog=click;
+click=async function(event){
+  let pager=event.target.closest?.('[data-a="catalog-prev"],[data-a="catalog-next"]');
+  if(pager){let next=leanCatalogPage+(pager.dataset.a==='catalog-prev'?-1:1);await loadLeanCatalog(next);root.querySelector('.main')?.scrollTo({top:0,behavior:'smooth'});return}
+  const result=await clickWithLeanCatalog(event);
+  root?.querySelectorAll?.('.note,.workshop-dialog .muted').forEach(node=>{node.textContent=node.textContent.replace(/与收藏|和收藏/g,'')});
+  return result;
+};
+
 globalThis.CanmingWorkshop={apiVersion:1,bridgeVersion:1,runtimeVersion:WV,open,close,destroy:close,validatePackage:check,validateScenarioPackage:scenarioPackageSummary,forgetScenarioInstall};try{window.parent.CanmingWorkshop=globalThis.CanmingWorkshop}catch{}})();

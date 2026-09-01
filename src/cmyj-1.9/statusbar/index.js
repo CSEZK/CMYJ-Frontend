@@ -16,7 +16,7 @@ import {
 import { normalizeTechnologyCollection } from '../shared/technology.js';
 
 const STATUSBAR_ID = 'canming-afterglow-statusbar';
-const STATUSBAR_VERSION = '1.9.2';
+const STATUSBAR_VERSION = '1.9.3';
 const MAP_ASSET_REVISION = 'd697affd3ed71c09e8278cc2ac37b5d3b5dc2ded';
 const STORAGE_PREFIX = 'canming-afterglow-1.9:statusbar:';
 const VARIABLE_EDITOR_FILE = '变量修改器.js';
@@ -71,191 +71,6 @@ const BUILTIN_TONGCHENG_WORLDBOOK_ENTRIES = Object.freeze([
 ]);
 
 const STATUSBAR_SCRIPT_SRC = document.currentScript?.src || '';
-const WORKSHOP_API = 'https://cm-yj-workshop.canming-cloud.workers.dev';
-const WORKSHOP_TOKEN_KEY = 'canming-workshop:token';
-const WORKSHOP_NOTICE_INTERVAL_MS = 10 * 60 * 1000;
-const WORKSHOP_NOTICE_RESUME_THROTTLE_MS = 15000;
-const WORKSHOP_NOTICE_RUNTIME_KEY = '__CMYJWorkshopNoticeRuntimeV18';
-const WORKSHOP_NOTICE_OWNER = {};
-let workshopUnreadCount = 0;
-
-function getWorkshopNoticeRuntime() {
-  const hostWindow = window.parent ?? window;
-  if (!hostWindow[WORKSHOP_NOTICE_RUNTIME_KEY]) {
-    hostWindow[WORKSHOP_NOTICE_RUNTIME_KEY] = {
-      timer: null,
-      listeners: null,
-      syncHandler: null,
-      syncOwner: null,
-      owner: null,
-      inflight: null,
-      latestNoticeId: '',
-      unreadCount: 0,
-      lastCheckedAt: 0,
-    };
-  }
-  return hostWindow[WORKSHOP_NOTICE_RUNTIME_KEY];
-}
-
-function setWorkshopUnreadCount(runtime, value) {
-  workshopUnreadCount = Math.max(0, Number(value || 0));
-  runtime.unreadCount = workshopUnreadCount;
-  updateWorkshopNoticeIndicator();
-}
-
-function updateWorkshopNoticeIndicator() {
-  const dot = frameDocument?.querySelector?.('[data-workshop-notice-dot]');
-  if (!dot) return;
-  dot.hidden = workshopUnreadCount < 1;
-  dot.textContent = workshopUnreadCount > 99 ? '99+' : String(workshopUnreadCount || '');
-}
-
-function registerWorkshopNoticeSync() {
-  const hostWindow = window.parent ?? window;
-  const runtime = getWorkshopNoticeRuntime();
-  if (runtime.syncHandler) {
-    hostWindow.removeEventListener('canming-workshop-notifications-changed', runtime.syncHandler);
-  }
-  workshopUnreadCount = Math.max(0, Number(runtime.unreadCount || 0));
-  runtime.syncHandler = event => {
-    setWorkshopUnreadCount(runtime, event?.detail?.unread);
-  };
-  runtime.syncOwner = WORKSHOP_NOTICE_OWNER;
-  hostWindow.addEventListener('canming-workshop-notifications-changed', runtime.syncHandler);
-}
-
-function showWorkshopNoticeBanner(onlyWhenNew = false, { force = false } = {}) {
-  const hostWindow = window.parent ?? window;
-  const hostDocument = hostWindow.document ?? document;
-  const runtime = getWorkshopNoticeRuntime();
-  const now = Date.now();
-  if (runtime.inflight) return runtime.inflight;
-  if (!force && now - Number(runtime.lastCheckedAt || 0) < WORKSHOP_NOTICE_RESUME_THROTTLE_MS) {
-    setWorkshopUnreadCount(runtime, runtime.unreadCount);
-    return Promise.resolve(null);
-  }
-  let token;
-  try {
-    token = hostWindow.localStorage?.getItem(WORKSHOP_TOKEN_KEY) || localStorage.getItem(WORKSHOP_TOKEN_KEY) || '';
-  } catch {
-    return;
-  }
-  if (!token) {
-    setWorkshopUnreadCount(runtime, 0);
-    return Promise.resolve(null);
-  }
-  runtime.lastCheckedAt = now;
-  const request = fetch(`${WORKSHOP_API}/api/me/notifications?page=1&pageSize=20`, {
-    headers: { authorization: `Bearer ${token}` },
-  })
-    .then(response => (response.ok ? response.json() : null))
-    .then(data => {
-      setWorkshopUnreadCount(runtime, data?.unread);
-      const notice = data?.items?.find?.(item => !item?.is_read);
-      if (!notice?.title) return;
-      const firstAvailableNotice = !runtime.latestNoticeId;
-      const changed = Boolean(runtime.latestNoticeId && runtime.latestNoticeId !== notice.id);
-      runtime.latestNoticeId = notice.id;
-      if (onlyWhenNew && !changed && !firstAvailableNotice) return;
-      hostDocument.getElementById('canming-workshop-notice-banner')?.remove();
-      const banner = hostDocument.createElement('aside');
-      banner.id = 'canming-workshop-notice-banner';
-      banner.innerHTML = `<div class="canming-workshop-notice-mark">✦</div><div class="canming-workshop-notice-copy"><small>云端创意工坊 · 最近通知</small><strong></strong><p></p></div><button type="button" aria-label="关闭通知">×</button>`;
-      banner.querySelector('strong').textContent = String(notice.title);
-      banner.querySelector('p').textContent = String(notice.content || '你有一条来自创意工坊的新消息。');
-      banner.querySelector('button').addEventListener('click', () => banner.remove());
-      hostDocument.body.append(banner);
-      if (!hostDocument.getElementById('canming-workshop-notice-banner-style')) {
-        const style = hostDocument.createElement('style');
-        style.id = 'canming-workshop-notice-banner-style';
-        style.textContent = `#canming-workshop-notice-banner{position:fixed;z-index:99999;top:max(18px,env(safe-area-inset-top));left:50%;display:flex;align-items:center;gap:12px;width:min(560px,calc(100vw - 28px));padding:13px 15px;transform:translateX(-50%);border:1px solid color-mix(in srgb,var(--SmartThemeBodyColor,#e8d2aa) 34%,transparent);border-radius:16px;background:linear-gradient(115deg,color-mix(in srgb,var(--SmartThemeBlurTintColor,#261a13) 92%,#000),color-mix(in srgb,var(--SmartThemeBlurTintColor,#261a13) 78%,#a95d38));box-shadow:0 16px 40px rgba(0,0,0,.32);backdrop-filter:blur(14px);color:var(--SmartThemeBodyColor,#f1dfbd);animation:canming-notice-in .32s ease-out}#canming-workshop-notice-banner .canming-workshop-notice-mark{display:grid;flex:0 0 31px;width:31px;height:31px;place-items:center;border-radius:50%;background:#c9784f;color:#fff;font-size:17px}#canming-workshop-notice-banner .canming-workshop-notice-copy{min-width:0;flex:1}#canming-workshop-notice-banner small{display:block;margin-bottom:3px;color:#d79a73;font-size:11px;letter-spacing:.08em}#canming-workshop-notice-banner strong{display:block;overflow:hidden;font-size:15px;text-overflow:ellipsis;white-space:nowrap}#canming-workshop-notice-banner p{display:-webkit-box;overflow:hidden;margin:3px 0 0;color:color-mix(in srgb,var(--SmartThemeBodyColor,#f1dfbd) 72%,transparent);font-size:13px;line-height:1.45;-webkit-box-orient:vertical;-webkit-line-clamp:2}#canming-workshop-notice-banner button{border:0;background:transparent;color:inherit;cursor:pointer;font-size:23px;line-height:1;opacity:.72}@keyframes canming-notice-in{from{opacity:0;transform:translate(-50%,-12px)}to{opacity:1;transform:translate(-50%,0)}}`;
-        hostDocument.head.append(style);
-      }
-      hostWindow.setTimeout(() => banner.remove(), 9000);
-    })
-    .catch(() => null)
-    .finally(() => {
-      if (runtime.inflight === request) runtime.inflight = null;
-    });
-  runtime.inflight = request;
-  return request;
-}
-
-function clearWorkshopNoticePolling(runtime) {
-  const listeners = runtime.listeners;
-  if (runtime.timer !== null) {
-    (listeners?.hostWindow ?? window.parent ?? window).clearInterval(runtime.timer);
-    runtime.timer = null;
-  }
-  if (listeners) {
-    listeners.hostWindow.removeEventListener('focus', listeners.onFocus);
-    listeners.hostWindow.removeEventListener('pageshow', listeners.onPageShow);
-    listeners.hostDocument.removeEventListener('visibilitychange', listeners.onVisibilityChange);
-    runtime.listeners = null;
-  }
-}
-
-function startWorkshopNoticePolling() {
-  const hostWindow = window.parent ?? window;
-  const hostDocument = hostWindow.document ?? document;
-  const runtime = getWorkshopNoticeRuntime();
-
-  // 接管旧脚本或旧 iframe 留下的轮询，整个酒馆始终只保留一个通知定时器。
-  clearWorkshopNoticePolling(runtime);
-  hostWindow.clearInterval(hostWindow._canmingWorkshopNoticeTimer);
-  if (window !== hostWindow) window.clearInterval(window._canmingWorkshopNoticeTimer);
-  try {
-    delete hostWindow._canmingWorkshopNoticeTimer;
-  } catch {
-    hostWindow._canmingWorkshopNoticeTimer = null;
-  }
-  try {
-    delete window._canmingWorkshopNoticeTimer;
-  } catch {
-    window._canmingWorkshopNoticeTimer = null;
-  }
-
-  const checkAfterResume = () => {
-    if (hostDocument.visibilityState === 'hidden') return;
-    showWorkshopNoticeBanner(true);
-  };
-  const onFocus = () => checkAfterResume();
-  const onPageShow = () => checkAfterResume();
-  const onVisibilityChange = () => {
-    if (hostDocument.visibilityState === 'visible') checkAfterResume();
-  };
-
-  runtime.owner = WORKSHOP_NOTICE_OWNER;
-  runtime.listeners = { hostWindow, hostDocument, onFocus, onPageShow, onVisibilityChange };
-  hostWindow.addEventListener('focus', onFocus);
-  hostWindow.addEventListener('pageshow', onPageShow);
-  hostDocument.addEventListener('visibilitychange', onVisibilityChange);
-  runtime.timer = hostWindow.setInterval(() => {
-    const elapsed = Date.now() - Number(runtime.lastCheckedAt || 0);
-    if (hostDocument.visibilityState !== 'hidden' && elapsed >= WORKSHOP_NOTICE_INTERVAL_MS) {
-      showWorkshopNoticeBanner(true);
-    }
-  }, WORKSHOP_NOTICE_INTERVAL_MS);
-
-  // 整个宿主首次加载时立即同步；后续 iframe/状态栏重建沿用共享检查时间，
-  // 避免每生成一条新消息都把“首次加载”放大成一次网络请求。
-  showWorkshopNoticeBanner(false, { force: !runtime.lastCheckedAt });
-}
-
-function cleanupWorkshopNoticePolling() {
-  const hostWindow = window.parent ?? window;
-  const runtime = hostWindow[WORKSHOP_NOTICE_RUNTIME_KEY];
-  if (!runtime) return;
-  if (runtime.owner === WORKSHOP_NOTICE_OWNER) {
-    clearWorkshopNoticePolling(runtime);
-    runtime.owner = null;
-  }
-  if (runtime.syncOwner === WORKSHOP_NOTICE_OWNER && runtime.syncHandler) {
-    hostWindow.removeEventListener('canming-workshop-notifications-changed', runtime.syncHandler);
-    runtime.syncHandler = null;
-    runtime.syncOwner = null;
-  }
-}
 const BASE_TABS = [
   ['overview', '总览'],
   ['self', '个人信息'],
@@ -5988,7 +5803,7 @@ function renderPanel() {
           <h1>${html(buildTabs().find(([id]) => id === activeTab)?.[1] || '状态簿')}</h1>
         </div>
         <div class="cm-actions">
-          <button data-action="workshop" title="云端创意工坊" class="cm-icon-btn cm-workshop-cloud">${cloudWorkshopIcon()}<i data-workshop-notice-dot ${workshopUnreadCount ? '' : 'hidden'}>${workshopUnreadCount > 99 ? '99+' : workshopUnreadCount || ''}</i></button>
+          <button data-action="workshop" title="云端创意工坊" class="cm-icon-btn cm-workshop-cloud">${cloudWorkshopIcon()}</button>
           <span class="cm-tools-wrap">
             <button data-action="tools" title="工具" class="cm-icon-btn">${toolIcon()}</button>
             <span class="cm-tools-dropdown">
@@ -9075,7 +8890,6 @@ function cleanup() {
   getCanmingWorkshop()?.destroy?.();
   getCharacterGenerator()?.close?.();
   clearInterval(refreshTimer);
-  cleanupWorkshopNoticePolling();
   if (echartsInstance) {
     echartsInstance.dispose();
     echartsInstance = null;
@@ -9104,7 +8918,5 @@ function cleanup() {
 }
 
 $(() => {
-  registerWorkshopNoticeSync();
   bootstrap();
-  startWorkshopNoticePolling();
 });

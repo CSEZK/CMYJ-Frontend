@@ -602,12 +602,16 @@ assert.doesNotMatch(v18StatusbarSource, /WORLD_1629/);
 
 assert.ok(v19Loader.length > 1_000, '1.9 加载器未构建');
 assert.match(v19LoaderSource, /REMOTE_ROOT = 'https:\/\/cmyj-frontend\.pages\.dev\/cmyj-1\.9\/'/);
-assert.match(v19StatusbarSource, /STATUSBAR_VERSION = '1\.9\.2'/);
+assert.match(v19StatusbarSource, /STATUSBAR_VERSION = '1\.9\.3'/);
+assert.doesNotMatch(v19StatusbarSource, /api\/me\/notifications/);
+assert.doesNotMatch(v19StatusbarSource, /data-workshop-notice-dot/);
 assert.match(v19StatusbarSource, /async function openScenarioWorkshop\(\)/);
 assert.match(v19StatusbarSource, /openWorkshop: \(\) => openScenarioWorkshop\(\)/);
 assert.match(v19StatusbarSource, /return openCanmingWorkshop\(\{ initialView: 'catalog', initialType: 'scenario' \}\)/);
 assert.match(v19WorkshopSource, /buildCharacterSelectionPackage\(ids,/);
 assert.doesNotMatch(v19WorkshopSource, /buildCharacterPackage\(ids\[0\],m\)/);
+assert.doesNotMatch(v19WorkshopSource, /api\/me\/notifications/);
+assert.match(v19WorkshopSource, /<option value="likes">点赞最多<\/option><\/select>/);
 assert.match(v19StatusbarSource, /下月预估/);
 assert.match(v19StatusbarSource, /function hasSettlementSnapshot\(value\)/);
 assert.match(v19StatusbarSource, /尚未跨月结算/);
