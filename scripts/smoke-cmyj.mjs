@@ -606,6 +606,7 @@ assert.match(v19StatusbarSource, /STATUSBAR_VERSION = '1\.9\.4'/);
 assert.match(v19WorkshopSource, /function workshopStoredSessionState\(\)/);
 assert.match(v19WorkshopSource, /function armWorkshopSessionGuard\(\)/);
 assert.match(v19WorkshopSource, /if\(sessionExpiredPrompted\)renderWorkshopSessionExpired\(\)/);
+assert.match(v19WorkshopSource, /function clearWorkshopCredentials\(\)\{stopWorkshopSessionGuard\(\)/);
 assert.doesNotMatch(v19StatusbarSource, /api\/me\/notifications/);
 assert.doesNotMatch(v19StatusbarSource, /data-workshop-notice-dot/);
 assert.match(v19StatusbarSource, /async function openScenarioWorkshop\(\)/);
