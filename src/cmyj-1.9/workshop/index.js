@@ -1,7 +1,7 @@
 import { buildCharacterSelectionPackage } from './collection.js';
 
 (()=>{'use strict';
-const API='https://cm-yj-workshop.canming-cloud.workers.dev',F='canming-workshop-package',R='canming-workshop-root',TK='canming-workshop:token',UK='canming-workshop:user',DK='canming-workshop-1.9:publish-v3',PK='canming-workshop:pending-auth',WV='1.9-production-20260815';
+const API='https://cm-yj-workshop.canming-cloud.workers.dev',F='canming-workshop-package',R='canming-workshop-root',TK='canming-workshop:token',UK='canming-workshop:user',DK='canming-workshop-1.9:publish-v3',PK='canming-workshop:pending-auth',WV='1.9-production-20260902-auth-guard';
 const K={character:['角色档案','角色资料、立绘与关联条目'],worldbook:['世界书条目','完整保留关键词、蓝绿灯和插入配置'],generator:['万象生成器','共享自定义生成器定义，不再依赖文件导入导出'],scenario:['身份 DLC','开场白、初始变量、主角身份与关系世界书'],regex:['正则规则','下载后可导入当前角色卡'],script:['角色卡脚本','默认关闭，需用户确认启用'],'fengyue-item':['风月阁物品','自定义物品，下载后进入云端藏品货架'],collection:['合集','多个资源共同作为一个作品发布']},C=['人物','势力','地点','物品','事件','历史设定','世界规则','剧情扩展','界面美化','功能工具'];
 let o={},d=document,root,view='discover',step=1,work=null,draft,catalogInitialType='',publishing=false,publishError='';
 const h=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),store=()=>{try{return(window.parent||window).localStorage}catch{}try{return d.defaultView?.localStorage||localStorage}catch{return localStorage}},me=()=>{try{let u=JSON.parse(store().getItem(UK)||'null');return u?.verified?u:null}catch{return null}},say=(x,t='info')=>o.toast?.(x,t),type=k=>K[k]?.[0]||'资源';
@@ -154,13 +154,58 @@ const shellWithMyPublishStatus=shell;shell=function(body){shellWithMyPublishStat
 async function copyWorkshopLoginUrl(url){try{await navigator.clipboard.writeText(url);return true}catch{}try{let input=d.createElement('textarea');input.value=url;input.setAttribute('readonly','');input.style.cssText='position:fixed;left:-9999px;top:0';d.body.appendChild(input);input.select();input.setSelectionRange(0,input.value.length);let copied=d.execCommand('copy');input.remove();return copied}catch{return false}}
 let workshopLoginAttempt=0;
 let sessionExpiredPrompted=false;
+let workshopSessionTimer=null,workshopSessionHost=null,workshopSessionResume=null;
 function clearWorkshopCredentials(){try{store().removeItem(TK);store().removeItem(UK)}catch{}}
-function showWorkshopSessionExpired(){
-  clearWorkshopCredentials();
-  if(!root||sessionExpiredPrompted||root.querySelector('[data-dialog="session-expired"]'))return;
-  sessionExpiredPrompted=true;
+function workshopTokenExpiryAt(token=''){
+  try{
+    let part=String(token).split('.')[1];
+    if(!part)return 0;
+    let normalized=part.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(part.length/4)*4,'='),payload=JSON.parse(atob(normalized));
+    let expiresAt=Number(payload.exp||0)*1000;
+    return Number.isFinite(expiresAt)&&expiresAt>0?expiresAt:0;
+  }catch{return 0}
+}
+function workshopStoredSessionState(){
+  let token='',user='';
+  try{token=store().getItem(TK)||'';user=store().getItem(UK)||''}catch{}
+  if(!token&&!user)return{kind:'none',expiresAt:0};
+  let expiresAt=workshopTokenExpiryAt(token);
+  if(!token||!user||!expiresAt)return{kind:'invalid',expiresAt};
+  return{kind:expiresAt<=Date.now()?'expired':'active',expiresAt};
+}
+function renderWorkshopSessionExpired(){
+  if(!root||root.querySelector('[data-dialog="session-expired"]'))return;
   root.querySelector('.account-menu')?.remove();
   root.insertAdjacentHTML('beforeend',`<div class="workshop-dialog session-expired-dialog" data-dialog="session-expired" role="alertdialog" aria-modal="true" aria-labelledby="cmw-session-expired-title"><section><div class="session-expired-mark" aria-hidden="true">失</div><p class="eyebrow">AUTHORIZATION EXPIRED</p><h2 id="cmw-session-expired-title">工坊凭证已经失效</h2><p class="muted">当前登录已自动清理，无需再从右上角退出。重新完成 Discord 授权即可继续，新的登录凭证有效期为 <b>72 小时</b>。</p><div class="session-expired-note">发布草稿仍保留在本机；重新登录后可以继续刚才的操作。</div><div class="dialog-actions"><button data-a="session-expired-dismiss">暂不登录</button><button class="primary" data-a="session-expired-login">立即重新登录</button></div></section></div>`);
+}
+function showWorkshopSessionExpired(){
+  clearWorkshopCredentials();
+  sessionExpiredPrompted=true;
+  view='account';
+  renderWorkshopSessionExpired();
+}
+function stopWorkshopSessionGuard(){
+  let host=workshopSessionHost;
+  if(host&&workshopSessionTimer)host.clearTimeout(workshopSessionTimer);
+  if(host&&workshopSessionResume){host.removeEventListener('focus',workshopSessionResume);host.removeEventListener('pageshow',workshopSessionResume);host.document?.removeEventListener('visibilitychange',workshopSessionResume)}
+  workshopSessionTimer=null;workshopSessionHost=null;workshopSessionResume=null;
+}
+function armWorkshopSessionGuard(){
+  stopWorkshopSessionGuard();
+  let state=workshopStoredSessionState();
+  if(state.kind==='none')return false;
+  if(state.kind!=='active'){showWorkshopSessionExpired();return true}
+  let host=workshopAuthHost();
+  workshopSessionHost=host;
+  let check=()=>{
+    if(host.document?.visibilityState==='hidden')return;
+    let current=workshopStoredSessionState();
+    if(current.kind==='expired'||current.kind==='invalid'){stopWorkshopSessionGuard();showWorkshopSessionExpired()}
+  };
+  workshopSessionResume=check;
+  host.addEventListener('focus',check);host.addEventListener('pageshow',check);host.document?.addEventListener('visibilitychange',check);
+  workshopSessionTimer=host.setTimeout(()=>{stopWorkshopSessionGuard();showWorkshopSessionExpired()},Math.max(0,state.expiresAt-Date.now())+50);
+  return false;
 }
 function workshopLoginNonce(){try{return crypto.randomUUID().replace(/-/g,'')}catch{let bytes=crypto.getRandomValues(new Uint8Array(24));return btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'')}}
 function pendingWorkshopLogin(){try{let value=JSON.parse(store().getItem(PK)||'null');if(!value?.nonce||Date.now()-Number(value.createdAt||0)>660000){store().removeItem(PK);return null}return value}catch{return null}}
@@ -203,7 +248,7 @@ login=function(){
   let nonce=workshopLoginNonce(),origin=workshopAuthOrigin(host),launchUrl=API+'/api/auth/discord/launch?origin='+encodeURIComponent(origin)+'&nonce='+encodeURIComponent(nonce);
   let resolved=false,workerOrigin=new URL(API).origin,stopPolling=()=>{};
   savePendingWorkshopLogin(nonce,launchUrl);
-  let finishAuth=async data=>{if(resolved||attempt!==workshopLoginAttempt)return;resolved=true;sessionExpiredPrompted=false;stopPolling();store().setItem(TK,data.token);store().setItem(UK,JSON.stringify(data.user));clearPendingWorkshopLogin(nonce);try{browserWindow?.close()}catch{}if(root){root.querySelector('.workshop-dialog')?.remove();view='discover';await current();void refreshNoticeUnread(true).catch(()=>{})}};
+  let finishAuth=async data=>{if(resolved||attempt!==workshopLoginAttempt)return;resolved=true;sessionExpiredPrompted=false;stopPolling();store().setItem(TK,data.token);store().setItem(UK,JSON.stringify(data.user));armWorkshopSessionGuard();clearPendingWorkshopLogin(nonce);try{browserWindow?.close()}catch{}if(root){root.querySelector('.workshop-dialog')?.remove();view='discover';await current();void refreshNoticeUnread(true).catch(()=>{})}};
   let onMessage=event=>{let data=event.data;if(event.origin===workerOrigin&&data?.type==='canming-workshop-auth'&&data.nonce===nonce&&data.token&&data.user)finishAuth(data).catch(error=>say(error.message||'登录失败','err'))};
   try{host.addEventListener('message',onMessage)}catch{}
   root.querySelector('.workshop-dialog')?.remove();
@@ -230,7 +275,7 @@ login=function(){
 const clickWithDefaultBrowserAuth=click;click=async function(event){let openAuth=event.target.closest?.('[data-auth-open-url]'),copyAuth=event.target.closest?.('[data-auth-copy-url]');if(openAuth){event.preventDefault();openAuth.disabled=true;try{let result=await openWorkshopAuthUrl(openAuth.dataset.authOpenUrl);renderWorkshopAuthMode(result.mode);workshopToast(result.mode==='blocked'?'请允许弹窗或复制授权链接':'授权页已打开',result.mode==='blocked'?'err':'ok',result.mode==='blocked'?'无法打开':'等待授权')}finally{openAuth.disabled=false}return}if(copyAuth){event.preventDefault();let copied=await copyWorkshopLoginUrl(copyAuth.dataset.authCopyUrl);return workshopToast(copied?'授权链接已复制':'复制失败，请长按链接手动复制',copied?'ok':'err',copied?'复制成功':'复制失败')}return clickWithDefaultBrowserAuth(event)};
 const shellWithDefaultBrowserAuth=shell;shell=function(body){shellWithDefaultBrowserAuth(body);root.insertAdjacentHTML('afterbegin',`<style>#${R} .auth-assist section{width:min(520px,100%)}#${R} .auth-waiting{display:flex;align-items:center;gap:10px;margin:16px 0;padding:12px 14px;border:1px solid var(--line);border-radius:13px;background:color-mix(in srgb,var(--card) 78%,transparent);color:var(--muted);font-size:12px}#${R} .auth-waiting i{width:10px;height:10px;border-radius:50%;background:#d39855;box-shadow:0 0 0 4px color-mix(in srgb,#d39855 16%,transparent);animation:cmw-login-pulse 1.5s ease-in-out infinite}#${R} .auth-waiting[data-mode="popup"] i{background:#4f9a6e;box-shadow:0 0 0 4px color-mix(in srgb,#4f9a6e 16%,transparent)}#${R} .auth-waiting[data-mode="blocked"] i{background:#b84835;box-shadow:0 0 0 4px color-mix(in srgb,#b84835 16%,transparent);animation:none}#${R} .auth-actions{display:grid;grid-template-columns:1fr 1.25fr}#${R} .auth-footnote{margin:13px 0 0;color:var(--muted);font-size:10px;line-height:1.6}@keyframes cmw-login-pulse{50%{opacity:.45;transform:scale(.82)}}@media(max-width:700px){#${R} .auth-actions{grid-template-columns:1fr}#${R} .auth-actions button{width:100%;padding:11px 12px}}</style>`)};
 const clickWithSessionExpiry=click;click=async function(event){let relogin=event.target.closest?.('[data-a="session-expired-login"]'),dismiss=event.target.closest?.('[data-a="session-expired-dismiss"]');if(relogin){event.preventDefault();sessionExpiredPrompted=false;root.querySelector('[data-dialog="session-expired"]')?.remove();return login()}if(dismiss){event.preventDefault();sessionExpiredPrompted=false;root.querySelector('[data-dialog="session-expired"]')?.remove();view='account';return current()}return clickWithSessionExpiry(event)};
-const shellWithSessionExpiry=shell;shell=function(body){shellWithSessionExpiry(body);root.insertAdjacentHTML('afterbegin',`<style>#${R} .session-expired-dialog section{position:relative;overflow:hidden;width:min(500px,100%);padding:30px 28px 24px;border-color:color-mix(in srgb,#b84835 58%,var(--line));background:radial-gradient(circle at 88% 12%,color-mix(in srgb,#b84835 13%,transparent),transparent 32%),linear-gradient(145deg,var(--card),var(--paper2))}#${R} .session-expired-mark{position:absolute;right:25px;top:22px;display:grid;width:58px;height:58px;place-items:center;border:3px double #b84835;border-radius:8px;color:#b84835;font-size:28px;font-weight:900;transform:rotate(7deg);opacity:.82}#${R} .session-expired-dialog h2{max-width:310px;margin:7px 0 12px;color:var(--ink);font-size:25px}#${R} .session-expired-dialog .muted{max-width:390px;line-height:1.85}#${R} .session-expired-dialog .muted b{color:var(--accent)}#${R} .session-expired-note{margin-top:17px;padding:11px 13px;border-left:3px solid #b84835;border-radius:8px;background:color-mix(in srgb,#b84835 8%,transparent);color:var(--muted);font-size:12px}@media(max-width:700px){#${R} .session-expired-dialog section{padding:24px 20px 19px}#${R} .session-expired-mark{right:18px;top:18px;width:48px;height:48px;font-size:23px}#${R} .session-expired-dialog h2{max-width:250px;font-size:22px}#${R} .session-expired-dialog .dialog-actions{display:grid;grid-template-columns:1fr}#${R} .session-expired-dialog .dialog-actions button{width:100%;padding:11px}}</style>`)};
+const shellWithSessionExpiry=shell;shell=function(body){shellWithSessionExpiry(body);root.insertAdjacentHTML('afterbegin',`<style>#${R} .session-expired-dialog section{position:relative;overflow:hidden;width:min(500px,100%);padding:30px 28px 24px;border-color:color-mix(in srgb,#b84835 58%,var(--line));background:radial-gradient(circle at 88% 12%,color-mix(in srgb,#b84835 13%,transparent),transparent 32%),linear-gradient(145deg,var(--card),var(--paper2))}#${R} .session-expired-mark{position:absolute;right:25px;top:22px;display:grid;width:58px;height:58px;place-items:center;border:3px double #b84835;border-radius:8px;color:#b84835;font-size:28px;font-weight:900;transform:rotate(7deg);opacity:.82}#${R} .session-expired-dialog h2{max-width:310px;margin:7px 0 12px;color:var(--ink);font-size:25px}#${R} .session-expired-dialog .muted{max-width:390px;line-height:1.85}#${R} .session-expired-dialog .muted b{color:var(--accent)}#${R} .session-expired-note{margin-top:17px;padding:11px 13px;border-left:3px solid #b84835;border-radius:8px;background:color-mix(in srgb,#b84835 8%,transparent);color:var(--muted);font-size:12px}@media(max-width:700px){#${R} .session-expired-dialog section{padding:24px 20px 19px}#${R} .session-expired-mark{right:18px;top:18px;width:48px;height:48px;font-size:23px}#${R} .session-expired-dialog h2{max-width:250px;font-size:22px}#${R} .session-expired-dialog .dialog-actions{display:grid;grid-template-columns:1fr}#${R} .session-expired-dialog .dialog-actions button{width:100%;padding:11px}}</style>`);if(sessionExpiredPrompted)renderWorkshopSessionExpired()};
 async function captureUninstall(event){
   let request=event.target.closest?.('[data-uninstall]'),button=event.target.closest?.('[data-a="uninstall-confirm"]');
   if(!request&&!button)return;
@@ -462,21 +507,15 @@ click=async function(event){
   }
   return clickWithScenarioCreator(event);
 };
-function workshopStoredTokenExpired(){
-  try{
-    let token=store().getItem(TK),part=token?.split('.')[1];
-    if(!part)return false;
-    let normalized=part.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(part.length/4)*4,'='),payload=JSON.parse(atob(normalized));
-    return Number(payload.exp||0)*1000<=Date.now();
-  }catch{return false}
-}
 const openWithSessionExpiryCheck=open;
 open=async function(options={}){
-  let expired=workshopStoredTokenExpired();
+  let state=workshopStoredSessionState(),expired=state.kind==='expired'||state.kind==='invalid';
   if(expired)clearWorkshopCredentials();
   await openWithSessionExpiryCheck(options);
-  if(expired)showWorkshopSessionExpired();
+  if(expired)showWorkshopSessionExpired();else armWorkshopSessionGuard();
 };
+const closeWithSessionExpiryCheck=close;
+close=function(){stopWorkshopSessionGuard();sessionExpiredPrompted=false;return closeWithSessionExpiryCheck()};
 function workCoverUrl(item){
   return String(item?.cover_url||item?.coverUrl||'').split(/[\n,]/).map(value=>value.trim()).find(value=>/^https?:\/\//i.test(value))||'';
 }

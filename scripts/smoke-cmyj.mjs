@@ -602,7 +602,10 @@ assert.doesNotMatch(v18StatusbarSource, /WORLD_1629/);
 
 assert.ok(v19Loader.length > 1_000, '1.9 加载器未构建');
 assert.match(v19LoaderSource, /REMOTE_ROOT = 'https:\/\/cmyj-frontend\.pages\.dev\/cmyj-1\.9\/'/);
-assert.match(v19StatusbarSource, /STATUSBAR_VERSION = '1\.9\.3'/);
+assert.match(v19StatusbarSource, /STATUSBAR_VERSION = '1\.9\.4'/);
+assert.match(v19WorkshopSource, /function workshopStoredSessionState\(\)/);
+assert.match(v19WorkshopSource, /function armWorkshopSessionGuard\(\)/);
+assert.match(v19WorkshopSource, /if\(sessionExpiredPrompted\)renderWorkshopSessionExpired\(\)/);
 assert.doesNotMatch(v19StatusbarSource, /api\/me\/notifications/);
 assert.doesNotMatch(v19StatusbarSource, /data-workshop-notice-dot/);
 assert.match(v19StatusbarSource, /async function openScenarioWorkshop\(\)/);
