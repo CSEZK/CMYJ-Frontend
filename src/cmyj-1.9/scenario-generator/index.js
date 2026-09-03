@@ -3,7 +3,9 @@ import { Schema } from '../schema/definition.js';
 import {
   deepSeekJsonSchemaPrompt,
   isOfficialDeepSeekApi,
+  jsonSchemaCompatibilityPrompt,
   normalizeApiRequestError,
+  shouldFallbackFromJsonSchema,
   shouldRetryApiRequest,
 } from '../shared/api-compat.js';
 import { buildScenarioCharacterCatalog } from './character-catalog.js';
@@ -926,27 +928,29 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
     if (typeof generateRaw !== 'function' && typeof generate !== 'function')
       throw new Error('未找到酒馆 AI 生成接口。');
     const custom = customAiConfig();
-    const usePromptJsonSchema = isOfficialDeepSeekApi(custom);
-    const schemaPrompt = usePromptJsonSchema ? deepSeekJsonSchemaPrompt(schema) : '';
-    const config = {
-      should_silence: true,
-      ordered_prompts: [
-        { role: 'system', content: system },
-        { role: 'user', content: `${user}${schemaPrompt}` },
-      ],
-      ...(usePromptJsonSchema ? {} : { json_schema: schema }),
-      ...(custom ? { custom_api: custom } : {}),
-    };
+    const officialDeepSeek = isOfficialDeepSeekApi(custom);
+    let usePromptJsonSchema = officialDeepSeek;
+    let strictJsonRetry = false;
     let lastError;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const retrySuffix = attempt
+        const schemaPrompt = usePromptJsonSchema
+          ? officialDeepSeek
+            ? deepSeekJsonSchemaPrompt(schema)
+            : jsonSchemaCompatibilityPrompt(schema)
+          : '';
+        const retrySuffix = strictJsonRetry
           ? '\n\n上次输出无法解析。请严格只输出符合 JSON Schema 的 JSON 对象，所有换行和双引号必须正确转义。'
           : '';
-        config.ordered_prompts = [
-          { role: 'system', content: system },
-          { role: 'user', content: `${user}${schemaPrompt}${retrySuffix}` },
-        ];
+        const config = {
+          should_silence: true,
+          ordered_prompts: [
+            { role: 'system', content: system },
+            { role: 'user', content: `${user}${schemaPrompt}${retrySuffix}` },
+          ],
+          ...(usePromptJsonSchema ? {} : { json_schema: schema }),
+          ...(custom ? { custom_api: custom } : {}),
+        };
         const raw =
           typeof generateRaw === 'function'
             ? await generateRaw(config)
@@ -958,8 +962,13 @@ const API_SETTINGS_KEY = 'canming-1.9:generator:api';
               });
         return normalizeGeneratedValue(parseAi(raw));
       } catch (error) {
-        lastError = normalizeApiRequestError(error, { provider: usePromptJsonSchema ? 'DeepSeek' : 'AI 接口' });
+        lastError = normalizeApiRequestError(error, { provider: officialDeepSeek ? 'DeepSeek' : 'AI 接口' });
+        if (!usePromptJsonSchema && shouldFallbackFromJsonSchema(error)) {
+          usePromptJsonSchema = true;
+          continue;
+        }
         if (!shouldRetryApiRequest(error)) break;
+        strictJsonRetry = true;
       }
     }
     throw lastError || new Error('AI 生成失败。');

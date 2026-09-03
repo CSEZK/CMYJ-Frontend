@@ -107,6 +107,7 @@ const v19StatusbarSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'st
 const v19WorkshopSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'workshop', 'index.js'), 'utf8');
 const v19LegacySource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'legacy', 'index.js'), 'utf8');
 const v19ScenarioSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'scenario-generator', 'index.js'), 'utf8');
+const v19GeneratorSource = await readFile(path.join(root, 'src', 'cmyj-1.9', 'generator', 'index.js'), 'utf8');
 
 assert.ok(loader.length > 300_000, '共享加载器未包含完整脚本集');
 assert.match(loader, /CanmingWorkshop/);
@@ -640,5 +641,7 @@ assert.match(v19LegacySource, /failedMessages/);
 assert.match(v19SchemaSource, /未决事项/);
 assert.match(v19SchemaSource, /当前任务/);
 assert.doesNotMatch(v19ScenarioSource, /inner_voice:/);
+assert.match(v19ScenarioSource, /!usePromptJsonSchema && shouldFallbackFromJsonSchema\(error\)/);
+assert.match(v19GeneratorSource, /!usePromptJsonSchema && shouldFallbackFromJsonSchema\(e\)/);
 
 console.info('1.6 兼容版、1.7 测试版、1.7 正式版、1.8 与 1.9 的加载器、环境隔离及脚本模块均已接入。');

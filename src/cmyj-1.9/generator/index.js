@@ -1,7 +1,9 @@
 import {
   deepSeekJsonSchemaPrompt,
   isOfficialDeepSeekApi,
+  jsonSchemaCompatibilityPrompt,
   normalizeApiRequestError,
+  shouldFallbackFromJsonSchema,
   shouldRetryApiRequest,
 } from '../shared/api-compat.js';
 
@@ -1671,42 +1673,46 @@ ${r.nsfwContent || '（无）'}
     if (typeof generateRaw !== 'function' && typeof generate !== 'function') throw new Error('未找到 generateRaw/generate 接口。');
     const customApi = buildCustomApiConfig();
     const schema = genericSchema();
-    const usePromptJsonSchema = isOfficialDeepSeekApi(customApi);
-    const schemaPrompt = usePromptJsonSchema ? deepSeekJsonSchemaPrompt(schema) : '';
-    const config = {
-      should_silence: true,
-      ordered_prompts: [
-        { role: 'system', content: genericSystemPrompt() },
-        { role: 'user', content: `${genericUserPrompt()}${schemaPrompt}` },
-      ],
-      ...(usePromptJsonSchema ? {} : { json_schema: schema }),
-    };
-    if (customApi) config.custom_api = customApi;
-
+    const officialDeepSeek = isOfficialDeepSeekApi(customApi);
+    let usePromptJsonSchema = officialDeepSeek;
+    let strictJsonRetry = false;
     let lastError;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
+        const schemaPrompt = usePromptJsonSchema
+          ? officialDeepSeek
+            ? deepSeekJsonSchemaPrompt(schema)
+            : jsonSchemaCompatibilityPrompt(schema)
+          : '';
+        const retrySuffix = strictJsonRetry
+          ? '\n\n（上次输出不是合法 JSON，请严格只输出 JSON 对象。）'
+          : '';
+        const config = {
+          should_silence: true,
+          ordered_prompts: [
+            { role: 'system', content: strictJsonRetry ? buildSystemPromptForRetry() : genericSystemPrompt() },
+            { role: 'user', content: `${genericUserPrompt()}${schemaPrompt}${retrySuffix}` },
+          ],
+          ...(usePromptJsonSchema ? {} : { json_schema: schema }),
+          ...(customApi ? { custom_api: customApi } : {}),
+        };
         const raw = typeof generateRaw === 'function'
           ? await generateRaw(config)
           : await generate({
               should_silence: true,
-              user_input: `${genericSystemPrompt()}\n\n${genericUserPrompt()}${schemaPrompt}`,
+              user_input: `${strictJsonRetry ? buildSystemPromptForRetry() : genericSystemPrompt()}\n\n${genericUserPrompt()}${schemaPrompt}${retrySuffix}`,
               ...(usePromptJsonSchema ? {} : { json_schema: schema }),
               ...(customApi ? { custom_api: customApi } : {}),
             });
         return parseAiResult(raw);
       } catch (e) {
-        lastError = normalizeApiRequestError(e, { provider: usePromptJsonSchema ? 'DeepSeek' : 'AI 接口' });
-        if (!shouldRetryApiRequest(e)) break;
-        if (attempt === 0) {
-          config.ordered_prompts = [
-            { role: 'system', content: buildSystemPromptForRetry() },
-            {
-              role: 'user',
-              content: `${genericUserPrompt()}${schemaPrompt}\n\n（上次输出不是合法 JSON，请严格只输出 JSON 对象。）`,
-            },
-          ];
+        lastError = normalizeApiRequestError(e, { provider: officialDeepSeek ? 'DeepSeek' : 'AI 接口' });
+        if (!usePromptJsonSchema && shouldFallbackFromJsonSchema(e)) {
+          usePromptJsonSchema = true;
+          continue;
         }
+        if (!shouldRetryApiRequest(e)) break;
+        strictJsonRetry = true;
       }
     }
     throw lastError || new Error('生成失败');
@@ -1717,42 +1723,46 @@ ${r.nsfwContent || '（无）'}
     if (typeof generateRaw !== 'function' && typeof generate !== 'function') throw new Error('未找到 generateRaw/generate 接口。');
     const customApi = buildCustomApiConfig();
     const schema = resultSchema();
-    const usePromptJsonSchema = isOfficialDeepSeekApi(customApi);
-    const schemaPrompt = usePromptJsonSchema ? deepSeekJsonSchemaPrompt(schema) : '';
-    const config = {
-      should_silence: true,
-      ordered_prompts: [
-        { role: 'system', content: buildSystemPrompt() },
-        { role: 'user', content: `${buildUserPrompt(mode)}${schemaPrompt}` },
-      ],
-      ...(usePromptJsonSchema ? {} : { json_schema: schema }),
-    };
-    if (customApi) config.custom_api = customApi;
-
+    const officialDeepSeek = isOfficialDeepSeekApi(customApi);
+    let usePromptJsonSchema = officialDeepSeek;
+    let strictJsonRetry = false;
     let lastError;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
+        const schemaPrompt = usePromptJsonSchema
+          ? officialDeepSeek
+            ? deepSeekJsonSchemaPrompt(schema)
+            : jsonSchemaCompatibilityPrompt(schema)
+          : '';
+        const retrySuffix = strictJsonRetry
+          ? '\n\n（上次输出不是合法 JSON——必须严格输出 JSON，所有字符串内的双引号和换行都要转义。）'
+          : '';
+        const config = {
+          should_silence: true,
+          ordered_prompts: [
+            { role: 'system', content: strictJsonRetry ? buildSystemPromptForRetry() : buildSystemPrompt() },
+            { role: 'user', content: `${buildUserPrompt(mode)}${schemaPrompt}${retrySuffix}` },
+          ],
+          ...(usePromptJsonSchema ? {} : { json_schema: schema }),
+          ...(customApi ? { custom_api: customApi } : {}),
+        };
         const raw = typeof generateRaw === 'function'
           ? await generateRaw(config)
           : await generate({
               should_silence: true,
-              user_input: `${buildSystemPrompt()}\n\n${buildUserPrompt(mode)}${schemaPrompt}`,
+              user_input: `${strictJsonRetry ? buildSystemPromptForRetry() : buildSystemPrompt()}\n\n${buildUserPrompt(mode)}${schemaPrompt}${retrySuffix}`,
               ...(usePromptJsonSchema ? {} : { json_schema: schema }),
               ...(customApi ? { custom_api: customApi } : {}),
             });
         return parseAiResult(raw);
       } catch (e) {
-        lastError = normalizeApiRequestError(e, { provider: usePromptJsonSchema ? 'DeepSeek' : 'AI 接口' });
-        if (!shouldRetryApiRequest(e)) break;
-        if (attempt === 0) {
-          config.ordered_prompts = [
-            { role: 'system', content: buildSystemPromptForRetry() },
-            {
-              role: 'user',
-              content: `${buildUserPrompt(mode)}${schemaPrompt}\n\n（上次输出不是合法 JSON——必须严格输出 JSON，所有字符串内的双引号和换行都要转义。）`,
-            },
-          ];
+        lastError = normalizeApiRequestError(e, { provider: officialDeepSeek ? 'DeepSeek' : 'AI 接口' });
+        if (!usePromptJsonSchema && shouldFallbackFromJsonSchema(e)) {
+          usePromptJsonSchema = true;
+          continue;
         }
+        if (!shouldRetryApiRequest(e)) break;
+        strictJsonRetry = true;
       }
     }
     throw lastError || new Error('生成失败');
